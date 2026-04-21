@@ -1,0 +1,315 @@
+export type ApprovalDecision = 'yes' | 'no' | 'always'
+export type ApprovalMode = 'suggest' | 'auto-edit' | 'full-auto'
+export type ReasoningEffort = 'off' | 'low' | 'medium' | 'high' | 'max'
+export type MemoryType = 'user' | 'project' | 'feedback' | 'reference' | 'preference' | 'fact'
+export type ToolCallStatus = 'pending' | 'running' | 'done' | 'error' | 'denied'
+
+export interface MemoryRecord {
+  id: number
+  type: MemoryType
+  key: string
+  content: string
+  scope: string | null
+  importance: number
+  created_at: string
+  updated_at: string
+  expires_at: string | null
+}
+
+export interface HookRecord {
+  id: string
+  event: string
+  command: string
+  toolMatch?: string
+  pathMatch?: string
+  timeout?: number
+  blocking?: boolean
+  feedToAgent?: boolean
+  enabled?: boolean
+  label?: string
+}
+
+export interface SkillRecord {
+  id: string
+  name: string
+  description: string
+  tags: string[]
+  prompt: string
+}
+
+export interface CheckpointRecord {
+  id: number
+  session_id: string
+  label: string | null
+  message_count: number
+  created_at: string
+}
+
+export interface BackgroundAgentRecord {
+  id: string
+  name: string
+  cwd: string
+  provider: string
+  model: string
+  prompt: string
+  status: 'idle' | 'running' | 'done' | 'error' | 'cancelled'
+  result: string | null
+  error: string | null
+  created_at: string
+  updated_at: string
+  started_at: string | null
+  finished_at: string | null
+  iterations: number
+  prompt_tokens: number
+  completion_tokens: number
+}
+
+export interface ScheduledTaskRecord {
+  id: string
+  name: string
+  schedule: string
+  cwd: string
+  provider: string
+  model: string
+  prompt: string
+  enabled: number
+  last_run: string | null
+  last_status: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ToolCallEvent {
+  id: string
+  name: string
+  args: Record<string, unknown>
+  status: ToolCallStatus
+  result?: string
+  diff?: string | null
+}
+
+export interface ElectronAPI {
+  // System bridge
+  openFile: () => Promise<string[]>
+  openDirectory: () => Promise<string | null>
+  openExternal: (url: string) => Promise<void>
+  showItemInFolder: (filePath: string) => Promise<void>
+  clipboard: {
+    writeText: (text: string) => Promise<boolean>
+    readText: () => Promise<string>
+  }
+  window: {
+    minimize: () => Promise<void>
+    maximize: () => Promise<void>
+    close: () => Promise<void>
+  }
+  app: {
+    getVersion: () => Promise<string>
+    getPlatform: () => Promise<string>
+    getPath: (name: string) => Promise<string>
+    getHomeDir: () => Promise<string>
+  }
+
+  // Sessions
+  session: {
+    create: (opts: { cwd: string; provider: string; model: string; title?: string }) => Promise<{ ok: boolean; session?: any; error?: string }>
+    list: () => Promise<{ ok: boolean; sessions?: any[]; error?: string }>
+    get: (id: string) => Promise<{ ok: boolean; session?: any; messages?: any[]; error?: string }>
+    delete: (id: string) => Promise<{ ok: boolean }>
+    updateTitle: (id: string, title: string) => Promise<{ ok: boolean }>
+    updateModel: (id: string, provider: string, model: string) => Promise<{ ok: boolean }>
+    setCwd: (id: string, cwd: string) => Promise<{ ok: boolean; error?: string }>
+  }
+
+  // Agent
+  agent: {
+    send: (opts: { sessionId: string; message: string }) => Promise<{ ok: boolean; text?: string; aborted?: boolean; error?: string }>
+    abort: (sessionId: string) => Promise<{ ok: boolean; error?: string }>
+    approvalResponse: (sessionId: string, callId: string, decision: ApprovalDecision) => Promise<{ ok: boolean; error?: string }>
+    askUserResponse: (sessionId: string, askId: string, reply: string) => Promise<{ ok: boolean; error?: string }>
+
+    onStarted: (cb: (data: { sessionId: string; message: string }) => void) => () => void
+    onText: (cb: (data: { sessionId: string; delta: string }) => void) => () => void
+    onThinking: (cb: (data: { sessionId: string; delta: string }) => void) => () => void
+    onIteration: (cb: (data: { sessionId: string; iteration: number }) => void) => () => void
+    onToolCall: (cb: (data: { sessionId: string; call: ToolCallEvent }) => void) => () => void
+    onTasks: (cb: (data: { sessionId: string; tasks: any[] }) => void) => () => void
+    onApprovalRequest: (cb: (data: { sessionId: string; call: { id: string; name: string; args: Record<string, unknown>; diff?: string | null } }) => void) => () => void
+    onAskUser: (cb: (data: { sessionId: string; askId: string; question: string; options?: string[] }) => void) => () => void
+    onPlanExit: (cb: (data: { sessionId: string; plan: string }) => void) => () => void
+    onUsage: (cb: (data: { sessionId: string; usage: { promptTokens: number; completionTokens: number } }) => void) => () => void
+    onDone: (cb: (data: { sessionId: string; text: string; iterations: number; aborted: boolean; usage: { promptTokens: number; completionTokens: number; cost: number } }) => void) => () => void
+    onError: (cb: (data: { sessionId: string; error: string }) => void) => () => void
+  }
+
+  // Memory (auto-memory store, cross-session)
+  memory: {
+    list: (type?: MemoryType, scope?: string | null) => Promise<{ ok: boolean; memories?: MemoryRecord[]; error?: string }>
+    recall: (query: string, type?: MemoryType, scope?: string | null, limit?: number) => Promise<{ ok: boolean; memories?: MemoryRecord[]; error?: string }>
+    remember: (type: MemoryType, key: string, content: string, opts?: { scope?: string | null; importance?: number; expiresAt?: string | null }) => Promise<{ ok: boolean; id?: number; error?: string }>
+    forget: (id: number) => Promise<{ ok: boolean }>
+    stats: () => Promise<{ ok: boolean; stats?: { total: number; byType: Record<string, number> } }>
+  }
+
+  // Hooks
+  hooks: {
+    list: (cwd?: string) => Promise<{ ok: boolean; hooks?: HookRecord[]; error?: string }>
+    saveGlobal: (hooks: HookRecord[]) => Promise<{ ok: boolean }>
+  }
+
+  // Git
+  git: {
+    summary: (cwd: string) => Promise<{ ok: boolean; summary?: { isRepo: boolean; branch?: string; status?: string; staged?: number; modified?: number; untracked?: number }; error?: string }>
+    status: (cwd: string) => Promise<{ ok: boolean; status?: string; error?: string }>
+    diff: (cwd: string, staged?: boolean) => Promise<{ ok: boolean; diff?: string; error?: string }>
+    log: (cwd: string, limit?: number) => Promise<{ ok: boolean; log?: string; error?: string }>
+    commit: (cwd: string, message: string, stageAll?: boolean) => Promise<{ ok: boolean; result?: string; error?: string }>
+    push: (cwd: string, remote?: string, branch?: string) => Promise<{ ok: boolean; result?: string; error?: string }>
+    undo: (cwd: string) => Promise<{ ok: boolean; result?: string; error?: string }>
+  }
+
+  // Skills (domain expertise packs)
+  skills: {
+    list: () => Promise<{ ok: boolean; skills?: SkillRecord[]; error?: string }>
+    search: (query: string) => Promise<{ ok: boolean; skills?: SkillRecord[]; error?: string }>
+  }
+
+  // Checkpoints (session state snapshots)
+  checkpoints: {
+    save: (sessionId: string, label?: string) => Promise<{ ok: boolean; id?: number; error?: string }>
+    list: (sessionId: string) => Promise<{ ok: boolean; checkpoints?: CheckpointRecord[]; error?: string }>
+    restore: (checkpointId: number) => Promise<{ ok: boolean; session_id?: string; messages?: any[]; error?: string }>
+    delete: (id: number) => Promise<{ ok: boolean }>
+  }
+
+  // Background agents (headless runs)
+  bgAgents: {
+    list: () => Promise<{ ok: boolean; agents?: BackgroundAgentRecord[]; error?: string }>
+    get: (id: string) => Promise<{ ok: boolean; agent?: BackgroundAgentRecord; error?: string }>
+    create: (opts: { name: string; cwd: string; provider: string; model: string; prompt: string }) => Promise<{ ok: boolean; id?: string; error?: string }>
+    delete: (id: string) => Promise<{ ok: boolean }>
+    onText: (cb: (data: { id: string; delta: string }) => void) => () => void
+    onToolCall: (cb: (data: { id: string; call: ToolCallEvent }) => void) => () => void
+    onUpdate: (cb: (data: { id: string; status: string; text?: string; error?: string }) => void) => () => void
+  }
+
+  // Scheduled tasks (cron)
+  cron: {
+    list: () => Promise<{ ok: boolean; tasks?: ScheduledTaskRecord[]; error?: string }>
+    create: (opts: { name: string; schedule: string; cwd: string; provider: string; model: string; prompt: string }) => Promise<{ ok: boolean; id?: string; error?: string }>
+    update: (id: string, patch: Partial<Omit<ScheduledTaskRecord, 'id' | 'created_at' | 'updated_at'>>) => Promise<{ ok: boolean }>
+    delete: (id: string) => Promise<{ ok: boolean }>
+    onFired: (cb: (data: { taskId: string; backgroundAgentId: string }) => void) => () => void
+  }
+
+  // Subagent (specialist one-shot runs)
+  subagent: {
+    run: (opts: { sessionId: string; role: string; task: string; customPrompt?: string; context?: string }) => Promise<{ ok: boolean; result?: { role: string; text: string; iterations: number; promptTokens: number; completionTokens: number; aborted: boolean }; error?: string }>
+    onText: (cb: (data: { sessionId: string; delta: string }) => void) => () => void
+    onToolCall: (cb: (data: { sessionId: string; call: ToolCallEvent }) => void) => () => void
+  }
+
+  // Session ops (compaction)
+  sessionOps: {
+    compact: (sessionId: string, keepRecent?: number) => Promise<{ ok: boolean; newSessionId?: string; messageCount?: number; error?: string }>
+  }
+
+  // MCP
+  mcp: {
+    approvalResponse: (token: string, decision: boolean) => void
+    onStatus: (cb: (data: { name: string; status: string }) => void) => () => void
+    onApprovalRequest: (cb: (data: { token: string; name: string; command: string; args?: string[]; env?: Record<string, string> }) => void) => () => void
+  }
+
+  // Auth
+  auth: {
+    list: () => Promise<{ ok: boolean; credentials?: any[]; error?: string }>
+    save: (cred: {
+      provider: string
+      method: 'api-key' | 'oauth' | 'setup-token' | 'cached-token'
+      apiKey: string
+      baseUrl: string
+      label?: string
+      createdAt?: string
+    }) => Promise<{ ok: boolean }>
+    delete: (providerId: string) => Promise<{ ok: boolean }>
+
+    providers: () => Promise<{
+      ok: boolean
+      providers?: Array<{
+        id: string
+        name: string
+        methods: Array<'oauth' | 'api-key' | 'setup-token' | 'cached-token' | 'device-flow' | 'none'>
+        baseUrl: string
+        consoleUrl?: string
+        description: string
+        local?: boolean
+      }>
+      error?: string
+    }>
+    detect: () => Promise<{
+      ok: boolean
+      detected?: Array<{ provider: string; method: string; description: string }>
+      error?: string
+    }>
+
+    apiKey: (opts: { provider: string; apiKey: string; baseUrl?: string; label?: string }) =>
+      Promise<{ ok: boolean; credential?: any; error?: string }>
+    openrouterOAuth: () => Promise<{ ok: boolean; credential?: any; error?: string }>
+    anthropicSetupToken: () => Promise<{ ok: boolean; credential?: any; error?: string }>
+    copilotDeviceFlow: () => Promise<{ ok: boolean; credential?: any; error?: string }>
+    importCodex: () => Promise<{ ok: boolean; credential?: any; error?: string }>
+    importQwen: () => Promise<{ ok: boolean; credential?: any; error?: string }>
+
+    onStatus: (cb: (data: { provider: string; method: string; message: string }) => void) => () => void
+  }
+
+  // LLM
+  llm: {
+    listModels: (providerId: string) => Promise<{ ok: boolean; models?: Array<{ name: string; id: string }>; error?: string }>
+    testConnection: (providerId: string) => Promise<{ ok: boolean; error?: string }>
+  }
+
+  // Ollama
+  ollama: {
+    isRunning: () => Promise<boolean>
+    listModels: () => Promise<{ ok: boolean; models?: Array<{ name: string; size: number }>; error?: string }>
+  }
+
+  // Config
+  config: {
+    get: () => Promise<{ ok: boolean; config?: { theme: string; autoApprove: boolean; approvalMode?: ApprovalMode; reasoningEffort?: ReasoningEffort; activeSkillIds?: string[]; lastCwd: string | null; lastProvider: string | null; lastModel: string | null }; error?: string }>
+    save: (config: { theme: string; autoApprove: boolean; approvalMode?: ApprovalMode; reasoningEffort?: ReasoningEffort; activeSkillIds?: string[]; lastCwd: string | null; lastProvider: string | null; lastModel: string | null }) => Promise<{ ok: boolean }>
+  }
+
+  // Themes
+  themes: {
+    list: () => Promise<{ ok: boolean; themes?: any[]; error?: string }>
+  }
+
+  // Project / cwd
+  project: {
+    pickDirectory: () => Promise<{ ok: boolean; path?: string; name?: string }>
+    defaultCwd: () => Promise<string>
+  }
+
+  // Preview — run arbitrary commands, stream output
+  run: {
+    start: (opts: { runId: string; command: string; cwd: string }) => Promise<{ ok: boolean; pid?: number; error?: string }>
+    stop: (runId: string) => Promise<{ ok: boolean; error?: string }>
+    onStarted: (cb: (data: { runId: string; pid?: number }) => void) => () => void
+    onOutput: (cb: (data: { runId: string; kind: 'stdout' | 'stderr'; data: string }) => void) => () => void
+    onExit: (cb: (data: { runId: string; code: number | null; signal: string | null }) => void) => () => void
+  }
+
+  // Legacy escape hatch
+  on: (channel: string, callback: (...args: any[]) => void) => () => void
+}
+
+declare global {
+  interface Window {
+    electron: ElectronAPI
+  }
+}
+
+export {}

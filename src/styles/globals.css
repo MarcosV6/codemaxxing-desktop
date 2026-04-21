@@ -1,0 +1,93 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Theme defaults — warmer, Claude-inspired dark palette (overridden by runtime theme) */
+:root {
+  --theme-primary: #C78F5C;       /* warm tan accent */
+  --theme-secondary: #B589FF;
+  --theme-muted: #8A8780;
+  --theme-text: #E6E2DA;
+  --theme-user-input: #E6E2DA;
+  --theme-response: #E6E2DA;
+  --theme-tool: #8FB5E5;
+  --theme-tool-result: #8A8780;
+  --theme-error: #E56B6F;
+  --theme-success: #A7C080;
+  --theme-warning: #DBBC7F;
+  --theme-border: rgba(255, 255, 255, 0.08);
+  --theme-suggestion: #C78F5C;
+  --theme-bg: #1a1814;            /* warm dark, not pitch black */
+  --theme-bg-subtle: #15130f;     /* slightly darker for surfaces */
+  --theme-bg-raised: #221f1a;     /* slightly lighter for cards */
+  --theme-bubble: #2a2520;        /* user bubble bg */
+}
+
+@layer base {
+  * {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  html, body, #root {
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--theme-bg);
+    color: var(--theme-text);
+    font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.15);
+    background-clip: content-box;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--theme-primary) 30%, transparent);
+  }
+
+  button:focus-visible, [role="button"]:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+    outline: 2px solid var(--theme-primary);
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .animate-slide-in { animation: slideIn 0.25s ease-out; }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+  .animate-fade-in { animation: fadeIn 0.2s ease-out; }
+
+  .text-balance { text-wrap: balance; }
+}

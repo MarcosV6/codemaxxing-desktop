@@ -88,7 +88,9 @@
         { "target": "zip", "arch": ["x64", "arm64"] }
       ],
       "icon": "public/icon.ico",
-      "publisherName": "Marcos Vallejo"
+      "signtoolOptions": {
+        "publisherName": "Marcos Vallejo"
+      }
     },
     "nsis": {
       "oneClick": false,

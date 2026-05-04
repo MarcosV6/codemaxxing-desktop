@@ -33,7 +33,12 @@ export default defineConfig({
         },
       },
       {
-        // Preload script
+        // Preload script — MUST be CommonJS. With package.json `type: "module"`
+        // + sandbox: true on the BrowserWindow, an ESM preload silently fails
+        // to load and `window.electron` ends up undefined in the renderer
+        // (which then falls into the dev-mock fallback). Forcing CJS here +
+        // the `.cjs` extension makes Node parse it as CommonJS regardless of
+        // the surrounding package's `type` field.
         entry: 'electron/preload.ts',
         onstart({ reload }) {
           reload()
@@ -41,9 +46,18 @@ export default defineConfig({
         vite: {
           build: {
             outDir: 'dist-electron',
+            lib: {
+              entry: 'electron/preload.ts',
+              formats: ['cjs'],
+              fileName: () => 'preload.cjs',
+            },
             rollupOptions: {
               external: ['electron'],
-              output: { format: 'cjs', entryFileNames: '[name].js' },
+              output: {
+                format: 'cjs',
+                entryFileNames: 'preload.cjs',
+                inlineDynamicImports: true,
+              },
             },
           },
         },

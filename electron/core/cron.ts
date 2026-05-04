@@ -29,6 +29,9 @@ function getDb(): Database.Database {
   db = new Database(DB_PATH)
   try { chmodSync(DB_PATH, 0o600) } catch { /* best-effort */ }
   db.pragma('journal_mode = WAL')
+  db.pragma('synchronous = NORMAL')
+  db.pragma('busy_timeout = 5000')
+  db.pragma('foreign_keys = ON')
   db.exec(`
     CREATE TABLE IF NOT EXISTS scheduled_tasks (
       id TEXT PRIMARY KEY,

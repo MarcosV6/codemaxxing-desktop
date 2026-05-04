@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useAppStore } from '../../store/appStore'
-import { X, Folder } from 'lucide-react'
+import { X, Folder, Code2, MessageCircle, AlertCircle, Pencil, Loader2 } from 'lucide-react'
+import type { SessionMode } from '../../types'
 
 interface NewSessionModalProps {
   open: boolean
@@ -15,16 +16,29 @@ export function NewSessionModal({ open, onClose }: NewSessionModalProps) {
   const pickDirectory = useAppStore((s) => s.pickDirectory)
   const createSession = useAppStore((s) => s.createSession)
 
+  const [mode, setMode] = useState<SessionMode>('code')
   const [cwd, setCwd] = useState(appConfig.lastCwd || '')
   const [provider, setProvider] = useState<string>(appConfig.lastProvider || '')
   const [model, setModel] = useState<string>(appConfig.lastModel || '')
   const [loading, setLoading] = useState(false)
+  // Per-load status so we can show a useful empty-state instead of just
+  // disabling the dropdown silently when LM Studio / Ollama / a custom
+  // OpenAI-compat endpoint isn't reachable or has no models loaded.
+  const [modelStatus, setModelStatus] = useState<'idle' | 'loading' | 'ready' | 'empty' | 'error'>('idle')
+  const [modelError, setModelError] = useState<string | null>(null)
+  // Whether the user has opted into typing a model id by hand. Auto-flips on
+  // when the listing returns empty / errors so they're never stuck.
+  const [manualModel, setManualModel] = useState(false)
 
   useEffect(() => {
     if (open) {
+      setMode('code')
       setCwd(appConfig.lastCwd || '')
       setProvider(appConfig.lastProvider || '')
       setModel(appConfig.lastModel || '')
+      setManualModel(false)
+      setModelStatus('idle')
+      setModelError(null)
     }
   }, [open, appConfig])
 
@@ -35,20 +49,58 @@ export function NewSessionModal({ open, onClose }: NewSessionModalProps) {
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
 
+  // Fetch models for the active provider. We call IPC directly (rather than
+  // the store's loadModels) so we can observe ok/empty/error and surface the
+  // distinction to the user — the store path collapses errors into a silent
+  // empty list, which is what made the dropdown look broken.
   useEffect(() => {
-    if (provider) { void loadModels(provider) }
-  }, [provider, loadModels])
+    if (!provider || !open) return
+    let cancelled = false
+    setModelStatus('loading')
+    setModelError(null)
+    setManualModel(false)
+    // Keep the store in sync too — other surfaces (settings, status bar) read
+    // from `availableModels` for the active provider.
+    void loadModels(provider)
+    void window.electron.llm.listModels(provider).then((res) => {
+      if (cancelled) return
+      if (res.ok && res.models && res.models.length > 0) {
+        setModelStatus('ready')
+        return
+      }
+      if (res.ok) {
+        setModelStatus('empty')
+        setManualModel(true)
+        return
+      }
+      setModelStatus('error')
+      setModelError(res.error || 'Could not load models')
+      setManualModel(true)
+    }).catch((err) => {
+      if (cancelled) return
+      setModelStatus('error')
+      setModelError(String(err?.message ?? err ?? 'Could not load models'))
+      setManualModel(true)
+    })
+    return () => { cancelled = true }
+  }, [provider, open, loadModels])
 
   if (!open) return null
 
   const authedProviders = providers.filter(p => p.authed)
-  const canCreate = cwd && provider && model && !loading
+  // Chat mode doesn't need a project directory — agent can't touch the
+  // filesystem regardless. Default it to home so the cwd field stays valid
+  // for downstream consumers (memory scope, etc.) without forcing the user
+  // to pick anything.
+  const isChatMode = mode === 'chat'
+  const effectiveCwd = isChatMode ? (cwd || '~') : cwd
+  const canCreate = effectiveCwd && provider && model && !loading
 
   const handleCreate = async () => {
     if (!canCreate) return
     setLoading(true)
     try {
-      const id = await createSession({ cwd, provider, model })
+      const id = await createSession({ cwd: effectiveCwd, provider, model, mode })
       if (id) onClose()
     } finally {
       setLoading(false)
@@ -67,22 +119,60 @@ export function NewSessionModal({ open, onClose }: NewSessionModalProps) {
         </div>
 
         <div className="p-4 space-y-3" style={{ color: 'var(--theme-text, #C0CAF5)' }}>
+          {/* ── Mode toggle ── */}
           <div className="space-y-1">
-            <div className="text-[10px] uppercase font-mono opacity-60">Project directory</div>
-            <div className="flex items-center gap-2">
-              <div className="flex-1 text-xs font-mono rounded border px-2 py-1.5 truncate"
-                   style={{ borderColor: 'var(--theme-border, #334155)', backgroundColor: 'var(--theme-bg-subtle, #0d0d14)' }}>
-                {cwd || '(none)'}
-              </div>
+            <div className="text-[10px] uppercase font-mono opacity-60">Session type</div>
+            <div className="grid grid-cols-2 gap-2">
               <button
-                onClick={async () => { const p = await pickDirectory(); if (p) setCwd(p) }}
-                className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-mono border"
-                style={{ borderColor: 'var(--theme-border, #334155)' }}
+                onClick={() => setMode('code')}
+                className="flex items-center gap-2 px-3 py-2 rounded border text-left"
+                style={{
+                  borderColor: mode === 'code' ? 'var(--theme-primary, #7AA2F7)' : 'var(--theme-border, #334155)',
+                  backgroundColor: mode === 'code' ? 'color-mix(in srgb, var(--theme-primary) 12%, transparent)' : 'transparent',
+                }}
               >
-                <Folder size={12} /> Pick
+                <Code2 size={14} style={{ color: mode === 'code' ? 'var(--theme-primary)' : undefined }} />
+                <div>
+                  <div className="text-xs font-mono">Code</div>
+                  <div className="text-[10px] opacity-60">Full agent — files, shell, git</div>
+                </div>
+              </button>
+              <button
+                onClick={() => setMode('chat')}
+                className="flex items-center gap-2 px-3 py-2 rounded border text-left"
+                style={{
+                  borderColor: mode === 'chat' ? 'var(--theme-primary, #7AA2F7)' : 'var(--theme-border, #334155)',
+                  backgroundColor: mode === 'chat' ? 'color-mix(in srgb, var(--theme-primary) 12%, transparent)' : 'transparent',
+                }}
+              >
+                <MessageCircle size={14} style={{ color: mode === 'chat' ? 'var(--theme-primary)' : undefined }} />
+                <div>
+                  <div className="text-xs font-mono">Chat</div>
+                  <div className="text-[10px] opacity-60">Plain conversation + web search</div>
+                </div>
               </button>
             </div>
           </div>
+
+          {/* ── Project directory (code mode only) ── */}
+          {!isChatMode && (
+            <div className="space-y-1">
+              <div className="text-[10px] uppercase font-mono opacity-60">Project directory</div>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 text-xs font-mono rounded border px-2 py-1.5 truncate"
+                     style={{ borderColor: 'var(--theme-border, #334155)', backgroundColor: 'var(--theme-bg-subtle, #0d0d14)' }}>
+                  {cwd || '(none)'}
+                </div>
+                <button
+                  onClick={async () => { const p = await pickDirectory(); if (p) setCwd(p) }}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-mono border"
+                  style={{ borderColor: 'var(--theme-border, #334155)' }}
+                >
+                  <Folder size={12} /> Pick
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="space-y-1">
             <div className="text-[10px] uppercase font-mono opacity-60">Provider</div>
@@ -106,19 +196,85 @@ export function NewSessionModal({ open, onClose }: NewSessionModalProps) {
           </div>
 
           <div className="space-y-1">
-            <div className="text-[10px] uppercase font-mono opacity-60">Model</div>
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              disabled={!provider || availableModels.length === 0}
-              className="w-full text-xs font-mono px-2 py-1.5 rounded border bg-transparent outline-none disabled:opacity-50"
-              style={{ borderColor: 'var(--theme-border, #334155)' }}
-            >
-              <option value="">Choose a model…</option>
-              {availableModels.map(m => (
-                <option key={m.id} value={m.name}>{m.name}</option>
-              ))}
-            </select>
+            <div className="flex items-center justify-between">
+              <div className="text-[10px] uppercase font-mono opacity-60">Model</div>
+              {/* Toggle between dropdown and manual-id entry whenever a list
+                  is available — local providers like LM Studio or a custom
+                  endpoint may have models the discovery call doesn't surface. */}
+              {provider && modelStatus === 'ready' && (
+                <button
+                  onClick={() => setManualModel((v) => !v)}
+                  className="flex items-center gap-1 text-[10px] font-mono opacity-60 hover:opacity-100"
+                >
+                  <Pencil size={10} />
+                  {manualModel ? 'pick from list' : 'enter manually'}
+                </button>
+              )}
+            </div>
+
+            {modelStatus === 'loading' ? (
+              <div
+                className="flex items-center gap-2 text-xs font-mono px-2 py-1.5 rounded border opacity-60"
+                style={{ borderColor: 'var(--theme-border, #334155)' }}
+              >
+                <Loader2 size={12} className="animate-spin" />
+                Loading models…
+              </div>
+            ) : manualModel || availableModels.length === 0 ? (
+              <input
+                type="text"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder={
+                  provider === 'lmstudio'
+                    ? 'e.g. qwen2.5-coder-32b-instruct'
+                    : provider === 'ollama'
+                    ? 'e.g. llama3.2:latest'
+                    : 'model id'
+                }
+                disabled={!provider}
+                className="w-full text-xs font-mono px-2 py-1.5 rounded border bg-transparent outline-none disabled:opacity-50"
+                style={{ borderColor: 'var(--theme-border, #334155)' }}
+              />
+            ) : (
+              <select
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                disabled={!provider}
+                className="w-full text-xs font-mono px-2 py-1.5 rounded border bg-transparent outline-none disabled:opacity-50"
+                style={{ borderColor: 'var(--theme-border, #334155)' }}
+              >
+                <option value="">Choose a model…</option>
+                {availableModels.map(m => (
+                  <option key={m.id} value={m.name}>{m.name}</option>
+                ))}
+              </select>
+            )}
+
+            {/* Inline status hint for the empty / error cases — explains why
+                the dropdown is gone instead of leaving the user staring at a
+                disabled control with no feedback. */}
+            {provider && (modelStatus === 'empty' || modelStatus === 'error') && (
+              <div
+                className="flex items-start gap-1.5 text-[10.5px] mt-1 px-1"
+                style={{ color: 'var(--theme-warning, #e0af68)' }}
+              >
+                <AlertCircle size={11} className="shrink-0 mt-[1px]" />
+                <span>
+                  {modelStatus === 'empty' ? (
+                    provider === 'lmstudio' ? (
+                      <>No models reported by LM Studio. Make sure it's running with a model loaded — or type the model id above.</>
+                    ) : provider === 'ollama' ? (
+                      <>No models pulled in Ollama. Run <span className="font-mono">ollama pull &lt;name&gt;</span> first, or type one above.</>
+                    ) : (
+                      <>Provider returned no models. Type the id above.</>
+                    )
+                  ) : (
+                    <>Couldn't reach provider: {modelError}. Type the model id above to continue anyway.</>
+                  )}
+                </span>
+              </div>
+            )}
           </div>
         </div>
 

@@ -21,6 +21,11 @@
   --theme-bg-subtle: #15130f;     /* slightly darker for surfaces */
   --theme-bg-raised: #221f1a;     /* slightly lighter for cards */
   --theme-bubble: #2a2520;        /* user bubble bg */
+  /* Hairline = border color blended toward transparency. Use this for
+     structural dividers so saturated theme border colors (e.g. #00FFFF)
+     don't turn every box into a loud outline. */
+  --theme-hairline: color-mix(in srgb, var(--theme-border) 35%, transparent);
+  --theme-hairline-strong: color-mix(in srgb, var(--theme-border) 55%, transparent);
 }
 
 @layer base {
@@ -70,13 +75,30 @@
     background: color-mix(in srgb, var(--theme-primary) 30%, transparent);
   }
 
-  button:focus-visible, [role="button"]:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
-    outline: 2px solid var(--theme-primary);
-    outline-offset: 2px;
-  }
+  /* Kill default focus outlines — components that need a focus indicator
+     opt in with .focus-ring (bare buttons) or focus-within styling (composed inputs). */
+  :focus { outline: none; }
+  :focus-visible { outline: none; }
 }
 
 @layer utilities {
+  /* Soft primary-tinted ring on the input shell when its textarea is focused.
+     Replaces the old `focus-within:shadow-lg` + global outline stack that
+     caused a double-box around the composer. */
+  .input-shell:focus-within {
+    border-color: color-mix(in srgb, var(--theme-primary) 30%, transparent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--theme-primary) 8%, transparent),
+                0 8px 24px -12px rgba(0, 0, 0, 0.4);
+  }
+
+  /* Soft box-shadow ring for bare buttons that have no other focus affordance.
+     Use this instead of a hard outline to avoid the double-box problem on
+     composed inputs (e.g. textarea inside a bordered wrapper). */
+  .focus-ring:focus-visible {
+    box-shadow: 0 0 0 2px var(--theme-bg),
+                0 0 0 4px color-mix(in srgb, var(--theme-primary) 55%, transparent);
+  }
+
   @keyframes slideIn {
     from { opacity: 0; transform: translateY(6px); }
     to   { opacity: 1; transform: translateY(0); }
@@ -89,5 +111,102 @@
   }
   .animate-fade-in { animation: fadeIn 0.2s ease-out; }
 
+  @keyframes pulseBar {
+    0%, 100% { opacity: 0.35; transform: scaleX(0.6); }
+    50%      { opacity: 1;    transform: scaleX(1); }
+  }
+  .animate-pulse-bar {
+    animation: pulseBar 1.4s ease-in-out infinite;
+    transform-origin: left center;
+  }
+
+  /* Soft mask fading the top 24px of a scroll container so content doesn't
+     butt into the header. Applied to the scrollable chat body. */
+  .mask-fade-top {
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 24px);
+            mask-image: linear-gradient(to bottom, transparent 0, black 24px);
+  }
+
   .text-balance { text-wrap: balance; }
+
+  /* Staggered entrance for live-streaming segments. JS sets
+     `--stagger-delay: Nms` inline so each segment slides in ~40ms after
+     the previous one, giving the chat a gentler rhythm than everything
+     snapping in at once. */
+  @keyframes segmentIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .animate-segment-in {
+    animation: segmentIn 0.28s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    animation-delay: var(--stagger-delay, 0ms);
+  }
+
+  /* Subtle glow on the most recent segment in a live run — draws the eye
+     to the tail without being distracting. */
+  .segment-live {
+    position: relative;
+  }
+  .segment-live::before {
+    content: '';
+    position: absolute;
+    inset: -6px -10px;
+    border-radius: 14px;
+    background: radial-gradient(ellipse at left center,
+      color-mix(in srgb, var(--theme-primary) 6%, transparent),
+      transparent 60%);
+    pointer-events: none;
+    z-index: -1;
+    animation: segmentGlow 2.8s ease-in-out infinite;
+  }
+  @keyframes segmentGlow {
+    0%, 100% { opacity: 0.5; }
+    50%      { opacity: 1;   }
+  }
 }
+
+/* ─────────────────────────────────────────────────────────────────
+   Syntax highlighting — port of atom-one-dark, mapped to theme vars
+   so it blends into any of the 16 palettes. Classes emitted by
+   rehype-highlight (highlight.js) inside <code class="hljs language-X">.
+   ───────────────────────────────────────────────────────────────── */
+.hljs {
+  color: var(--theme-text);
+  background: transparent;
+}
+.hljs-comment,
+.hljs-quote { color: var(--theme-muted); font-style: italic; }
+.hljs-doctag,
+.hljs-keyword,
+.hljs-formula { color: #c678dd; }
+.hljs-section,
+.hljs-name,
+.hljs-selector-tag,
+.hljs-deletion,
+.hljs-subst { color: #e06c75; }
+.hljs-literal { color: #56b6c2; }
+.hljs-string,
+.hljs-regexp,
+.hljs-addition,
+.hljs-attribute,
+.hljs-meta .hljs-string { color: #98c379; }
+.hljs-attr,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-type,
+.hljs-selector-class,
+.hljs-selector-attr,
+.hljs-selector-pseudo,
+.hljs-number { color: #d19a66; }
+.hljs-symbol,
+.hljs-bullet,
+.hljs-link,
+.hljs-meta,
+.hljs-selector-id,
+.hljs-title { color: #61aeee; }
+.hljs-built_in,
+.hljs-title.class_,
+.hljs-class .hljs-title { color: #e6c07b; }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong   { font-weight: bold; }
+.hljs-link     { text-decoration: underline; }

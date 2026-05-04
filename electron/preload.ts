@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 type Unsubscribe = () => void
 function on<T extends any[]>(channel: string, cb: (...args: T) => void): Unsubscribe {
@@ -31,7 +31,7 @@ contextBridge.exposeInMainWorld('electron', {
 
   // ── Sessions ──
   session: {
-    create: (opts: { cwd: string; provider: string; model: string; title?: string }) =>
+    create: (opts: { cwd: string; provider: string; model: string; title?: string; mode?: 'code' | 'chat' }) =>
       ipcRenderer.invoke('session:create', opts),
     list: () => ipcRenderer.invoke('session:list'),
     get: (id: string) => ipcRenderer.invoke('session:get', id),
@@ -44,7 +44,7 @@ contextBridge.exposeInMainWorld('electron', {
 
   // ── Agent ──
   agent: {
-    send: (opts: { sessionId: string; message: string }) => ipcRenderer.invoke('agent:send', opts),
+    send: (opts: { sessionId: string; message: string; images?: Array<{ id?: string; dataUrl: string; mediaType: string; name?: string }> }) => ipcRenderer.invoke('agent:send', opts),
     abort: (sessionId: string) => ipcRenderer.invoke('agent:abort', sessionId),
     approvalResponse: (sessionId: string, callId: string, decision: 'yes' | 'no' | 'always') =>
       ipcRenderer.invoke('agent:approvalResponse', sessionId, callId, decision),
@@ -81,6 +81,12 @@ contextBridge.exposeInMainWorld('electron', {
     onPlanExit: (cb: (data: { sessionId: string; plan: string }) => void) => on('agent:planExit', cb),
     onUsage: (cb: (data: { sessionId: string; usage: { promptTokens: number; completionTokens: number } }) => void) =>
       on('agent:usage', cb),
+    onStats: (
+      cb: (data: {
+        sessionId: string
+        stats: { tokensPerSecond: number | null; contextWindow: number; isLocal: boolean }
+      }) => void,
+    ) => on('agent:stats', cb),
     onDone: (
       cb: (data: {
         sessionId: string
@@ -88,6 +94,7 @@ contextBridge.exposeInMainWorld('electron', {
         iterations: number
         aborted: boolean
         usage: { promptTokens: number; completionTokens: number; cost: number }
+        stats?: { tokensPerSecond: number | null; contextWindow: number; isLocal: boolean }
       }) => void,
     ) => on('agent:done', cb),
     onError: (cb: (data: { sessionId: string; error: string }) => void) => on('agent:error', cb),
@@ -199,6 +206,8 @@ contextBridge.exposeInMainWorld('electron', {
     apiKey: (opts: { provider: string; apiKey: string; baseUrl?: string; label?: string }) =>
       ipcRenderer.invoke('auth:apiKey', opts),
     openrouterOAuth: () => ipcRenderer.invoke('auth:openrouterOAuth'),
+    anthropicOAuth: () => ipcRenderer.invoke('auth:anthropicOAuth'),
+    openaiOAuth: () => ipcRenderer.invoke('auth:openaiOAuth'),
     anthropicSetupToken: () => ipcRenderer.invoke('auth:anthropicSetupToken'),
     copilotDeviceFlow: () => ipcRenderer.invoke('auth:copilotDeviceFlow'),
     importCodex: () => ipcRenderer.invoke('auth:importCodex'),
@@ -232,7 +241,25 @@ contextBridge.exposeInMainWorld('electron', {
       lastCwd: string | null
       lastProvider: string | null
       lastModel: string | null
+      keepAliveInBackground?: boolean
+      autoLaunch?: boolean
+      remote?: { enabled: boolean; port: number; token: string }
     }) => ipcRenderer.invoke('config:save', config),
+  },
+
+  // ── Remote access (HTTP+SSE server for phone clients / external tools) ──
+  remote: {
+    status: () => ipcRenderer.invoke('remote:status'),
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke('remote:setEnabled', enabled),
+    setPort: (port: number) => ipcRenderer.invoke('remote:setPort', port),
+    beginPairing: () => ipcRenderer.invoke('remote:beginPairing'),
+    cancelPairing: () => ipcRenderer.invoke('remote:cancelPairing'),
+    revokeDevice: (deviceId: string) => ipcRenderer.invoke('remote:revokeDevice', deviceId),
+    onDevicesChanged: (cb: () => void) => {
+      const fn = () => cb()
+      ipcRenderer.on('remote:devicesChanged', fn)
+      return () => ipcRenderer.removeListener('remote:devicesChanged', fn)
+    },
   },
 
   // ── Themes ──
@@ -244,6 +271,21 @@ contextBridge.exposeInMainWorld('electron', {
   project: {
     pickDirectory: () => ipcRenderer.invoke('project:pickDirectory'),
     defaultCwd: () => ipcRenderer.invoke('project:defaultCwd'),
+  },
+
+  // ── File search / tree / read (for @-mentions, command palette, Files panel) ──
+  files: {
+    search: (opts: { cwd: string; query: string; limit?: number }) =>
+      ipcRenderer.invoke('files:search', opts),
+    tree: (opts: { path: string }) => ipcRenderer.invoke('files:tree', opts),
+    read: (opts: { path: string; maxBytes?: number }) => ipcRenderer.invoke('files:read', opts),
+    write: (opts: { path: string; cwd: string; content: string; expectedMtime?: number; force?: boolean }) =>
+      ipcRenderer.invoke('files:write', opts),
+    // Resolve an absolute path from a dragged File — Electron 32+ no longer
+    // exposes File.path directly in the renderer, so we use webUtils.
+    getPathForFile: (file: File) => {
+      try { return webUtils.getPathForFile(file) } catch { return '' }
+    },
   },
 
   // ── Preview: run arbitrary commands and stream output ──

@@ -15,6 +15,14 @@ function getDb(): Database.Database {
   db = new Database(DB_PATH)
   try { chmodSync(DB_PATH, 0o600) } catch { /* best-effort */ }
   db.pragma('journal_mode = WAL')
+  // NORMAL is durable across app crashes; only sacrifices durability across
+  // OS crashes — acceptable trade-off for ~3-5x write throughput on the hot
+  // saveMessage path. busy_timeout retries instead of throwing SQLITE_BUSY
+  // when WAL writers contend (briefly) with checkpoint reads. foreign_keys
+  // turns on the ON DELETE CASCADE we declared in the schema.
+  db.pragma('synchronous = NORMAL')
+  db.pragma('busy_timeout = 5000')
+  db.pragma('foreign_keys = ON')
   db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
@@ -41,8 +49,21 @@ function getDb(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
   `)
+
+  // ── Migrations: add columns to existing DBs ──
+  // SQLite ALTER TABLE ADD COLUMN is idempotent only when it's missing — wrap
+  // in a try/catch so a re-run on an already-migrated DB doesn't crash.
+  try {
+    const cols = (db.prepare(`PRAGMA table_info(sessions)`).all() as Array<{ name: string }>).map(c => c.name)
+    if (!cols.includes('mode')) {
+      db.exec(`ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'code'`)
+    }
+  } catch { /* best-effort migration */ }
+
   return db
 }
+
+export type SessionMode = 'code' | 'chat'
 
 function generateId(): string {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789'
@@ -63,13 +84,21 @@ export interface SessionInfo {
   prompt_tokens: number
   completion_tokens: number
   estimated_cost: number
+  /** 'code' (default) — full coding agent. 'chat' — plain LLM chat with web tools only. */
+  mode: SessionMode
 }
 
-export function createSession(cwd: string, provider: string, model: string, title?: string): string {
+export function createSession(
+  cwd: string,
+  provider: string,
+  model: string,
+  title?: string,
+  mode: SessionMode = 'code',
+): string {
   const id = generateId()
   getDb()
-    .prepare(`INSERT INTO sessions (id, title, cwd, provider, model) VALUES (?, ?, ?, ?, ?)`)
-    .run(id, title || null, cwd, provider, model)
+    .prepare(`INSERT INTO sessions (id, title, cwd, provider, model, mode) VALUES (?, ?, ?, ?, ?, ?)`)
+    .run(id, title || null, cwd, provider, model, mode)
   return id
 }
 
@@ -87,19 +116,38 @@ export function updateSessionCwd(sessionId: string, cwd: string): void {
     .run(cwd, sessionId)
 }
 
-export function saveMessage(sessionId: string, message: ChatCompletionMessageParam): void {
+// Prepared statements live at module scope so we don't pay parse cost on
+// every saveMessage. The returns are lazily initialized on first use after
+// `getDb()` runs, which is when the pragmas + schema are applied.
+let _stmtInsertMessage: Database.Statement | null = null
+let _stmtTouchSession: Database.Statement | null = null
+let _stmtSaveMessageTx: ((args: { sessionId: string; role: string; content: string; toolCalls: string | null; toolCallId: string | null }) => void) | null = null
+
+function ensureSaveMessageStatements(): void {
+  if (_stmtSaveMessageTx) return
   const d = getDb()
+  _stmtInsertMessage = d.prepare(
+    `INSERT INTO messages (session_id, role, content, tool_calls, tool_call_id) VALUES (?, ?, ?, ?, ?)`,
+  )
+  // Increment message_count in-place rather than re-counting the whole
+  // table for the session — saves an O(N) scan on every assistant turn.
+  _stmtTouchSession = d.prepare(
+    `UPDATE sessions SET updated_at = datetime('now'), message_count = message_count + 1 WHERE id = ?`,
+  )
+  const insert = _stmtInsertMessage
+  const touch = _stmtTouchSession
+  _stmtSaveMessageTx = d.transaction((a: { sessionId: string; role: string; content: string; toolCalls: string | null; toolCallId: string | null }) => {
+    insert.run(a.sessionId, a.role, a.content, a.toolCalls, a.toolCallId)
+    touch.run(a.sessionId)
+  })
+}
+
+export function saveMessage(sessionId: string, message: ChatCompletionMessageParam): void {
+  ensureSaveMessageStatements()
   const content = typeof message.content === 'string' ? message.content : JSON.stringify(message.content)
   const toolCalls = 'tool_calls' in message && message.tool_calls ? JSON.stringify(message.tool_calls) : null
   const toolCallId = 'tool_call_id' in message ? (message as any).tool_call_id : null
-  const tx = d.transaction(() => {
-    d.prepare(`INSERT INTO messages (session_id, role, content, tool_calls, tool_call_id) VALUES (?, ?, ?, ?, ?)`)
-      .run(sessionId, message.role, content, toolCalls, toolCallId)
-    const row = d.prepare(`SELECT COUNT(*) as c FROM messages WHERE session_id = ?`).get(sessionId) as { c: number }
-    d.prepare(`UPDATE sessions SET updated_at = datetime('now'), message_count = ? WHERE id = ?`)
-      .run(row.c, sessionId)
-  })
-  tx()
+  _stmtSaveMessageTx!({ sessionId, role: message.role, content, toolCalls, toolCallId })
 }
 
 export function loadMessages(sessionId: string): ChatCompletionMessageParam[] {
@@ -120,19 +168,32 @@ export function loadMessages(sessionId: string): ChatCompletionMessageParam[] {
   })
 }
 
+function normalizeRow(row: any): SessionInfo {
+  return { ...row, mode: (row?.mode === 'chat' ? 'chat' : 'code') as SessionMode }
+}
+
 export function listSessions(limit = 100): SessionInfo[] {
-  return getDb().prepare(`SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?`).all(limit) as SessionInfo[]
+  const rows = getDb().prepare(`SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?`).all(limit) as any[]
+  return rows.map(normalizeRow)
 }
 
 export function getSession(sessionId: string): SessionInfo | null {
-  return (getDb().prepare(`SELECT * FROM sessions WHERE id = ?`).get(sessionId) as SessionInfo) || null
+  const row = getDb().prepare(`SELECT * FROM sessions WHERE id = ?`).get(sessionId) as any
+  return row ? normalizeRow(row) : null
 }
 
 export function deleteSession(sessionId: string): boolean {
   const d = getDb()
-  d.prepare(`DELETE FROM messages WHERE session_id = ?`).run(sessionId)
-  const result = d.prepare(`DELETE FROM sessions WHERE id = ?`).run(sessionId)
-  return result.changes > 0
+  // Wrap in a transaction so a crash between the two statements can't leave
+  // us with orphan messages — and so the row count we return reflects the
+  // committed state. With foreign_keys=ON the DELETE on sessions would
+  // cascade on its own, but the explicit messages DELETE is kept as
+  // belt-and-braces against a future migration that drops the FK.
+  const tx = d.transaction((id: string) => {
+    d.prepare(`DELETE FROM messages WHERE session_id = ?`).run(id)
+    return d.prepare(`DELETE FROM sessions WHERE id = ?`).run(id).changes
+  })
+  return tx(sessionId) > 0
 }
 
 export function updateSessionCost(sessionId: string, promptTokens: number, completionTokens: number, cost: number): void {
@@ -143,4 +204,9 @@ export function updateSessionCost(sessionId: string, promptTokens: number, compl
 
 export function closeDb(): void {
   if (db) { db.close(); db = null }
+  // Cached prepared statements hold a reference to the now-closed db.
+  // Drop them so the next getDb() rebuild re-prepares against the fresh handle.
+  _stmtInsertMessage = null
+  _stmtTouchSession = null
+  _stmtSaveMessageTx = null
 }

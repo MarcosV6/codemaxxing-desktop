@@ -4,6 +4,18 @@ export type ReasoningEffort = 'off' | 'low' | 'medium' | 'high' | 'max'
 export type MemoryType = 'user' | 'project' | 'feedback' | 'reference' | 'preference' | 'fact'
 export type ToolCallStatus = 'pending' | 'running' | 'done' | 'error' | 'denied'
 
+/** A device paired with this Codemaxxing instance, as exposed to the
+ *  renderer. The bearer token is intentionally NOT included here — it lives
+ *  in main and only travels to the device that originally redeemed the
+ *  pairing code. The renderer only needs metadata for the Settings list. */
+export interface PairedDeviceSummary {
+  id: string
+  label: string
+  platform: 'ios' | 'android' | 'macos' | 'windows' | 'linux' | 'browser' | 'cli' | 'unknown'
+  createdAt: number
+  lastSeenAt: number | null
+}
+
 export interface MemoryRecord {
   id: number
   type: MemoryType
@@ -112,7 +124,7 @@ export interface ElectronAPI {
 
   // Sessions
   session: {
-    create: (opts: { cwd: string; provider: string; model: string; title?: string }) => Promise<{ ok: boolean; session?: any; error?: string }>
+    create: (opts: { cwd: string; provider: string; model: string; title?: string; mode?: 'code' | 'chat' }) => Promise<{ ok: boolean; session?: any; error?: string }>
     list: () => Promise<{ ok: boolean; sessions?: any[]; error?: string }>
     get: (id: string) => Promise<{ ok: boolean; session?: any; messages?: any[]; error?: string }>
     delete: (id: string) => Promise<{ ok: boolean }>
@@ -123,7 +135,7 @@ export interface ElectronAPI {
 
   // Agent
   agent: {
-    send: (opts: { sessionId: string; message: string }) => Promise<{ ok: boolean; text?: string; aborted?: boolean; error?: string }>
+    send: (opts: { sessionId: string; message: string; images?: Array<{ id?: string; dataUrl: string; mediaType: string; name?: string }> }) => Promise<{ ok: boolean; text?: string; aborted?: boolean; error?: string }>
     abort: (sessionId: string) => Promise<{ ok: boolean; error?: string }>
     approvalResponse: (sessionId: string, callId: string, decision: ApprovalDecision) => Promise<{ ok: boolean; error?: string }>
     askUserResponse: (sessionId: string, askId: string, reply: string) => Promise<{ ok: boolean; error?: string }>
@@ -138,7 +150,8 @@ export interface ElectronAPI {
     onAskUser: (cb: (data: { sessionId: string; askId: string; question: string; options?: string[] }) => void) => () => void
     onPlanExit: (cb: (data: { sessionId: string; plan: string }) => void) => () => void
     onUsage: (cb: (data: { sessionId: string; usage: { promptTokens: number; completionTokens: number } }) => void) => () => void
-    onDone: (cb: (data: { sessionId: string; text: string; iterations: number; aborted: boolean; usage: { promptTokens: number; completionTokens: number; cost: number } }) => void) => () => void
+    onStats: (cb: (data: { sessionId: string; stats: { tokensPerSecond: number | null; contextWindow: number; isLocal: boolean } }) => void) => () => void
+    onDone: (cb: (data: { sessionId: string; text: string; iterations: number; aborted: boolean; usage: { promptTokens: number; completionTokens: number; cost: number }; stats?: { tokensPerSecond: number | null; contextWindow: number; isLocal: boolean } }) => void) => () => void
     onError: (cb: (data: { sessionId: string; error: string }) => void) => () => void
   }
 
@@ -256,6 +269,8 @@ export interface ElectronAPI {
     apiKey: (opts: { provider: string; apiKey: string; baseUrl?: string; label?: string }) =>
       Promise<{ ok: boolean; credential?: any; error?: string }>
     openrouterOAuth: () => Promise<{ ok: boolean; credential?: any; error?: string }>
+    anthropicOAuth: () => Promise<{ ok: boolean; credential?: any; error?: string }>
+    openaiOAuth: () => Promise<{ ok: boolean; credential?: any; error?: string }>
     anthropicSetupToken: () => Promise<{ ok: boolean; credential?: any; error?: string }>
     copilotDeviceFlow: () => Promise<{ ok: boolean; credential?: any; error?: string }>
     importCodex: () => Promise<{ ok: boolean; credential?: any; error?: string }>
@@ -278,8 +293,19 @@ export interface ElectronAPI {
 
   // Config
   config: {
-    get: () => Promise<{ ok: boolean; config?: { theme: string; autoApprove: boolean; approvalMode?: ApprovalMode; reasoningEffort?: ReasoningEffort; activeSkillIds?: string[]; lastCwd: string | null; lastProvider: string | null; lastModel: string | null }; error?: string }>
-    save: (config: { theme: string; autoApprove: boolean; approvalMode?: ApprovalMode; reasoningEffort?: ReasoningEffort; activeSkillIds?: string[]; lastCwd: string | null; lastProvider: string | null; lastModel: string | null }) => Promise<{ ok: boolean }>
+    get: () => Promise<{ ok: boolean; config?: { theme: string; autoApprove: boolean; approvalMode?: ApprovalMode; reasoningEffort?: ReasoningEffort; activeSkillIds?: string[]; lastCwd: string | null; lastProvider: string | null; lastModel: string | null; keepAliveInBackground?: boolean; autoLaunch?: boolean; remote?: { enabled: boolean; port: number; devices?: PairedDeviceSummary[] } }; error?: string }>
+    save: (config: { theme: string; autoApprove: boolean; approvalMode?: ApprovalMode; reasoningEffort?: ReasoningEffort; activeSkillIds?: string[]; lastCwd: string | null; lastProvider: string | null; lastModel: string | null; keepAliveInBackground?: boolean; autoLaunch?: boolean; remote?: { enabled: boolean; port: number; devices?: PairedDeviceSummary[] } }) => Promise<{ ok: boolean }>
+  }
+
+  // Remote access — HTTP+SSE server for phone clients / external tools
+  remote: {
+    status: () => Promise<{ ok: boolean; enabled: boolean; running: boolean; port: number; devices: PairedDeviceSummary[]; addresses: string[] }>
+    setEnabled: (enabled: boolean) => Promise<{ ok: boolean; error?: string }>
+    setPort: (port: number) => Promise<{ ok: boolean; error?: string }>
+    beginPairing: () => Promise<{ ok: boolean; code?: string; expiresAt?: number; pairUrl?: string; pairingUri?: string; ttlSeconds?: number; error?: string }>
+    cancelPairing: () => Promise<{ ok: boolean }>
+    revokeDevice: (deviceId: string) => Promise<{ ok: boolean; error?: string }>
+    onDevicesChanged: (cb: () => void) => (() => void)
   }
 
   // Themes
@@ -291,6 +317,42 @@ export interface ElectronAPI {
   project: {
     pickDirectory: () => Promise<{ ok: boolean; path?: string; name?: string }>
     defaultCwd: () => Promise<string>
+  }
+
+  // File search / tree / read (for @-mentions, command palette, Files panel)
+  files: {
+    search: (opts: { cwd: string; query: string; limit?: number }) => Promise<{
+      ok: boolean
+      files?: Array<{ path: string; name: string; dir: boolean; ext: string }>
+      truncated?: boolean
+      error?: string
+    }>
+    tree: (opts: { path: string }) => Promise<{
+      ok: boolean
+      entries?: Array<{ name: string; path: string; dir: boolean; size: number; hidden: boolean }>
+      error?: string
+    }>
+    read: (opts: { path: string; maxBytes?: number }) => Promise<{
+      ok: boolean
+      binary?: boolean
+      size?: number
+      ext?: string
+      truncated?: boolean
+      mtime?: number
+      content?: string
+      error?: string
+    }>
+    write: (opts: { path: string; cwd: string; content: string; expectedMtime?: number; force?: boolean }) => Promise<{
+      ok: boolean
+      mtime?: number
+      size?: number
+      conflict?: boolean
+      currentMtime?: number
+      currentContent?: string
+      truncated?: boolean
+      error?: string
+    }>
+    getPathForFile: (file: File) => string
   }
 
   // Preview — run arbitrary commands, stream output

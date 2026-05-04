@@ -9,6 +9,27 @@ export interface ToolCallRecord {
   diff?: string | null
 }
 
+export type MessageSegment =
+  | { kind: 'text'; id: string; content: string }
+  | { kind: 'thinking'; id: string; content: string }
+  | { kind: 'tool'; id: string; call: ToolCallRecord }
+
+/** Image attached to a user message (paste / drop / file picker). The
+ *  `dataUrl` is what we send to providers — base64-encoded so it round-trips
+ *  through SQLite and cleanly renders as an `<img src>` on reload. We keep
+ *  `mediaType` separate because Anthropic's API wants the bare MIME type
+ *  alongside the raw base64 (no data:-prefix), so we slice it back out at
+ *  send time rather than re-parsing the data URL each iteration. */
+export interface ImageAttachment {
+  id: string
+  dataUrl: string
+  mediaType: string
+  name?: string
+  width?: number
+  height?: number
+  sizeBytes?: number
+}
+
 export interface ChatMessage {
   id: string
   type: 'user' | 'assistant' | 'error' | 'tool'
@@ -16,7 +37,15 @@ export interface ChatMessage {
   timestamp: number
   toolCalls?: ToolCallRecord[]
   toolCallId?: string
+  /** Ordered segments preserving the temporal interleaving of text + tool
+   *  calls + thinking. When present, renderers should prefer this over
+   *  `content`/`toolCalls` which are flattened for backcompat. */
+  segments?: MessageSegment[]
+  /** Images attached to this user message. Persisted with the session. */
+  images?: ImageAttachment[]
 }
+
+export type SessionMode = 'code' | 'chat'
 
 export interface Session {
   id: string
@@ -29,6 +58,11 @@ export interface Session {
   cwd: string
   tokenCount: number
   estimatedCost: number
+  /**
+   * 'code' (default) — full coding agent with filesystem/shell tools.
+   * 'chat' — plain conversational LLM with web research only, no filesystem.
+   */
+  mode: SessionMode
 }
 
 export interface Theme {

@@ -5,9 +5,10 @@ import type { ApprovalMode, ReasoningEffort, HookRecord } from '../../types/elec
 import {
   X, Folder, Key, Palette, Zap, Trash2, Check, Globe, Terminal, Package, Smartphone,
   ExternalLink, Loader2, Sparkles, Brain, Plus, Lightbulb, Layers,
+  Copy, Power, AlertTriangle,
 } from 'lucide-react'
 
-type Tab = 'general' | 'agent' | 'skills' | 'hooks' | 'providers' | 'appearance'
+type Tab = 'general' | 'agent' | 'skills' | 'hooks' | 'providers' | 'appearance' | 'remote'
 
 export function SettingsModal() {
   const isOpen = useAppStore((s) => s.settingsOpen)
@@ -58,6 +59,7 @@ export function SettingsModal() {
             <TabButton icon={<Layers size={13} />} label="Hooks" active={tab === 'hooks'} onClick={() => setTab('hooks')} />
             <TabButton icon={<Key size={13} />} label="Providers" active={tab === 'providers'} onClick={() => setTab('providers')} />
             <TabButton icon={<Palette size={13} />} label="Appearance" active={tab === 'appearance'} onClick={() => setTab('appearance')} />
+            <TabButton icon={<Smartphone size={13} />} label="Remote" active={tab === 'remote'} onClick={() => setTab('remote')} />
           </div>
 
           <div className="flex-1 overflow-y-auto px-6 py-5" style={{ color: 'var(--theme-text)' }}>
@@ -136,6 +138,8 @@ export function SettingsModal() {
                 </div>
               </div>
             )}
+
+            {tab === 'remote' && <RemoteTab />}
           </div>
         </div>
       </div>
@@ -816,5 +820,406 @@ function HooksTab() {
         ))}
       </div>
     </div>
+  )
+}
+
+/**
+ * Remote access settings. Exposes the foundation for "talk to your Mac from
+ * your phone" via a Claude-Code-style pairing model:
+ *
+ *   1. The user enables the remote API server (HTTP + SSE on a local port).
+ *   2. They click "Pair a device" → the desktop generates a 6-character
+ *      code that's good for 5 minutes, displayed on screen as text + QR.
+ *   3. The phone (or any other client) redeems the code via POST /api/pair
+ *      and receives its own permanent device token.
+ *   4. The device shows up in the list below; revokable per-device.
+ *
+ * Each paired device has its own token. Revoking one doesn't kick the
+ * others — exactly what users expect from multi-device pairing in apps like
+ * Authy, Signal, or Claude Desktop.
+ *
+ * For off-LAN connectivity (cellular, etc.) the user layers a tunnel
+ * (Tailscale recommended) on top — the desktop intentionally surfaces the
+ * URL as plain `http://` so it's clear when you're on raw LAN vs tunneled.
+ */
+type RemoteStatus = Awaited<ReturnType<typeof window.electron.remote.status>>
+type PairingInfo = NonNullable<Awaited<ReturnType<typeof window.electron.remote.beginPairing>>>
+
+function RemoteTab() {
+  const appConfig = useAppStore((s) => s.appConfig)
+  const setAppConfig = useAppStore((s) => s.setAppConfig)
+
+  const [status, setStatus] = useState<RemoteStatus | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const [copied, setCopied] = useState<string | null>(null)
+  const [portDraft, setPortDraft] = useState<string>('')
+  const [pairing, setPairing] = useState<PairingInfo | null>(null)
+  const [pairingTtl, setPairingTtl] = useState<number>(0)
+
+  const refresh = async () => {
+    const r = await window.electron.remote.status()
+    if (r.ok) {
+      setStatus(r)
+      setPortDraft(String(r.port))
+    }
+  }
+  useEffect(() => { void refresh() }, [])
+
+  // Live update when a phone redeems a code on the other side. main.ts
+  // emits 'remote:devicesChanged' whenever the device list mutates.
+  useEffect(() => {
+    const off = window.electron.remote.onDevicesChanged(() => { void refresh() })
+    return off
+  }, [])
+
+  // Tick down the pairing-code TTL so the UI shows "expires in 4:23" not
+  // a stale wall-clock time. Cleared when no pairing is active.
+  useEffect(() => {
+    if (!pairing) { setPairingTtl(0); return }
+    const tick = () => setPairingTtl(Math.max(0, Math.floor(((pairing.expiresAt ?? 0) - Date.now()) / 1000)))
+    tick()
+    const t = setInterval(tick, 1000)
+    return () => clearInterval(t)
+  }, [pairing])
+
+  // When the code expires, drop it from the UI. The server already invalidates
+  // server-side; this just keeps the visible state in sync.
+  useEffect(() => {
+    if (pairing && pairingTtl <= 0) setPairing(null)
+  }, [pairing, pairingTtl])
+
+  const copy = async (label: string, value: string) => {
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopied(label)
+      setTimeout(() => setCopied(null), 1400)
+    } catch { /* ignore */ }
+  }
+
+  const updateFlag = async (key: 'keepAliveInBackground' | 'autoLaunch', value: boolean) => {
+    await setAppConfig({ ...appConfig, [key]: value })
+  }
+
+  const onToggleEnabled = async (next: boolean) => {
+    setBusy(true); setErr(null)
+    const r = await window.electron.remote.setEnabled(next)
+    setBusy(false)
+    if (!r.ok) setErr(r.error ?? 'Failed to toggle remote access')
+    if (!next) setPairing(null)  // clear any stale pairing UI on shutdown
+    await refresh()
+  }
+  const onSavePort = async () => {
+    const port = Number(portDraft)
+    if (!Number.isFinite(port) || port < 1024 || port > 65535) {
+      setErr('Port must be between 1024 and 65535')
+      return
+    }
+    setBusy(true); setErr(null)
+    const r = await window.electron.remote.setPort(port)
+    setBusy(false)
+    if (!r.ok) setErr(r.error ?? 'Failed to set port')
+    await refresh()
+  }
+  const onBeginPairing = async () => {
+    setBusy(true); setErr(null)
+    const r = await window.electron.remote.beginPairing()
+    setBusy(false)
+    if (!r.ok || !r.code) { setErr(r.error ?? 'Failed to start pairing'); return }
+    setPairing(r as PairingInfo)
+  }
+  const onCancelPairing = async () => {
+    await window.electron.remote.cancelPairing()
+    setPairing(null)
+  }
+  const onRevoke = async (id: string, label: string) => {
+    if (!confirm(`Revoke "${label}"? It will be disconnected immediately and won't be able to reconnect without re-pairing.`)) return
+    setBusy(true); setErr(null)
+    const r = await window.electron.remote.revokeDevice(id)
+    setBusy(false)
+    if (!r.ok) setErr(r.error ?? 'Failed to revoke device')
+    await refresh()
+  }
+
+  const enabled = status?.enabled ?? false
+  const running = status?.running ?? false
+  const lanUrls = (status?.addresses ?? []).filter((u) => !u.includes('127.0.0.1'))
+  const loopback = (status?.addresses ?? []).find((u) => u.includes('127.0.0.1')) ?? `http://127.0.0.1:${status?.port ?? 7843}`
+  const devices = status?.devices ?? []
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      <section className="space-y-2">
+        <div className="text-[11px] uppercase tracking-wider opacity-60 font-medium">Remote access (preview)</div>
+        <p className="text-[12.5px] leading-relaxed opacity-75">
+          Pair a phone, tablet, or another computer to drive this agent over the network. Each paired device gets its own credential and shows up below — revoke one without affecting the others. On the same Wi-Fi this works out of the box. For cellular, layer a tunnel like
+          {' '}<a href="https://tailscale.com" target="_blank" rel="noreferrer" className="underline opacity-90">Tailscale</a>{' '}
+          on both devices.
+        </p>
+      </section>
+
+      {/* Server on/off + status */}
+      <section className="rounded-lg p-4" style={{ backgroundColor: 'var(--theme-bg-subtle)', border: '1px solid var(--theme-border)' }}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-[13px] font-medium">
+              <Power size={13} style={{ color: enabled ? 'var(--theme-success)' : 'var(--theme-muted)' }} />
+              <span>Remote API server</span>
+              {enabled && (
+                <span className="text-[10px] uppercase tracking-wider font-mono px-1.5 py-0.5 rounded"
+                      style={{ color: running ? 'var(--theme-success)' : 'var(--theme-warning)',
+                               backgroundColor: `color-mix(in srgb, ${running ? 'var(--theme-success)' : 'var(--theme-warning)'} 12%, transparent)` }}>
+                  {running ? 'running' : 'stopped'}
+                </span>
+              )}
+            </div>
+            <div className="text-[11.5px] opacity-60 mt-0.5">
+              {enabled ? `Bound to port ${status?.port ?? 7843} · ${devices.length} paired device${devices.length === 1 ? '' : 's'}` : 'Off — nothing listening'}
+            </div>
+          </div>
+          <button
+            onClick={() => void onToggleEnabled(!enabled)}
+            disabled={busy}
+            className="px-3 py-1.5 rounded-md text-[12px] font-medium transition-colors disabled:opacity-50"
+            style={{
+              backgroundColor: enabled ? 'color-mix(in srgb, var(--theme-error) 14%, transparent)' : 'color-mix(in srgb, var(--theme-primary) 16%, transparent)',
+              color: enabled ? 'var(--theme-error)' : 'var(--theme-primary)',
+              border: '1px solid ' + (enabled ? 'color-mix(in srgb, var(--theme-error) 30%, transparent)' : 'color-mix(in srgb, var(--theme-primary) 30%, transparent)'),
+            }}
+          >
+            {busy ? <Loader2 size={11} className="animate-spin inline mr-1" /> : null}
+            {enabled ? 'Turn off' : 'Turn on'}
+          </button>
+        </div>
+
+        {err && (
+          <div className="mt-3 flex items-start gap-2 text-[11.5px] px-3 py-2 rounded"
+               style={{ color: 'var(--theme-error)', backgroundColor: 'color-mix(in srgb, var(--theme-error) 8%, transparent)' }}>
+            <AlertTriangle size={12} className="shrink-0 mt-[2px]" />
+            <span>{err}</span>
+          </div>
+        )}
+      </section>
+
+      {enabled && status && (
+        <>
+          {/* URLs */}
+          <section className="space-y-2">
+            <div className="text-[11px] uppercase tracking-wider opacity-60 font-medium">URLs</div>
+            {lanUrls.length === 0 && (
+              <div className="text-[12px] opacity-60 italic px-1">
+                No external network interfaces detected — only loopback URL is reachable from this Mac.
+              </div>
+            )}
+            {[...lanUrls, loopback].map((url) => (
+              <UrlRow key={url} url={url} loopback={url === loopback} onCopy={() => copy(url, url)} copied={copied === url} />
+            ))}
+          </section>
+
+          {/* Pair a device */}
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="text-[11px] uppercase tracking-wider opacity-60 font-medium">Pair a device</div>
+              {!pairing && (
+                <button
+                  onClick={() => void onBeginPairing()}
+                  disabled={busy}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium disabled:opacity-50"
+                  style={{ backgroundColor: 'color-mix(in srgb, var(--theme-primary) 14%, transparent)', color: 'var(--theme-primary)', border: '1px solid color-mix(in srgb, var(--theme-primary) 30%, transparent)' }}
+                >
+                  <Plus size={12} />
+                  Generate pairing code
+                </button>
+              )}
+            </div>
+            {pairing && (
+              <div className="rounded-lg p-4 space-y-3" style={{ backgroundColor: 'var(--theme-bg)', border: '1px solid color-mix(in srgb, var(--theme-primary) 30%, transparent)' }}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-wider opacity-60">One-time code</div>
+                    <div className="font-mono text-[28px] tracking-[0.2em] font-medium mt-1" style={{ color: 'var(--theme-primary)' }}>
+                      {pairing.code}
+                    </div>
+                    <div className="text-[11px] opacity-60 mt-1">
+                      expires in {Math.floor(pairingTtl / 60)}:{String(pairingTtl % 60).padStart(2, '0')} · single use
+                    </div>
+                  </div>
+                  <button onClick={() => void onCancelPairing()} className="text-[11px] opacity-60 hover:opacity-100 px-2 py-1 rounded">
+                    Cancel
+                  </button>
+                </div>
+                <div className="text-[11.5px] leading-relaxed opacity-80">
+                  On your other device, choose <span className="font-mono opacity-100">"Pair with Codemaxxing"</span> and enter this code, OR scan a QR encoding the URI below. The code is good for one device only.
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider opacity-60 mb-1">Pairing URI (deep link / QR payload)</div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 font-mono text-[11px] rounded-md px-3 py-2 truncate"
+                         style={{ backgroundColor: 'var(--theme-bg-subtle)', border: '1px solid var(--theme-border)' }}>
+                      {pairing.pairingUri}
+                    </div>
+                    <button
+                      onClick={() => pairing.pairingUri && void copy('uri', pairing.pairingUri)}
+                      className="w-8 h-8 rounded-md flex items-center justify-center hover:bg-white/5"
+                      style={{ border: '1px solid var(--theme-border)' }}
+                    >
+                      {copied === 'uri' ? <Check size={12} style={{ color: 'var(--theme-success)' }} /> : <Copy size={12} />}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider opacity-60 mb-1">Or POST this manually</div>
+                  <pre className="text-[10.5px] font-mono rounded-md px-3 py-2 overflow-x-auto"
+                       style={{ backgroundColor: 'var(--theme-bg-subtle)', border: '1px solid var(--theme-border)', color: 'var(--theme-muted)' }}>
+{`curl -X POST ${pairing.pairUrl} \\
+  -H "Content-Type: application/json" \\
+  -d '{"code":"${pairing.code}","label":"My iPhone","platform":"ios"}'`}
+                  </pre>
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* Paired devices list */}
+          <section className="space-y-2">
+            <div className="text-[11px] uppercase tracking-wider opacity-60 font-medium">Paired devices</div>
+            {devices.length === 0 ? (
+              <div className="text-[12px] opacity-60 italic px-1 py-3">
+                No devices paired yet. Click <span className="opacity-90">Generate pairing code</span> to add one.
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {devices.map((d) => (
+                  <DeviceRow key={d.id} device={d} onRevoke={() => void onRevoke(d.id, d.label)} />
+                ))}
+              </div>
+            )}
+          </section>
+
+          {/* Port */}
+          <section className="space-y-2">
+            <div className="text-[11px] uppercase tracking-wider opacity-60 font-medium">Port</div>
+            <div className="flex items-center gap-2">
+              <input
+                value={portDraft}
+                onChange={(e) => setPortDraft(e.target.value.replace(/\D/g, '').slice(0, 5))}
+                className="w-28 text-[12px] font-mono px-2 py-1.5 rounded-md outline-none"
+                style={{ backgroundColor: 'var(--theme-bg)', color: 'var(--theme-text)', border: '1px solid var(--theme-border)' }}
+              />
+              <button
+                onClick={() => void onSavePort()}
+                disabled={busy || portDraft === String(status.port)}
+                className="px-3 py-1.5 rounded-md text-[12px] font-medium disabled:opacity-40"
+                style={{ backgroundColor: 'color-mix(in srgb, var(--theme-primary) 14%, transparent)', color: 'var(--theme-primary)', border: '1px solid color-mix(in srgb, var(--theme-primary) 30%, transparent)' }}
+              >
+                Apply
+              </button>
+              <span className="text-[11px] opacity-50">restarts the server</span>
+            </div>
+          </section>
+        </>
+      )}
+
+      <hr style={{ borderColor: 'var(--theme-border)' }} />
+
+      <section className="space-y-3">
+        <div className="text-[11px] uppercase tracking-wider opacity-60 font-medium">24/7 operation</div>
+
+        <ToggleRow
+          title="Keep running in background"
+          description="Closing the window hides it instead of quitting. The agent loop and remote server stay alive. Available from the menubar / tray icon."
+          checked={!!appConfig.keepAliveInBackground}
+          onChange={(v) => void updateFlag('keepAliveInBackground', v)}
+        />
+        <ToggleRow
+          title="Launch at login"
+          description="Start Codemaxxing automatically when you sign in, hidden in the menubar. Required if you want the agent reachable after a restart without manually launching."
+          checked={!!appConfig.autoLaunch}
+          onChange={(v) => void updateFlag('autoLaunch', v)}
+        />
+
+        <div className="text-[11px] opacity-60 px-1 leading-relaxed">
+          macOS may still suspend the app on battery when the lid is closed.
+          For uninterrupted 24/7 operation, keep the Mac plugged in and the lid open
+          (or use a clamshell-mode dock).
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function DeviceRow({ device, onRevoke }: { device: { id: string; label: string; platform: string; createdAt: number; lastSeenAt: number | null }; onRevoke: () => void }) {
+  const platformLabel: Record<string, string> = {
+    ios: 'iOS', android: 'Android', macos: 'macOS', windows: 'Windows', linux: 'Linux',
+    browser: 'Browser', cli: 'CLI', unknown: 'Unknown',
+  }
+  const lastSeen = device.lastSeenAt ? formatRelative(device.lastSeenAt) : 'never'
+  return (
+    <div className="flex items-center justify-between rounded-md px-3 py-2"
+         style={{ backgroundColor: 'var(--theme-bg-subtle)', border: '1px solid var(--theme-border)' }}>
+      <div className="min-w-0">
+        <div className="text-[12.5px] font-medium truncate">{device.label}</div>
+        <div className="text-[10.5px] opacity-60 mt-0.5">
+          {platformLabel[device.platform] ?? device.platform} · paired {formatRelative(device.createdAt)} · last seen {lastSeen}
+        </div>
+      </div>
+      <button
+        onClick={onRevoke}
+        className="px-2.5 py-1 rounded-md text-[11px]"
+        style={{ color: 'var(--theme-error)', backgroundColor: 'color-mix(in srgb, var(--theme-error) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--theme-error) 25%, transparent)' }}
+      >
+        Revoke
+      </button>
+    </div>
+  )
+}
+
+function formatRelative(ts: number): string {
+  const delta = Date.now() - ts
+  if (delta < 60_000) return 'just now'
+  if (delta < 3_600_000) return Math.floor(delta / 60_000) + 'm ago'
+  if (delta < 86_400_000) return Math.floor(delta / 3_600_000) + 'h ago'
+  return Math.floor(delta / 86_400_000) + 'd ago'
+}
+
+function UrlRow({ url, loopback, onCopy, copied }: { url: string; loopback: boolean; onCopy: () => void; copied: boolean }) {
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex-1 font-mono text-[12px] rounded-md px-3 py-2 truncate flex items-center gap-2"
+           style={{ backgroundColor: 'var(--theme-bg)', border: '1px solid var(--theme-border)', color: 'var(--theme-text)' }}>
+        <Globe size={11} style={{ color: 'var(--theme-muted)' }} />
+        <span className="truncate">{url}</span>
+        {loopback && (
+          <span className="text-[9.5px] uppercase tracking-wider opacity-50 font-mono shrink-0">this Mac only</span>
+        )}
+      </div>
+      <button
+        onClick={onCopy}
+        title="Copy URL"
+        className="w-9 h-9 rounded-md flex items-center justify-center hover:bg-white/5"
+        style={{ border: '1px solid var(--theme-border)' }}
+      >
+        {copied ? <Check size={13} style={{ color: 'var(--theme-success)' }} /> : <Copy size={13} />}
+      </button>
+    </div>
+  )
+}
+
+function ToggleRow({ title, description, checked, onChange }: { title: string; description: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="flex items-start justify-between gap-4 p-3 rounded-lg cursor-pointer hover:bg-white/[0.02]"
+           style={{ border: '1px solid var(--theme-border)' }}>
+      <div>
+        <div className="text-[13px] font-medium">{title}</div>
+        <div className="text-[11.5px] opacity-65 mt-0.5 leading-relaxed">{description}</div>
+      </div>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-1 w-4 h-4"
+        style={{ accentColor: 'var(--theme-primary)' }}
+      />
+    </label>
   )
 }

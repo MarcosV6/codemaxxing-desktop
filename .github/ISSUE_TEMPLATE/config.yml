@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/MarcosV6/codemaxxing-desktop/security/policy
+    about: Please report security issues privately — see SECURITY.md.
+  - name: Question about the CLI version
+    url: https://github.com/MarcosV6/codemaxxing/issues
+    about: codemaxxing (terminal) lives in a separate repo with its own issue tracker.
+  - name: Discussion / general chat
+    url: https://github.com/MarcosV6/codemaxxing-desktop/discussions
+    about: For open-ended questions, ideas, or "is this normal?" — use Discussions, not Issues.

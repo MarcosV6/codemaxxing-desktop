@@ -49,18 +49,18 @@ export const PROVIDERS: ProviderDef[] = [
   {
     id: 'anthropic',
     name: 'Anthropic (Claude)',
-    methods: ['setup-token', 'api-key'],
+    methods: ['oauth', 'setup-token', 'api-key'],
     baseUrl: 'https://api.anthropic.com',
     consoleUrl: 'https://console.anthropic.com/settings/keys',
-    description: 'Claude Opus, Sonnet, Haiku — use your subscription or API key',
+    description: 'Claude Opus, Sonnet, Haiku — log in with Claude Pro/Max or API key',
   },
   {
     id: 'openai',
     name: 'OpenAI (ChatGPT)',
-    methods: ['cached-token', 'api-key'],
+    methods: ['oauth', 'cached-token', 'api-key'],
     baseUrl: 'https://api.openai.com/v1',
     consoleUrl: 'https://platform.openai.com/api-keys',
-    description: 'GPT-4o, GPT-5, o1 — use your ChatGPT CLI login or API key',
+    description: 'GPT-4o, GPT-5, o1 — log in with ChatGPT Plus/Pro or API key',
   },
   {
     id: 'qwen',
@@ -89,7 +89,8 @@ export const PROVIDERS: ProviderDef[] = [
     id: 'ollama',
     name: 'Ollama',
     methods: ['none'],
-    baseUrl: 'http://localhost:11434/v1',
+    // 127.0.0.1, not localhost — Node prefers ::1 but Ollama binds IPv4-only.
+    baseUrl: 'http://127.0.0.1:11434/v1',
     description: 'Local models via Ollama — auto-detected',
     local: true,
   },
@@ -97,7 +98,8 @@ export const PROVIDERS: ProviderDef[] = [
     id: 'lmstudio',
     name: 'LM Studio',
     methods: ['none'],
-    baseUrl: 'http://localhost:1234/v1',
+    // 127.0.0.1, not localhost — Node prefers ::1 but LM Studio binds IPv4-only.
+    baseUrl: 'http://127.0.0.1:1234/v1',
     description: 'Local models via LM Studio — auto-detected',
     local: true,
   },

@@ -19,10 +19,11 @@ export function AskUserPrompt({ ask }: Props) {
 
   return (
     <div
-      className="mb-5 rounded-xl p-4 animate-fade-in"
+      className="mb-5 rounded-xl p-4 animate-fade-in relative overflow-hidden"
       style={{
-        backgroundColor: 'color-mix(in srgb, var(--theme-primary) 6%, transparent)',
-        border: '1px solid color-mix(in srgb, var(--theme-primary) 35%, transparent)',
+        backgroundColor: 'color-mix(in srgb, var(--theme-primary) 5%, transparent)',
+        border: '1px solid color-mix(in srgb, var(--theme-primary) 18%, transparent)',
+        boxShadow: 'inset 3px 0 0 0 var(--theme-primary)',
       }}
     >
       <div className="flex items-center gap-2 mb-2">
@@ -58,11 +59,11 @@ export function AskUserPrompt({ ask }: Props) {
             value={reply}
             onChange={(e) => setReply(e.target.value)}
             placeholder="Type your answer…"
-            className="flex-1 text-[13px] px-3 py-2 rounded-md outline-none"
+            className="flex-1 text-[13px] px-3 py-2 rounded-md outline-none focus-ring"
             style={{
-              backgroundColor: 'var(--theme-bg)',
+              backgroundColor: 'var(--theme-bg-raised)',
               color: 'var(--theme-text)',
-              border: '1px solid var(--theme-border)',
+              border: '1px solid var(--theme-hairline)',
             }}
           />
           <button

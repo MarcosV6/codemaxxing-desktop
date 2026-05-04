@@ -1,12 +1,14 @@
 import { create } from 'zustand'
 import type {
   ChatMessage,
+  MessageSegment,
   Session,
   Theme,
   ToolCallRecord,
   PendingApproval,
   PendingMCPApproval,
   AuthCredentialDisplay,
+  ImageAttachment,
   Task,
 } from '../types'
 import type {
@@ -17,6 +19,7 @@ import type {
   CheckpointRecord,
   BackgroundAgentRecord,
   ScheduledTaskRecord,
+  PairedDeviceSummary,
 } from '../types/electron'
 
 export type AuthMethod = 'oauth' | 'api-key' | 'setup-token' | 'cached-token' | 'device-flow' | 'none'
@@ -52,6 +55,14 @@ interface AppConfig {
   lastCwd: string | null
   lastProvider: string | null
   lastModel: string | null
+  // 24/7 / remote-access flags. Optional in the store's view because they
+  // were added later and old configs persist without them — defaults
+  // applied in mergeConfig().
+  keepAliveInBackground?: boolean
+  autoLaunch?: boolean
+  // We don't store the device tokens in the renderer — only metadata.
+  // PairedDeviceSummary mirrors what main.ts strips before sending in `remote:status`.
+  remote?: { enabled: boolean; port: number; devices?: PairedDeviceSummary[] }
 }
 
 interface SessionMeta {
@@ -66,6 +77,7 @@ interface SessionMeta {
   prompt_tokens: number
   completion_tokens: number
   estimated_cost: number
+  mode?: 'code' | 'chat'
 }
 
 export interface PendingAsk {
@@ -106,8 +118,18 @@ interface AppState {
   currentAssistantText: string
   currentThinkingText: string
   currentToolCalls: ToolCallRecord[]
+  /** Timeline of live segments in stream order. Prefer this for rendering. */
+  currentSegments: MessageSegment[]
   currentIteration: number
   currentUsage: { promptTokens: number; completionTokens: number } | null
+  /**
+   * Most recent non-zero prompt_tokens from a single API call. Represents the
+   * current fill of the context window (prior messages + system + tools) so
+   * the status bar gauge can reflect it accurately. Persists across runs.
+   */
+  lastPromptTokens: number | null
+  /** Streaming stats (tok/s, context window, locality). Persists across runs for display. */
+  currentStats: { tokensPerSecond: number | null; contextWindow: number; isLocal: boolean } | null
   currentTasks: Task[]
 
   // ── Approvals / asks / plans ──
@@ -130,7 +152,9 @@ interface AppState {
   // ── UI state ──
   settingsOpen: boolean
   previewOpen: boolean
+  filesPanelOpen: boolean
   activeDrawer: DrawerKind
+  commandPaletteOpen: boolean
 
   // ── Actions ──
   init: () => Promise<void>
@@ -143,6 +167,11 @@ interface AppState {
   setReasoningEffort: (effort: ReasoningEffort) => Promise<void>
   setActiveSkillIds: (ids: string[]) => Promise<void>
   setLastCwd: (cwd: string) => Promise<void>
+  /** Generic config writer used by Settings panels that touch fields without
+   *  a dedicated setter (24/7 toggles, remote-access wrapper, etc.). Round-trips
+   *  through `window.electron.config.save` AND updates the local store so the
+   *  UI reflects the change without waiting for a refetch. */
+  setAppConfig: (next: AppConfig) => Promise<void>
 
   loadModels: (providerId: string) => Promise<void>
   saveCredential: (cred: { provider: string; apiKey: string; baseUrl: string; label?: string }) => Promise<void>
@@ -153,13 +182,14 @@ interface AppState {
   clearAuthFlowStatus: () => void
 
   loadSessions: () => Promise<void>
-  createSession: (opts: { cwd: string; provider: string; model: string; title?: string }) => Promise<string | null>
+  createSession: (opts: { cwd: string; provider: string; model: string; title?: string; mode?: 'code' | 'chat' }) => Promise<string | null>
   switchSession: (sessionId: string) => Promise<void>
   deleteSession: (sessionId: string) => Promise<void>
   updateSessionCwd: (sessionId: string, cwd: string) => Promise<void>
   updateSessionModel: (sessionId: string, provider: string, model: string) => Promise<void>
+  renameSession: (sessionId: string, title: string) => Promise<void>
 
-  sendMessage: (message: string) => Promise<void>
+  sendMessage: (message: string, images?: ImageAttachment[]) => Promise<void>
   abortCurrent: () => Promise<void>
   respondToApproval: (decision: 'yes' | 'no' | 'always') => Promise<void>
   respondToMCPApproval: (decision: boolean) => void
@@ -191,10 +221,29 @@ interface AppState {
   closeSettings: () => void
   togglePreview: () => void
   setPreviewOpen: (open: boolean) => void
+  toggleFilesPanel: () => void
+  setFilesPanelOpen: (open: boolean) => void
   setDrawer: (drawer: DrawerKind) => void
+  setCommandPaletteOpen: (open: boolean) => void
 }
 
 let cachedProviderDefs: Array<Omit<ProviderInfo, 'authed'>> | null = null
+
+/**
+ * Subscriptions installed by `init()`. Captured at module scope so a re-entry
+ * (Vite HMR, a defensive double-init, the dev-mocks fallback path) tears down
+ * the previous listeners before installing a fresh set. Without this, every
+ * agent event ran its callback N times — the visible symptom is duplicate
+ * tokens streaming into a bubble after a hot reload, plus a slow accumulation
+ * of work on every IPC chunk.
+ */
+const ipcUnsubs: Array<() => void> = []
+function clearIpcSubscriptions(): void {
+  while (ipcUnsubs.length > 0) {
+    const off = ipcUnsubs.pop()
+    try { off?.() } catch { /* swallow — best-effort teardown */ }
+  }
+}
 
 async function loadProviderDefs(): Promise<Array<Omit<ProviderInfo, 'authed'>>> {
   if (cachedProviderDefs) return cachedProviderDefs
@@ -237,11 +286,41 @@ function convertPersistedMessages(rawMessages: any[]): ChatMessage[] {
   const out: ChatMessage[] = []
   for (const m of rawMessages) {
     if (m.role === 'user') {
+      // User messages are stored either as a plain string (text-only) or as
+      // a multi-part array `[{type:'text'},{type:'image_url'}]` when the
+      // user attached images. Split those parts back out so the renderer
+      // shows real thumbnails instead of a JSON blob.
+      let content: string
+      let images: ImageAttachment[] | undefined
+      if (typeof m.content === 'string') {
+        content = m.content
+      } else if (Array.isArray(m.content)) {
+        const texts: string[] = []
+        const imgs: ImageAttachment[] = []
+        for (const part of m.content as any[]) {
+          if (part?.type === 'text' && typeof part.text === 'string') {
+            texts.push(part.text)
+          } else if (part?.type === 'image_url' && part.image_url?.url) {
+            const url: string = part.image_url.url
+            const m1 = url.match(/^data:([^;]+);base64,/)
+            imgs.push({
+              id: 'img_' + hex(),
+              dataUrl: url,
+              mediaType: m1?.[1] ?? 'image/png',
+            })
+          }
+        }
+        content = texts.join('\n')
+        images = imgs.length > 0 ? imgs : undefined
+      } else {
+        content = ''
+      }
       out.push({
         id: 'msg_' + hex(),
         type: 'user',
-        content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+        content,
         timestamp: Date.now(),
+        ...(images ? { images } : {}),
       })
     } else if (m.role === 'assistant') {
       const content = typeof m.content === 'string' ? m.content : ''
@@ -298,6 +377,7 @@ function toSessionFromMeta(meta: SessionMeta, messages: ChatMessage[] = []): Ses
     cwd: meta.cwd,
     tokenCount: meta.prompt_tokens + meta.completion_tokens,
     estimatedCost: meta.estimated_cost,
+    mode: meta.mode === 'chat' ? 'chat' : 'code',
   }
 }
 
@@ -322,6 +402,15 @@ function mergeConfig(raw: any): AppConfig {
     lastCwd: raw?.lastCwd ?? null,
     lastProvider: raw?.lastProvider ?? null,
     lastModel: raw?.lastModel ?? null,
+    keepAliveInBackground: !!raw?.keepAliveInBackground,
+    autoLaunch: !!raw?.autoLaunch,
+    ...(raw?.remote && typeof raw.remote === 'object'
+      ? { remote: {
+          enabled: !!raw.remote.enabled,
+          port: typeof raw.remote.port === 'number' ? raw.remote.port : 7843,
+          devices: Array.isArray(raw.remote.devices) ? raw.remote.devices : [],
+        } }
+      : {}),
   }
 }
 
@@ -341,8 +430,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   currentAssistantText: '',
   currentThinkingText: '',
   currentToolCalls: [],
+  currentSegments: [],
   currentIteration: 0,
   currentUsage: null,
+  lastPromptTokens: null,
+  currentStats: null,
   currentTasks: [],
   pendingApproval: null,
   pendingMCPApproval: null,
@@ -357,7 +449,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeTheme: null,
   settingsOpen: false,
   previewOpen: false,
+  filesPanelOpen: false,
   activeDrawer: null,
+  commandPaletteOpen: false,
 
   init: async () => {
     if (get().initialized || get().loading) return
@@ -367,6 +461,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         const { installBrowserMock } = await import('../dev-mocks/electron-browser')
         installBrowserMock()
       }
+      // Defensive: tear down any subscriptions left over from a prior init
+      // (Vite HMR boundary, an aborted init that didn't reach the `initialized`
+      // flag, etc). Without this, a second init would double-fire every event.
+      clearIpcSubscriptions()
+      // Tiny helper that captures the unsubscribe so we can call it on
+      // re-init / shutdown. Each on*() returns its own teardown closure.
+      const sub = (off: () => void): void => { ipcUnsubs.push(off) }
+
       const themesResult = await window.electron.themes.list()
       const themes: Theme[] = themesResult.ok ? (themesResult.themes || []) : []
 
@@ -382,62 +484,114 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       set({ themes, activeTheme, appConfig })
 
-      window.electron.agent.onText(({ sessionId, delta }) => {
-        if (sessionId !== get().activeSessionId) return
-        set((s) => ({ currentAssistantText: s.currentAssistantText + delta }))
-      })
-
-      window.electron.agent.onThinking(({ sessionId, delta }) => {
-        if (sessionId !== get().activeSessionId) return
-        set((s) => ({ currentThinkingText: s.currentThinkingText + delta }))
-      })
-
-      window.electron.agent.onToolCall(({ sessionId, call }) => {
+      sub(window.electron.agent.onText(({ sessionId, delta }) => {
         if (sessionId !== get().activeSessionId) return
         set((s) => {
-          const existing = s.currentToolCalls.findIndex(tc => tc.id === call.id)
-          if (existing >= 0) {
-            const next = [...s.currentToolCalls]
-            next[existing] = { ...next[existing], ...call }
-            return { currentToolCalls: next }
+          const segs = s.currentSegments
+          const last = segs[segs.length - 1]
+          let nextSegs: MessageSegment[]
+          if (last && last.kind === 'text') {
+            nextSegs = [...segs.slice(0, -1), { ...last, content: last.content + delta }]
+          } else {
+            nextSegs = [...segs, { kind: 'text', id: 'seg_' + hex(8), content: delta }]
           }
-          return { currentToolCalls: [...s.currentToolCalls, call as ToolCallRecord] }
+          return {
+            currentAssistantText: s.currentAssistantText + delta,
+            currentSegments: nextSegs,
+          }
         })
-      })
+      }))
 
-      window.electron.agent.onIteration(({ sessionId, iteration }) => {
+      sub(window.electron.agent.onThinking(({ sessionId, delta }) => {
+        if (sessionId !== get().activeSessionId) return
+        set((s) => {
+          const segs = s.currentSegments
+          const last = segs[segs.length - 1]
+          let nextSegs: MessageSegment[]
+          if (last && last.kind === 'thinking') {
+            nextSegs = [...segs.slice(0, -1), { ...last, content: last.content + delta }]
+          } else {
+            nextSegs = [...segs, { kind: 'thinking', id: 'seg_' + hex(8), content: delta }]
+          }
+          return {
+            currentThinkingText: s.currentThinkingText + delta,
+            currentSegments: nextSegs,
+          }
+        })
+      }))
+
+      sub(window.electron.agent.onToolCall(({ sessionId, call }) => {
+        if (sessionId !== get().activeSessionId) return
+        set((s) => {
+          // Flat tool list — keep for backcompat/onDone flattening.
+          const existing = s.currentToolCalls.findIndex(tc => tc.id === call.id)
+          const nextCalls = existing >= 0
+            ? s.currentToolCalls.map((tc, i) => i === existing ? { ...tc, ...call } : tc)
+            : [...s.currentToolCalls, call as ToolCallRecord]
+
+          // Segment timeline — update in place if we've seen this call id
+          // before, otherwise append a new tool segment at the current tail.
+          const segIdx = s.currentSegments.findIndex(seg => seg.kind === 'tool' && seg.call.id === call.id)
+          const nextSegs: MessageSegment[] = segIdx >= 0
+            ? s.currentSegments.map((seg, i) =>
+                i === segIdx && seg.kind === 'tool'
+                  ? { ...seg, call: { ...seg.call, ...call } as ToolCallRecord }
+                  : seg,
+              )
+            : [...s.currentSegments, { kind: 'tool', id: call.id, call: call as ToolCallRecord }]
+
+          return { currentToolCalls: nextCalls, currentSegments: nextSegs }
+        })
+      }))
+
+      sub(window.electron.agent.onIteration(({ sessionId, iteration }) => {
         if (sessionId !== get().activeSessionId) return
         set({ currentIteration: iteration })
-      })
+      }))
 
-      window.electron.agent.onUsage(({ sessionId, usage }) => {
+      sub(window.electron.agent.onUsage(({ sessionId, usage }) => {
         if (sessionId !== get().activeSessionId) return
         set((s) => ({
           currentUsage: {
             promptTokens: (s.currentUsage?.promptTokens ?? 0) + usage.promptTokens,
             completionTokens: (s.currentUsage?.completionTokens ?? 0) + usage.completionTokens,
           },
+          // Track last non-zero prompt count as the current context fill.
+          lastPromptTokens: usage.promptTokens > 0 ? usage.promptTokens : s.lastPromptTokens,
         }))
-      })
+      }))
 
-      window.electron.agent.onTasks(({ sessionId, tasks }) => {
+      sub(window.electron.agent.onStats(({ sessionId, stats }) => {
+        if (sessionId !== get().activeSessionId) return
+        set({ currentStats: stats })
+      }))
+
+      sub(window.electron.agent.onTasks(({ sessionId, tasks }) => {
         if (sessionId !== get().activeSessionId) return
         set({ currentTasks: tasks as Task[] })
-      })
+      }))
 
-      window.electron.agent.onApprovalRequest(({ sessionId, call }) => {
+      sub(window.electron.agent.onApprovalRequest(({ sessionId, call }) => {
+        // Only show approval modal for the visible session — a run on a
+        // background session must not pop a modal over the user's current
+        // chat. Main process keeps the request pending; switching back to
+        // that session won't auto-show it (the modal was missed), but a
+        // future event will, and the user can /stop the background run.
+        if (sessionId !== get().activeSessionId) return
         set({ pendingApproval: { sessionId, call } })
-      })
+      }))
 
-      window.electron.agent.onAskUser(({ sessionId, askId, question, options }) => {
+      sub(window.electron.agent.onAskUser(({ sessionId, askId, question, options }) => {
+        if (sessionId !== get().activeSessionId) return
         set({ pendingAsk: { sessionId, askId, question, options } })
-      })
+      }))
 
-      window.electron.agent.onPlanExit(({ sessionId, plan }) => {
+      sub(window.electron.agent.onPlanExit(({ sessionId, plan }) => {
+        if (sessionId !== get().activeSessionId) return
         set({ pendingPlan: { sessionId, plan } })
-      })
+      }))
 
-      window.electron.agent.onDone(({ sessionId, text, usage }) => {
+      sub(window.electron.agent.onDone(({ sessionId, text, usage, stats }) => {
         if (sessionId !== get().activeSessionId) return
         set((s) => {
           if (!s.activeSession) {
@@ -446,7 +600,9 @@ export const useAppStore = create<AppState>((set, get) => ({
               currentAssistantText: '',
               currentThinkingText: '',
               currentToolCalls: [],
+              currentSegments: [],
               currentUsage: null,
+              currentStats: stats ?? s.currentStats,
               currentIteration: 0,
             }
           }
@@ -456,6 +612,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             content: text || s.currentAssistantText,
             timestamp: Date.now(),
             toolCalls: s.currentToolCalls.length > 0 ? s.currentToolCalls : undefined,
+            segments: s.currentSegments.length > 0 ? s.currentSegments : undefined,
           }
           const updatedSession: Session = {
             ...s.activeSession,
@@ -470,14 +627,17 @@ export const useAppStore = create<AppState>((set, get) => ({
             currentAssistantText: '',
             currentThinkingText: '',
             currentToolCalls: [],
+            currentSegments: [],
             currentUsage: null,
+            // Preserve stats so StatusBar keeps showing context / last tps.
+            currentStats: stats ?? s.currentStats,
             currentIteration: 0,
           }
         })
         void get().loadSessions()
-      })
+      }))
 
-      window.electron.agent.onError(({ sessionId, error }) => {
+      sub(window.electron.agent.onError(({ sessionId, error }) => {
         if (sessionId !== get().activeSessionId) return
         set((s) => {
           if (!s.activeSession) return { isRunning: false }
@@ -493,30 +653,31 @@ export const useAppStore = create<AppState>((set, get) => ({
             currentAssistantText: '',
             currentThinkingText: '',
             currentToolCalls: [],
+            currentSegments: [],
           }
         })
-      })
+      }))
 
-      window.electron.mcp.onApprovalRequest((data) => {
+      sub(window.electron.mcp.onApprovalRequest((data) => {
         set({ pendingMCPApproval: data })
-      })
+      }))
 
-      window.electron.mcp.onStatus(({ name, status }) => {
+      sub(window.electron.mcp.onStatus(({ name, status }) => {
         console.log('[mcp]', name, status)
-      })
+      }))
 
-      window.electron.auth.onStatus(({ provider, method, message }) => {
+      sub(window.electron.auth.onStatus(({ provider, method, message }) => {
         const curr = get().authFlowStatus
         if (!curr || curr.provider !== provider || curr.method !== method) {
           set({ authFlowStatus: { provider, method, messages: [message] } })
         } else {
           set({ authFlowStatus: { ...curr, messages: [...curr.messages, message] } })
         }
-      })
+      }))
 
       // Live updates for background agents and cron
-      window.electron.bgAgents.onUpdate(() => { void get().loadBgAgents() })
-      window.electron.cron.onFired(() => { void get().loadCronTasks() })
+      sub(window.electron.bgAgents.onUpdate(() => { void get().loadBgAgents() }))
+      sub(window.electron.cron.onFired(() => { void get().loadCronTasks() }))
 
       await get().refreshProvidersAndCredentials()
       await get().loadSessions()
@@ -611,6 +772,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ appConfig: newConfig })
   },
 
+  setAppConfig: async (next: AppConfig) => {
+    // Persist + locally apply in lock-step. Main re-applies side-effects
+    // (powerSaveBlocker, login items, tray menu) inside its config:save handler.
+    await window.electron.config.save(next as any)
+    set({ appConfig: next })
+  },
+
   loadModels: async (providerId: string) => {
     set({ loading: true })
     try {
@@ -655,6 +823,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       switch (true) {
         case provider === 'openrouter' && method === 'oauth':
           result = await window.electron.auth.openrouterOAuth(); break
+        case provider === 'anthropic' && method === 'oauth':
+          result = await window.electron.auth.anthropicOAuth(); break
+        case provider === 'openai' && method === 'oauth':
+          result = await window.electron.auth.openaiOAuth(); break
         case provider === 'anthropic' && method === 'setup-token':
           result = await window.electron.auth.anthropicSetupToken(); break
         case provider === 'copilot' && method === 'device-flow':
@@ -670,6 +842,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       result = { ok: false, error: err?.message ?? String(err) }
     }
     await get().refreshProvidersAndCredentials()
+    // Clear the live status banner once the flow has actually finished —
+    // otherwise the SettingsModal banner would stay stuck on "Finishing…"
+    // because the status state remains populated even after the IPC resolves.
+    set({ authFlowStatus: null })
     return result
   },
 
@@ -696,7 +872,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       currentAssistantText: '',
       currentThinkingText: '',
       currentToolCalls: [],
+      currentSegments: [],
       currentUsage: null,
+      lastPromptTokens: null,
+      currentStats: null,
       currentIteration: 0,
     })
     await get().loadSessions()
@@ -710,16 +889,30 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (!result.ok || !result.session) return
       const meta = result.session as SessionMeta
       const messages = convertPersistedMessages(result.messages || [])
+      // Clear *all* live + pending state when crossing the session boundary.
+      // Previously we left pendingApproval / pendingMCPApproval / lastPromptTokens
+      // dangling, which caused stale prompts from the OLD session's run to
+      // pop up on the NEW session and the StatusBar to show the wrong
+      // context-fill number for the first frame after switching.
       set({
         activeSession: toSessionFromMeta(meta, messages),
         activeSessionId: sessionId,
         currentAssistantText: '',
         currentThinkingText: '',
         currentToolCalls: [],
+        currentSegments: [],
         currentUsage: null,
+        currentStats: null,
         currentIteration: 0,
+        pendingApproval: null,
+        pendingMCPApproval: null,
         pendingAsk: null,
         pendingPlan: null,
+        lastPromptTokens: 0,
+        // isRunning is intentionally NOT cleared here — if the user switches
+        // away during a run and back before it finishes, the StatusBar should
+        // still show "running". onDone for the now-active session will flip
+        // it false. (We rely on the main process serializing per-session.)
       })
     } finally {
       set({ loading: false })
@@ -751,21 +944,33 @@ export const useAppStore = create<AppState>((set, get) => ({
     await get().loadSessions()
   },
 
-  sendMessage: async (message: string) => {
+  renameSession: async (sessionId: string, title: string) => {
+    const trimmed = title.trim()
+    if (!trimmed) return
+    await window.electron.session.updateTitle(sessionId, trimmed)
+    set((s) => ({
+      activeSession: s.activeSession && s.activeSession.id === sessionId ? { ...s.activeSession, title: trimmed } : s.activeSession,
+    }))
+    await get().loadSessions()
+  },
+
+  sendMessage: async (message: string, images?: ImageAttachment[]) => {
     const { activeSessionId, activeSession, isRunning } = get()
     if (!activeSessionId || !activeSession || isRunning) return
 
-    // Intercept slash commands locally — don't send to agent
+    // Slash commands always run locally and don't carry images.
     if (message.startsWith('/')) {
       const handled = await get().dispatchSlashCommand(message)
       if (handled) return
     }
 
+    const hasImages = !!images && images.length > 0
     const userMsg: ChatMessage = {
       id: 'msg_' + hex(),
       type: 'user',
       content: message,
       timestamp: Date.now(),
+      ...(hasImages ? { images } : {}),
     }
     set((s) => ({
       activeSession: s.activeSession ? { ...s.activeSession, messages: [...s.activeSession.messages, userMsg] } : null,
@@ -773,26 +978,42 @@ export const useAppStore = create<AppState>((set, get) => ({
       currentAssistantText: '',
       currentThinkingText: '',
       currentToolCalls: [],
+      currentSegments: [],
       currentUsage: null,
       currentIteration: 0,
     }))
 
     if ((activeSession.title === 'Untitled' || !activeSession.title) && activeSession.messages.length === 0) {
-      const newTitle = message.split('\n')[0].slice(0, 60)
+      // Image-only sends still need a title — fall back to a friendly stub
+      // rather than leaving "Untitled" forever.
+      const newTitle = message.trim()
+        ? message.split('\n')[0].slice(0, 60)
+        : hasImages ? `Image (${images!.length})` : 'Untitled'
       await window.electron.session.updateTitle(activeSessionId, newTitle)
       set((s) => ({
         activeSession: s.activeSession ? { ...s.activeSession, title: newTitle } : null,
       }))
     }
 
-    await window.electron.agent.send({ sessionId: activeSessionId, message })
+    await window.electron.agent.send({
+      sessionId: activeSessionId,
+      message,
+      ...(hasImages
+        ? { images: images!.map(img => ({ id: img.id, dataUrl: img.dataUrl, mediaType: img.mediaType, name: img.name })) }
+        : {}),
+    })
   },
 
   abortCurrent: async () => {
     const { activeSessionId } = get()
     if (!activeSessionId) return
+    // Don't optimistically flip isRunning here. The agent loop has to finish
+    // its current iteration before it sees the abort signal, after which it
+    // emits agent:done with `aborted: true`. If we cleared the flag now, the
+    // user could fire off a new sendMessage during the gap and main.ts would
+    // reject it with "A run is already in progress" — confusing UX. Letting
+    // onDone be the single source of truth keeps the UI honest.
     await window.electron.agent.abort(activeSessionId)
-    set({ isRunning: false })
   },
 
   respondToApproval: async (decision) => {
@@ -1040,11 +1261,27 @@ export const useAppStore = create<AppState>((set, get) => ({
         get().openSettings()
         return true
       }
+      case 'init': {
+        // Scaffold a CODEMAXXING.md by handing the agent a precise, self-
+        // contained instruction. We don't echo `/init` itself — we send the
+        // expanded prompt as if the user typed it, so the agent's reply
+        // reads naturally in the transcript.
+        const initPrompt =
+          'Please create a CODEMAXXING.md file at the repo root for this project. ' +
+          'First read package.json, README (if any), and the top-level directory layout to derive accurate content — do not invent. ' +
+          'The file should be a concise project brief (under ~200 lines) covering: one-paragraph overview, stack (languages/frameworks/key libs/package manager), directory layout (only the parts that matter), commands (exact invocations for install/dev/build/test/lint/typecheck), architectural notes & conventions, gotchas, and any project-specific rules. ' +
+          'Use markdown with ## section headings. ' +
+          'If CODEMAXXING.md already exists, propose targeted edits via edit_file rather than overwriting. ' +
+          'Do NOT create a CLAUDE.md or AGENTS.md — this app is CODEMAXXING.'
+        await get().sendMessage(initPrompt)
+        return true
+      }
       case 'help': {
         pushUserEcho(trimmed)
         pushSystemMessage(
           [
             '**Slash commands**',
+            '- `/init` — scaffold a CODEMAXXING.md project-rules file',
             '- `/diff [staged]` · `/status` · `/log [n]` — inspect git',
             '- `/commit <msg>` · `/push` · `/undo` — git actions (auto-stages for commit)',
             '- `/cost` — current session cost',
@@ -1083,22 +1320,41 @@ export const useAppStore = create<AppState>((set, get) => ({
   closeSettings: () => set({ settingsOpen: false }),
   togglePreview: () => set((s) => ({ previewOpen: !s.previewOpen })),
   setPreviewOpen: (open: boolean) => set({ previewOpen: open }),
+  toggleFilesPanel: () => set((s) => ({ filesPanelOpen: !s.filesPanelOpen })),
+  setFilesPanelOpen: (open: boolean) => set({ filesPanelOpen: open }),
   setDrawer: (drawer) => set({ activeDrawer: drawer }),
+  setCommandPaletteOpen: (open: boolean) => set({ commandPaletteOpen: open }),
 }))
 
 function defaultModelsFor(providerId: string): ModelInfo[] {
   if (providerId === 'anthropic') {
     return [
-      { name: 'claude-sonnet-4-6', id: 'claude-sonnet-4-6' },
+      { name: 'claude-opus-4-7', id: 'claude-opus-4-7' },
       { name: 'claude-opus-4-6', id: 'claude-opus-4-6' },
+      { name: 'claude-sonnet-4-6', id: 'claude-sonnet-4-6' },
       { name: 'claude-haiku-4-5-20251001', id: 'claude-haiku-4-5-20251001' },
     ]
   }
   if (providerId === 'openai') {
     return [
+      { name: 'gpt-5.5-pro', id: 'gpt-5.5-pro' },
+      { name: 'gpt-5.5', id: 'gpt-5.5' },
+      { name: 'gpt-5.4-pro', id: 'gpt-5.4-pro' },
+      { name: 'gpt-5.4', id: 'gpt-5.4' },
       { name: 'gpt-5', id: 'gpt-5' },
+      { name: 'gpt-5-mini', id: 'gpt-5-mini' },
       { name: 'gpt-4.1', id: 'gpt-4.1' },
+      { name: 'gpt-4.1-mini', id: 'gpt-4.1-mini' },
       { name: 'o3', id: 'o3' },
+      { name: 'o4-mini', id: 'o4-mini' },
+      { name: 'gpt-4o', id: 'gpt-4o' },
+    ]
+  }
+  if (providerId === 'qwen') {
+    return [
+      { name: 'qwen-max', id: 'qwen-max' },
+      { name: 'qwen-plus', id: 'qwen-plus' },
+      { name: 'qwen-turbo', id: 'qwen-turbo' },
     ]
   }
   if (providerId === 'openrouter') {

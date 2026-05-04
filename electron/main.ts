@@ -1,18 +1,25 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, clipboard } from 'electron'
-import { join, dirname, basename } from 'path'
+import { app, BrowserWindow, ipcMain, dialog, shell, clipboard, powerSaveBlocker, Tray, Menu, nativeImage } from 'electron'
+import {
+  startRemoteServer, generateDeviceToken, generatePairingCode, timingSafeStrEq,
+  localAddresses, type RemoteServerHandle,
+} from './core/remoteServer'
+import { join, dirname, basename, relative, extname } from 'path'
 import { fileURLToPath } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'fs'
+import { existsSync, readFileSync, mkdirSync, writeFileSync, readdirSync, statSync } from 'fs'
 import { homedir } from 'os'
 import { spawn, type ChildProcess } from 'child_process'
+import { randomBytes } from 'crypto'
 import OpenAI from 'openai'
 import Anthropic from '@anthropic-ai/sdk'
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
 
 import { CodingAgent, type ApprovalResult, type ApprovalMode, type ReasoningEffort } from './core/agent.js'
-import { buildSystemPrompt } from './core/prompt.js'
+import { buildSystemPrompt, buildChatModePrompt } from './core/prompt.js'
 import * as sessions from './core/sessions.js'
 import * as auth from './core/auth.js'
+import { loginAnthropicOAuth } from './core/anthropicOAuth.js'
+import { loginOpenAICodexOAuth } from './core/openaiOAuth.js'
 import * as mcp from './core/mcp.js'
 import * as memory from './core/memory.js'
 import * as hooksMod from './core/hooks.js'
@@ -27,6 +34,13 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 
 let mainWindow: BrowserWindow | null = null
+// Tracks "user is quitting on purpose" vs "user closed window but we should
+// keep running". Without this flag, the close-handler can't distinguish
+// red-light-click from Quit-menu and would always hide instead of exit.
+let appQuitting = false
+let tray: Tray | null = null
+let powerSaveBlockerId: number | null = null
+let remoteServer: RemoteServerHandle | null = null
 let isQuitting = false
 
 // ── In-flight agent runs ──
@@ -38,7 +52,64 @@ interface ActiveRun {
 }
 const activeRuns = new Map<string, ActiveRun>()
 
+// ── Preview-panel child processes ──
+// Hoisted to module scope so the lifecycle hooks below (quit, render crash,
+// window close) can SIGTERM them on app shutdown — otherwise a vite/webpack
+// dev server orphans, the user closes the app, and the port stays bound.
+const activeChildren = new Map<string, ChildProcess>()
+
+/** Best-effort: SIGTERM every child + abort every agent run. Idempotent. */
+function shutdownAllRuntime(reason: string): void {
+  for (const run of activeRuns.values()) {
+    try { run.abortController.abort() } catch { /* swallow */ }
+  }
+  activeRuns.clear()
+  for (const [id, child] of activeChildren) {
+    try {
+      child.kill(process.platform === 'win32' ? undefined : 'SIGTERM')
+      // Give it 500ms to exit cleanly; SIGKILL anything still alive.
+      setTimeout(() => { try { child.kill('SIGKILL') } catch { /* swallow */ } }, 500).unref()
+    } catch { /* swallow */ }
+    activeChildren.delete(id)
+  }
+  if (reason && reason !== 'before-quit') {
+    console.warn(`[main] runtime cleanup triggered by: ${reason}`)
+  }
+}
+
 // ── App config ──
+/** A device that's been paired with this Codemaxxing instance. Each device
+ *  carries its own bearer token so we can revoke individually rather than
+ *  rotating one shared secret and kicking everybody out. The label and
+ *  platform are user-facing — used in the desktop's "from <Marcos's iPhone>"
+ *  approval-prompt provenance, the tray menu, and the Remote settings list. */
+interface PairedDevice {
+  id: string         // Stable id used in audit trails / per-device revoke
+  label: string      // "Marcos's iPhone", "Work laptop", etc.
+  platform: 'ios' | 'android' | 'macos' | 'windows' | 'linux' | 'browser' | 'cli' | 'unknown'
+  token: string      // Long-lived bearer; presented as `Authorization: Bearer <token>`
+  createdAt: number  // Pairing time, unix ms
+  lastSeenAt: number | null  // Updated by the auth middleware on every authed call
+}
+
+/** A short-lived code presented by the desktop, redeemed by the client to
+ *  obtain a permanent per-device token. Codes self-expire so a code shoulder-
+ *  surfed off the screen 10 minutes ago can't be redeemed. One pairing code
+ *  is good for one device; the desktop generates a new one for each pair. */
+interface PendingPairing {
+  code: string       // 6-char URL-safe (avoids ambiguous 0/O 1/l etc.)
+  createdAt: number
+  expiresAt: number  // Hard cutoff: 5 minutes from creation by default
+}
+
+interface RemoteAccessConfig {
+  enabled: boolean
+  port: number
+  /** Paired devices. Each has its own token. New devices added via the
+   *  pairing flow (POST /api/pair). Removed via Settings → Remote → revoke. */
+  devices: PairedDevice[]
+}
+
 interface AppConfig {
   theme: string
   autoApprove: boolean
@@ -48,6 +119,13 @@ interface AppConfig {
   lastCwd: string | null
   lastProvider: string | null
   lastModel: string | null
+  // Run-anywhere foundation. `keepAliveInBackground` keeps the agent loop
+  // and HTTP server alive when the user closes the window (clicks the red
+  // light). `autoLaunch` puts the app in the macOS login items so it boots
+  // on sign-in. Both default OFF — the user opts in from Settings → Remote.
+  keepAliveInBackground?: boolean
+  autoLaunch?: boolean
+  remote?: RemoteAccessConfig
 }
 
 const CONFIG_DIR = join(homedir(), '.codemaxxing-mac')
@@ -57,6 +135,42 @@ function loadAppConfig(): AppConfig {
   try {
     if (existsSync(APP_CONFIG_PATH)) {
       const data = JSON.parse(readFileSync(APP_CONFIG_PATH, 'utf-8'))
+      const remoteRaw = data.remote && typeof data.remote === 'object' ? data.remote : null
+      // Migrate previous single-token format → device list. Anyone who paired
+      // before per-device tokens existed gets one synthetic "legacy" device
+      // so they don't have to re-pair on upgrade. After this loads + saves
+      // once, the legacy `token` field is dropped.
+      let devices: PairedDevice[] = []
+      if (remoteRaw) {
+        if (Array.isArray(remoteRaw.devices)) {
+          devices = remoteRaw.devices
+            .filter((d: any) => d && typeof d.id === 'string' && typeof d.token === 'string')
+            .map((d: any) => ({
+              id: String(d.id),
+              label: typeof d.label === 'string' && d.label ? d.label : 'Unnamed device',
+              platform: ['ios','android','macos','windows','linux','browser','cli','unknown'].includes(d.platform) ? d.platform : 'unknown',
+              token: String(d.token),
+              createdAt: typeof d.createdAt === 'number' ? d.createdAt : Date.now(),
+              lastSeenAt: typeof d.lastSeenAt === 'number' ? d.lastSeenAt : null,
+            }))
+        } else if (typeof remoteRaw.token === 'string' && remoteRaw.token) {
+          devices = [{
+            id: 'legacy_' + Date.now().toString(36),
+            label: 'Legacy device (pre-pairing)',
+            platform: 'unknown',
+            token: remoteRaw.token,
+            createdAt: Date.now(),
+            lastSeenAt: null,
+          }]
+        }
+      }
+      const remote: RemoteAccessConfig | undefined = remoteRaw
+        ? {
+            enabled: !!remoteRaw.enabled,
+            port: typeof remoteRaw.port === 'number' && remoteRaw.port > 0 ? remoteRaw.port : 7843,
+            devices,
+          }
+        : undefined
       return {
         theme: data.theme ?? 'codemaxxing',
         autoApprove: data.autoApprove ?? false,
@@ -66,12 +180,16 @@ function loadAppConfig(): AppConfig {
         lastCwd: data.lastCwd ?? null,
         lastProvider: data.lastProvider ?? null,
         lastModel: data.lastModel ?? null,
+        keepAliveInBackground: !!data.keepAliveInBackground,
+        autoLaunch: !!data.autoLaunch,
+        ...(remote ? { remote } : {}),
       }
     }
   } catch { /* fall through */ }
   return {
     theme: 'codemaxxing', autoApprove: false, approvalMode: 'suggest', reasoningEffort: 'off',
     activeSkillIds: [], lastCwd: null, lastProvider: null, lastModel: null,
+    keepAliveInBackground: false, autoLaunch: false,
   }
 }
 
@@ -89,17 +207,29 @@ function providerRoute(providerId: string): ProviderRoute {
     case 'openrouter': return { providerType: 'openai', baseUrl: 'https://openrouter.ai/api/v1', needsKey: true }
     case 'qwen': return { providerType: 'openai', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', needsKey: true }
     case 'copilot': return { providerType: 'openai', baseUrl: 'https://api.githubcopilot.com', needsKey: true }
-    case 'ollama': return { providerType: 'openai', baseUrl: 'http://localhost:11434/v1', needsKey: false }
-    case 'lmstudio': return { providerType: 'openai', baseUrl: 'http://localhost:1234/v1', needsKey: false }
+    // Use 127.0.0.1 explicitly: Node 18+ resolves `localhost` to ::1 first, but
+    // LM Studio and Ollama bind IPv4-only by default. The IPv6 connect fails,
+    // and the OpenAI SDK doesn't fall back to A records — so listings come back
+    // empty and the dropdown looks broken even though the server is healthy.
+    case 'ollama': return { providerType: 'openai', baseUrl: 'http://127.0.0.1:11434/v1', needsKey: false }
+    case 'lmstudio': return { providerType: 'openai', baseUrl: 'http://127.0.0.1:1234/v1', needsKey: false }
     default: return { providerType: 'openai', baseUrl: 'https://api.openai.com/v1', needsKey: true }
   }
 }
 
 // ── Cost estimation (roughly matches CLI) ──
+// Note: estimateCost uses substring matching on the keys, so newer dotted
+// variants (e.g. gpt-5.5) automatically inherit the closest base price unless
+// listed explicitly. Listed explicitly here so cost shown in /cost is right.
 const MODEL_COSTS: Record<string, { input: number; output: number }> = {
+  'claude-opus-4-7': { input: 15 / 1e6, output: 75 / 1e6 },
   'claude-opus-4-6': { input: 15 / 1e6, output: 75 / 1e6 },
   'claude-sonnet-4-6': { input: 3 / 1e6, output: 15 / 1e6 },
   'claude-haiku-4-5-20251001': { input: 1 / 1e6, output: 5 / 1e6 },
+  'gpt-5.5-pro': { input: 30 / 1e6, output: 90 / 1e6 },
+  'gpt-5.5': { input: 10 / 1e6, output: 30 / 1e6 },
+  'gpt-5.4-pro': { input: 30 / 1e6, output: 90 / 1e6 },
+  'gpt-5.4': { input: 10 / 1e6, output: 30 / 1e6 },
   'gpt-5': { input: 10 / 1e6, output: 30 / 1e6 },
   'gpt-4.1': { input: 3 / 1e6, output: 12 / 1e6 },
   'o3': { input: 15 / 1e6, output: 60 / 1e6 },
@@ -124,19 +254,55 @@ function createWindow(): void {
     trafficLightPosition: { x: 18, y: 18 },
     backgroundColor: '#1a1814',
     webPreferences: {
-      preload: join(__dirname, 'preload.js'),
-      sandbox: false,
+      // .cjs (not .js) — package.json `"type": "module"` would force ESM
+      // parsing on a `.js` preload, which Electron silently rejects in
+      // sandboxed mode and leaves `window.electron` undefined.
+      preload: join(__dirname, 'preload.cjs'),
+      // Sandbox the renderer process. Our preload only uses electron's
+      // contextBridge/ipcRenderer/webUtils — all permitted in sandboxed mode —
+      // so we can lock the renderer down to OS-level sandbox restrictions.
+      sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
+      // Defense-in-depth: we never load remote untrusted content (only our
+      // own dist), but force-disable webview tag and remote module to keep
+      // attack surface minimal.
+      webviewTag: false,
     },
   })
   mainWindow.on('ready-to-show', () => {
-    mainWindow?.show()
+    // If we were auto-launched as a login item ("server mode"), boot
+    // directly into the tray instead of slamming the window onto the user's
+    // desktop the moment they sign in. They can still summon it via the
+    // tray icon's left-click handler.
+    if (!launchedHidden()) mainWindow?.show()
     if (is.dev) mainWindow?.webContents.openDevTools({ mode: 'detach' })
   })
   mainWindow.webContents.on('render-process-gone', (_e, details) => {
     console.error('[renderer crash]', details)
+    // Don't leave subprocesses hanging if the renderer died — the user can't
+    // see their output anymore and they hold ports/files we may want back.
+    shutdownAllRuntime(`render-process-gone:${details.reason}`)
   })
+  // 'close' (not 'closed') so we can intercept and hide instead of destroy
+  // when the user has opted into 24/7 background operation. This is the
+  // foundation for "phone reaches my Mac while the window is shut" — without
+  // it the agent loop dies the moment the user clicks the red light.
+  mainWindow.on('close', (e) => {
+    const cfg = loadAppConfig()
+    if (cfg.keepAliveInBackground && !appQuitting) {
+      e.preventDefault()
+      mainWindow?.hide()
+      // On macOS hiding the window also moves focus away cleanly. We
+      // intentionally do NOT shut down the runtime here — the whole point
+      // is to keep the agent + remote server alive.
+      return
+    }
+    // Shutting down for real (either keepAlive is off, or the user picked
+    // Quit from the tray / Cmd+Q). Free runtime resources like normal.
+    shutdownAllRuntime('window-closed')
+  })
+  mainWindow.on('closed', () => { mainWindow = null })
   mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
     console.error('[did-fail-load]', code, desc, url)
   })
@@ -154,8 +320,16 @@ app.whenReady().then(() => {
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
   setupIPC()
   createWindow()
+  // Apply the persisted preferences at boot. None of these are blocking —
+  // we want the window to come up fast even if (e.g.) the remote port is
+  // taken and the server fails to bind.
+  applyKeepAlivePreference()
+  applyAutoLaunchPreference()
+  setupTray()
+  void startRemoteServerIfEnabled()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    else mainWindow?.show()
   })
   cron.startTicker((task) => {
     void runScheduledTask(task).catch(err => {
@@ -164,11 +338,403 @@ app.whenReady().then(() => {
   })
 })
 
-app.on('before-quit', () => { isQuitting = true })
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
+app.on('before-quit', () => {
+  isQuitting = true
+  appQuitting = true
+  shutdownAllRuntime('before-quit')
+  if (powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId)) {
+    powerSaveBlocker.stop(powerSaveBlockerId)
+    powerSaveBlockerId = null
+  }
+  if (tray) { tray.destroy(); tray = null }
+  if (remoteServer) { void remoteServer.stop().catch(() => {}); remoteServer = null }
+})
+// Default Electron behavior is "quit when last window closes" on Linux/Win.
+// We override that ONLY when keepAliveInBackground is on — otherwise the
+// app sticks around invisibly with no way to bring it back, which would be a
+// bizarre default. On macOS the OS already keeps the app process alive even
+// without windows, so this branch is a no-op.
+app.on('window-all-closed', () => {
+  if (process.platform === 'darwin') return
+  const cfg = loadAppConfig()
+  if (!cfg.keepAliveInBackground) app.quit()
+})
 
+// ── 24/7 reliability helpers ──
+
+/** Start/stop the powerSaveBlocker based on the current setting. We use
+ *  `prevent-app-suspension` (not `prevent-display-sleep`) — we want the
+ *  process to stay scheduled, not to keep the screen lit. The display can
+ *  sleep; the agent loop should not. */
+function applyKeepAlivePreference(): void {
+  const cfg = loadAppConfig()
+  const want = !!cfg.keepAliveInBackground
+  const isOn = powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId)
+  if (want && !isOn) {
+    powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension')
+  } else if (!want && isOn && powerSaveBlockerId !== null) {
+    powerSaveBlocker.stop(powerSaveBlockerId)
+    powerSaveBlockerId = null
+  }
+}
+
+/** Sync OS-level "launch at login" with the persisted preference. macOS and
+ *  Windows expose this through the same Electron API but with different
+ *  argument shapes:
+ *   - macOS uses `openAsHidden: true` so the app boots into the tray
+ *     without throwing a window in the user's face on every login.
+ *   - Windows ignores `openAsHidden` (deprecated; Microsoft killed the flag
+ *     years ago). The standard pattern is to pass `args: ['--hidden']` and
+ *     have the app inspect process.argv to decide whether to show the
+ *     window on first paint.
+ *   - Linux: Electron doesn't ship a generic implementation for various
+ *     desktops (GNOME/KDE/etc); we accept the limitation and just toggle
+ *     the in-app flag. A user-shipped `.desktop` autostart entry is the
+ *     real answer there.
+ */
+/** Last value we wrote to the OS so we can skip redundant writes. Without
+ *  this, every config save (theme change, approval-mode toggle, etc.)
+ *  re-registers the login item, which on Windows triggers a registry write
+ *  per save — harmless but spammy in Resource Monitor. */
+let lastAutoLaunchApplied: boolean | null = null
+function applyAutoLaunchPreference(): void {
+  const cfg = loadAppConfig()
+  if (process.platform === 'linux') return  // No reliable cross-DE primitive
+  const want = !!cfg.autoLaunch
+  if (lastAutoLaunchApplied === want) return
+  lastAutoLaunchApplied = want
+  const settings: Electron.Settings = { openAtLogin: want }
+  if (process.platform === 'darwin') {
+    settings.openAsHidden = true
+  } else if (process.platform === 'win32') {
+    settings.args = ['--hidden']
+  }
+  app.setLoginItemSettings(settings)
+}
+
+/** True if this Electron process was launched with the hidden flag — either
+ *  by macOS's "Open as Hidden" login item, or by our Windows `--hidden`
+ *  argv. Used to suppress the splash window on auto-launch boot. */
+function launchedHidden(): boolean {
+  if (process.platform === 'darwin') {
+    return app.getLoginItemSettings().wasOpenedAsHidden
+  }
+  if (process.platform === 'win32') {
+    return process.argv.includes('--hidden')
+  }
+  return false
+}
+
+/** Build a minimal monochrome tray icon entirely in code so we don't have
+ *  to ship an extra asset file. 16x16 is the canonical macOS template size;
+ *  Windows scales 16x16 .ico-style images to the system tray's DPI.
+ *
+ *  - macOS uses `setTemplateImage(true)` so the OS auto-inverts for dark/
+ *    light menubar.
+ *  - Windows expects a colored icon (template images render as black-on-
+ *    black on the dark Win11 taskbar). We use the same pixel buffer but
+ *    don't mark it as template; Windows picks it up as a regular bitmap.
+ *  - Linux (GNOME/KDE/Cinnamon/Sway/etc.): legend has it that 22x22 is the
+ *    right size; in practice 16x16 looks fine on every DE I've tried. We
+ *    use the same buffer.
+ */
+function buildTrayIcon(): Electron.NativeImage {
+  const size = 16
+  const buf = Buffer.alloc(size * size * 4) // all zero = transparent
+  const setPixel = (x: number, y: number) => {
+    const o = (y * size + x) * 4
+    // macOS template wants black; Windows looks fine with black on light
+    // taskbar and is auto-inverted on the dark taskbar in Win11. Black is
+    // the safe cross-platform choice.
+    buf[o] = 0; buf[o + 1] = 0; buf[o + 2] = 0; buf[o + 3] = 255
+  }
+  // Crude block-letter "C" centered in the 16x16 grid.
+  for (let y = 3; y <= 12; y++) { setPixel(4, y); setPixel(5, y) }
+  for (let x = 5; x <= 11; x++) { setPixel(x, 3); setPixel(x, 4); setPixel(x, 11); setPixel(x, 12) }
+  const img = nativeImage.createFromBuffer(buf, { width: size, height: size })
+  if (process.platform === 'darwin') img.setTemplateImage(true)
+  return img
+}
+
+function setupTray(): void {
+  if (tray) return
+  try {
+    tray = new Tray(buildTrayIcon())
+    tray.setToolTip('Codemaxxing')
+    refreshTrayMenu()
+    // Click the tray icon → bring the window forward (or recreate it). On
+    // macOS we want left-click to open the app, not just the menu.
+    tray.on('click', () => {
+      if (!mainWindow) return createWindow()
+      if (mainWindow.isVisible()) mainWindow.focus()
+      else mainWindow.show()
+    })
+  } catch (e) {
+    console.error('[tray] failed to create:', e)
+  }
+}
+
+function refreshTrayMenu(): void {
+  if (!tray) return
+  const cfg = loadAppConfig()
+  const remoteOn = !!cfg.remote?.enabled
+  const port = cfg.remote?.port ?? 7843
+  const deviceCount = (cfg.remote?.devices ?? []).length
+  const remoteLabel = remoteOn
+    ? `Remote: on · ${deviceCount} device${deviceCount === 1 ? '' : 's'} · port ${port}`
+    : 'Remote: off'
+  const menu = Menu.buildFromTemplate([
+    { label: remoteLabel, enabled: false },
+    { type: 'separator' },
+    { label: 'Show Codemaxxing', click: () => { if (!mainWindow) createWindow(); else mainWindow.show() } },
+    { type: 'separator' },
+    {
+      label: 'Keep running in background',
+      type: 'checkbox',
+      checked: !!cfg.keepAliveInBackground,
+      click: (item) => {
+        const next = { ...loadAppConfig(), keepAliveInBackground: item.checked }
+        saveAppConfig(next)
+        applyKeepAlivePreference()
+        refreshTrayMenu()
+      },
+    },
+    { type: 'separator' },
+    { label: 'Quit', click: () => { appQuitting = true; app.quit() } },
+  ])
+  tray.setContextMenu(menu)
+}
+
+// ── Remote server lifecycle ──
+
+/**
+ * Pending pairing codes, in-memory only. By design these never persist —
+ * a code is good for one device for five minutes, after which it's gone.
+ * Keyed by code (uppercased), value is creation time. Cleared on consumption
+ * or expiry. A cron-like sweep keeps the table small.
+ */
+const PAIRING_TTL_MS = 5 * 60 * 1000
+const pendingPairings = new Map<string, { createdAt: number; expiresAt: number }>()
+
+function expirePairings(): void {
+  const now = Date.now()
+  for (const [code, p] of pendingPairings) {
+    if (p.expiresAt < now) pendingPairings.delete(code)
+  }
+}
+
+/** Issue a new pairing code. Up to one fresh code at a time per session —
+ *  if the user clicks "Pair a device" twice the older code is invalidated.
+ *  Returns the code in plaintext; the renderer turns it into a QR. */
+function issuePairingCode(): { code: string; expiresAt: number } {
+  expirePairings()
+  // Invalidate any prior un-redeemed code so users aren't confused by which
+  // one is current. Single-active-code policy is simple and safe.
+  pendingPairings.clear()
+  const code = generatePairingCode()
+  const createdAt = Date.now()
+  const expiresAt = createdAt + PAIRING_TTL_MS
+  pendingPairings.set(code, { createdAt, expiresAt })
+  return { code, expiresAt }
+}
+
+async function startRemoteServerIfEnabled(): Promise<void> {
+  const cfg = loadAppConfig()
+  if (!cfg.remote?.enabled) return
+  await startRemoteServerNow()
+}
+
+async function startRemoteServerNow(): Promise<{ ok: boolean; error?: string }> {
+  if (remoteServer) return { ok: true }
+  const cfg = loadAppConfig()
+  if (!cfg.remote?.enabled) return { ok: false, error: 'Remote access not configured' }
+  try {
+    remoteServer = await startRemoteServer({
+      port: cfg.remote.port,
+      bus: agentBus,
+      handlers: remoteHandlers(),
+    })
+    refreshTrayMenu()
+    return { ok: true }
+  } catch (e: any) {
+    const msg = e?.message ?? String(e)
+    console.error('[remote] failed to start:', msg)
+    return { ok: false, error: msg }
+  }
+}
+
+async function stopRemoteServerNow(): Promise<void> {
+  if (!remoteServer) return
+  try { await remoteServer.stop() } catch { /* swallow */ }
+  remoteServer = null
+  refreshTrayMenu()
+}
+
+/** Glue between the HTTP server and the existing IPC handler logic.
+ *  Trampolines through ipcMain.handle internals for the heavy turn-orchestration
+ *  paths so there's a single source of truth for what an "agent send" or an
+ *  "approval response" does — the desktop and a future phone client take
+ *  exactly the same code path through the agent runtime. */
+function remoteHandlers() {
+  return {
+    listSessions: async () => ({ ok: true, sessions: sessions.listSessions() }),
+    getSession: async (id: string) => {
+      const sess = sessions.getSession(id)
+      if (!sess) return { ok: false, error: 'Session not found' }
+      const messages = sessions.loadMessages(id)
+      return { ok: true, session: { ...sess, messages } }
+    },
+    createSession: async (opts: { cwd: string; provider: string; model: string; title?: string; mode?: string }) => {
+      const id = sessions.createSession(
+        opts.cwd,
+        opts.provider,
+        opts.model,
+        opts.title,
+        opts.mode === 'chat' ? 'chat' : 'code',
+      )
+      return { ok: true, id }
+    },
+    deleteSession: async (id: string) => {
+      sessions.deleteSession(id)
+      return { ok: true }
+    },
+    agentSend: (opts: { sessionId: string; message: string }) => callShared('agent:send', opts),
+    agentAbort: (sessionId: string) => callShared('agent:abort', sessionId),
+    agentApproval: (sessionId: string, callId: string, decision: unknown) =>
+      callShared('agent:approvalResponse', sessionId, callId, decision),
+    listProviders: () => callShared('auth:providers'),
+    appInfo: () => ({
+      name: 'Codemaxxing',
+      version: app.getVersion(),
+      platform: process.platform,
+    }),
+    /** Constant-time bearer-token lookup. Sweeping over the device list is
+     *  fine — even at 100 paired devices this is microseconds. */
+    resolveToken: (presented: string): PairedDevice | null => {
+      const cfg = loadAppConfig()
+      const list = cfg.remote?.devices ?? []
+      // Length-check first to fast-reject obvious garbage without scanning.
+      // Real tokens are always the same length (43 chars base64url of 32 bytes).
+      for (const d of list) {
+        if (timingSafeStrEq(d.token, presented)) return d
+      }
+      return null
+    },
+    /** Update lastSeenAt. Debounced: writes config.json at most once per
+     *  10s per device to avoid hammering the disk during streaming. */
+    touchDevice: (deviceId: string) => {
+      const now = Date.now()
+      const last = lastTouchAt.get(deviceId) ?? 0
+      if (now - last < 10_000) return
+      lastTouchAt.set(deviceId, now)
+      const cfg = loadAppConfig()
+      const next = (cfg.remote?.devices ?? []).map((d) => d.id === deviceId ? { ...d, lastSeenAt: now } : d)
+      saveAppConfig({ ...cfg, remote: { enabled: cfg.remote?.enabled ?? false, port: cfg.remote?.port ?? 7843, devices: next } })
+    },
+    /** Validate a pairing code, mint a fresh device token, persist. Single-
+     *  use: the code is consumed atomically here. Concurrent redemption
+     *  attempts (rare but possible) are serialized by the JS event loop, so
+     *  only the first one wins. */
+    redeemPairing: (code: string, label: string, platform: PairedDevice['platform']) => {
+      expirePairings()
+      const entry = pendingPairings.get(code)
+      if (!entry) return { ok: false as const, error: 'Invalid or expired pairing code' }
+      if (entry.expiresAt < Date.now()) {
+        pendingPairings.delete(code)
+        return { ok: false as const, error: 'Pairing code expired' }
+      }
+      pendingPairings.delete(code)
+
+      const device: PairedDevice = {
+        id: 'dev_' + randomBytes(6).toString('base64url'),
+        label: label.slice(0, 64) || 'Unnamed device',
+        platform,
+        token: generateDeviceToken(),
+        createdAt: Date.now(),
+        lastSeenAt: Date.now(),
+      }
+      const cfg = loadAppConfig()
+      const existing = cfg.remote?.devices ?? []
+      const next = [...existing, device]
+      saveAppConfig({ ...cfg, remote: { enabled: cfg.remote?.enabled ?? true, port: cfg.remote?.port ?? 7843, devices: next } })
+      refreshTrayMenu()
+      // Notify the renderer so the Settings → Remote panel updates live
+      // when a phone redeems the code.
+      mainWindow?.webContents.send('remote:devicesChanged')
+      return { ok: true as const, device }
+    },
+  }
+}
+
+// Per-device debounce map for `touchDevice`. Resets on app restart, which is
+// fine — over-eagerly persisting `lastSeenAt` once per restart is harmless.
+const lastTouchAt = new Map<string, number>()
+
+// Single fan-out point for every event the renderer (and now the remote API)
+// cares about. Keeps webContents.send and the remote-server EventEmitter in
+// lockstep so any future client (phone app, external tool, MCP gateway) sees
+// exactly the same event stream the desktop UI does.
+//
+// Approval prompts get a light extra hand: if the desktop window is hidden
+// when an approval request fires (e.g. cron task runs, remote client triggers
+// an action) we surface the window so the user can actually see + respond.
+// Without this, the approval times out invisibly and the agent stalls.
+import { EventEmitter } from 'events'
+export const agentBus = new EventEmitter()
+// Each SSE connection adds ~13 listeners; default 10 trips the warning the
+// moment more than zero clients are connected. 200 covers reasonable real-
+// world usage (renderer + a few paired devices + curl/debug consumers).
+agentBus.setMaxListeners(200)
 function emit(channel: string, ...args: any[]) {
   mainWindow?.webContents.send(channel, ...args)
+  agentBus.emit(channel, ...args)
+  if (channel === 'agent:approvalRequest' || channel === 'agent:askUser') {
+    // The user MUST see this. Window-summon logic centralized so nobody
+    // has to remember it at every approval-emission site in the agent.
+    raiseWindowForUserAttention()
+  }
+}
+
+/** Make sure the desktop window is visible and focused. Called when an
+ *  agent event needs immediate user attention (approval, ask-user). Cheap
+ *  to call when the window is already up — `show()` + `focus()` are no-ops
+ *  on a window that's already visible/focused. */
+function raiseWindowForUserAttention(): void {
+  if (!mainWindow) {
+    // Window was destroyed (keepAlive off, user closed). Bring it back.
+    createWindow()
+    return
+  }
+  if (!mainWindow.isVisible()) mainWindow.show()
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.focus()
+  // On macOS, `app.dock.bounce()` makes the icon hop to draw the user's
+  // eye — useful when they're in another app and the menubar icon alone
+  // isn't loud enough. No-op on Windows/Linux.
+  if (process.platform === 'darwin' && app.dock) {
+    try { app.dock.bounce('informational') } catch { /* not critical */ }
+  }
+}
+
+/** Registry of IPC invoke handlers that ALSO need to be callable by the
+ *  remote API. Replaces a previous trampoline through Electron's private
+ *  `_invokeHandlers` Map — that worked but was undocumented private API
+ *  and would have broken silently on a future Electron upgrade.
+ *
+ *  Use `registerInvoke()` instead of `ipcMain.handle()` for any handler
+ *  that should be reachable from the HTTP API. The function gets registered
+ *  in BOTH places: the renderer's IPC channel (with the IpcMainInvokeEvent
+ *  shape) AND a plain Map the remote server reads.
+ */
+const sharedInvokeHandlers = new Map<string, (...args: unknown[]) => Promise<unknown>>()
+function registerInvoke<A extends unknown[], R>(channel: string, fn: (...args: A) => Promise<R>): void {
+  sharedInvokeHandlers.set(channel, fn as (...args: unknown[]) => Promise<unknown>)
+  ipcMain.handle(channel, (_e, ...args) => fn(...(args as A)))
+}
+function callShared<R = unknown>(channel: string, ...args: unknown[]): Promise<R> {
+  const fn = sharedInvokeHandlers.get(channel)
+  if (!fn) return Promise.resolve({ ok: false, error: `Handler not registered: ${channel}` } as R)
+  return fn(...args) as Promise<R>
 }
 
 function setupIPC(): void {
@@ -184,7 +750,22 @@ function setupIPC(): void {
     const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
     return result.filePaths[0] || null
   })
-  ipcMain.handle('shell:openExternal', async (_e, url: string) => { await shell.openExternal(url) })
+  ipcMain.handle('shell:openExternal', async (_e, url: string) => {
+    // Only allow well-known web/mail schemes. Without this, a renderer that
+    // got XSS'd by an OAuth response could call this IPC with `file://` or
+    // a custom protocol and trigger arbitrary handlers via the OS.
+    try {
+      const parsed = new URL(url)
+      const allowed = new Set(['http:', 'https:', 'mailto:'])
+      if (!allowed.has(parsed.protocol)) {
+        return { ok: false, error: `Refusing to open URL with scheme ${parsed.protocol}` }
+      }
+    } catch {
+      return { ok: false, error: 'Invalid URL' }
+    }
+    await shell.openExternal(url)
+    return { ok: true }
+  })
   ipcMain.handle('shell:showItemInFolder', async (_e, p: string) => { await shell.showItemInFolder(p) })
   ipcMain.handle('clipboard:writeText', async (_e, text: string) => { clipboard.writeText(text); return true })
   ipcMain.handle('clipboard:readText', async () => clipboard.readText())
@@ -197,26 +778,92 @@ function setupIPC(): void {
   ipcMain.handle('app:getHomeDir', () => homedir())
 
   // ── Model listing ──
+  // Curated lists for providers that don't expose a useful /v1/models endpoint
+  // for OAuth tokens (Anthropic has no list API; ChatGPT OAuth's backend-api
+  // doesn't return the current frontier model set; Qwen's listing is noisy).
+  // These are kept in sync with ~/Projects/codemaxxing/src/index.tsx.
+  const CLAUDE_MODELS = [
+    'claude-opus-4-7',         // released 2026-04-16
+    'claude-opus-4-6',
+    'claude-sonnet-4-6',       // released 2026-02-17
+    'claude-haiku-4-5-20251001',
+  ]
+  const OPENAI_MODELS = [
+    'gpt-5.5-pro',             // released 2026-04-23
+    'gpt-5.5',
+    'gpt-5.4-pro',
+    'gpt-5.4',
+    'gpt-5',
+    'gpt-5-mini',
+    'gpt-4.1',
+    'gpt-4.1-mini',
+    'o3',
+    'o4-mini',
+    'gpt-4o',
+  ]
+  const QWEN_MODELS = ['qwen-max', 'qwen-plus', 'qwen-turbo']
+
   ipcMain.handle('llm:listModels', async (_e, providerId: string) => {
     try {
       if (providerId === 'anthropic') {
-        return {
-          ok: true,
-          models: [
-            { name: 'claude-opus-4-6', id: 'claude-opus-4-6' },
-            { name: 'claude-sonnet-4-6', id: 'claude-sonnet-4-6' },
-            { name: 'claude-haiku-4-5-20251001', id: 'claude-haiku-4-5-20251001' },
-          ],
-        }
+        return { ok: true, models: CLAUDE_MODELS.map(m => ({ name: m, id: m })) }
       }
+
       const cred = auth.getCredential(providerId)
       const route = providerRoute(providerId)
       const apiKey = cred?.apiKey || 'not-needed'
-      const baseUrl = cred?.baseUrl || route.baseUrl
+      // Local providers: ignore any persisted `localhost` baseUrl from old
+      // sessions — Node prefers ::1, LM Studio / Ollama bind IPv4-only, and a
+      // stale cred would silently override the route fix. Force 127.0.0.1.
+      let baseUrl = cred?.baseUrl || route.baseUrl
+      if (providerId === 'lmstudio' || providerId === 'ollama') {
+        baseUrl = baseUrl.replace('://localhost', '://127.0.0.1').replace('://[::1]', '://127.0.0.1')
+      }
+
+      // OpenAI: ChatGPT OAuth tokens hit chatgpt.com/backend-api which doesn't
+      // expose a usable models list. For OAuth/cached-token creds (or any
+      // non-`sk-` token), surface the curated frontier list. Real API keys
+      // still query /v1/models so users see whatever their org has access to.
+      if (providerId === 'openai') {
+        const isOAuthToken = cred && (
+          cred.method === 'oauth' ||
+          cred.method === 'cached-token' ||
+          (typeof cred.apiKey === 'string' && !cred.apiKey.startsWith('sk-') && !cred.apiKey.startsWith('sess-'))
+        )
+        if (isOAuthToken) {
+          return { ok: true, models: OPENAI_MODELS.map(m => ({ name: m, id: m })) }
+        }
+      }
+
+      // Qwen: short curated list — their /models endpoint returns dozens of
+      // unrelated entries (embedding models, vision, etc.).
+      if (providerId === 'qwen') {
+        return { ok: true, models: QWEN_MODELS.map(m => ({ name: m, id: m })) }
+      }
+
+      // Local providers: skip the OpenAI SDK entirely and use a plain HTTP
+      // GET. The SDK has historically had quirks with edge cases (gzip from
+      // some local servers, weird Connection headers, etc.) that result in an
+      // empty array even when the server is healthy. Direct fetch is also
+      // ~10x faster to fail when the server isn't running.
+      if (providerId === 'lmstudio' || providerId === 'ollama') {
+        console.log('[llm:listModels] local probe', providerId, baseUrl)
+        const url = new URL('models', baseUrl.endsWith('/') ? baseUrl : baseUrl + '/').toString()
+        const res = await fetch(url, { signal: AbortSignal.timeout(4000) })
+        if (!res.ok) {
+          return { ok: false, error: `${providerId} returned HTTP ${res.status}` }
+        }
+        const json: any = await res.json()
+        const models = Array.isArray(json?.data) ? json.data : []
+        console.log('[llm:listModels]', providerId, 'returned', models.length, 'models')
+        return { ok: true, models: models.map((m: any) => ({ name: m.id, id: m.id })) }
+      }
+
       const client = new OpenAI({ apiKey, baseURL: baseUrl })
       const response = await client.models.list()
       return { ok: true, models: response.data.map(m => ({ name: m.id, id: m.id })) }
     } catch (err: any) {
+      console.error('[llm:listModels] error', providerId, err?.message ?? err)
       return { ok: false, error: auth.scrubSecrets(err?.message ?? String(err)) }
     }
   })
@@ -241,8 +888,8 @@ function setupIPC(): void {
   })
 
   // ── Session management ──
-  ipcMain.handle('session:create', async (_e, opts: { cwd: string; provider: string; model: string; title?: string }) => {
-    const id = sessions.createSession(opts.cwd, opts.provider, opts.model, opts.title)
+  ipcMain.handle('session:create', async (_e, opts: { cwd: string; provider: string; model: string; title?: string; mode?: 'code' | 'chat' }) => {
+    const id = sessions.createSession(opts.cwd, opts.provider, opts.model, opts.title, opts.mode ?? 'code')
     const s = sessions.getSession(id)!
     return { ok: true, session: s }
   })
@@ -268,7 +915,33 @@ function setupIPC(): void {
   })
 
   // ── Agent run ──
-  ipcMain.handle('agent:send', async (_e, opts: { sessionId: string; message: string }) => {
+  // Per-image cap. Anthropic and OpenAI both reject very large images
+  // anyway, but base64 inflates ~33%, so we want to reject before that
+  // ~10MB blob hits the SQLite write — otherwise a single bad paste leaves
+  // a multi-MB row that gets re-loaded on every history fetch.
+  const MAX_IMAGE_BYTES_RAW = 8 * 1024 * 1024 // 8MB raw; ~10.7MB as base64
+  registerInvoke('agent:send', async (opts: { sessionId: string; message: string; images?: Array<{ id?: string; dataUrl: string; mediaType: string; name?: string }> }) => {
+    // Reject overlapping sends for the same session. Without this, a fast
+    // double-click on Send (or a queued IPC during a slow stream) spawns a
+    // second CodingAgent reading the same SQLite history, both writing
+    // assistant messages back, and clobbering each other's `activeRuns`
+    // entry — which makes `agent:abort` only stop one of them.
+    if (activeRuns.has(opts.sessionId)) {
+      return { ok: false, error: 'A run is already in progress for this session' }
+    }
+    if (opts.images && opts.images.length > 0) {
+      for (const img of opts.images) {
+        // Estimate raw size from base64 length: ~3/4 of the data segment.
+        const dataSegment = img.dataUrl.includes(',') ? img.dataUrl.split(',', 2)[1] ?? '' : img.dataUrl
+        const approxBytes = Math.floor((dataSegment.length * 3) / 4)
+        if (approxBytes > MAX_IMAGE_BYTES_RAW) {
+          return {
+            ok: false,
+            error: `Image ${img.name || 'attachment'} is ${(approxBytes / 1024 / 1024).toFixed(1)}MB — over the ${MAX_IMAGE_BYTES_RAW / 1024 / 1024}MB cap.`,
+          }
+        }
+      }
+    }
     const sess = sessions.getSession(opts.sessionId)
     if (!sess) return { ok: false, error: 'Session not found' }
     const cred = auth.getCredential(sess.provider)
@@ -280,25 +953,55 @@ function setupIPC(): void {
     // Load existing history
     const history = sessions.loadMessages(opts.sessionId)
 
-    // Save user message
-    const userMsg: ChatCompletionMessageParam = { role: 'user', content: opts.message }
+    // Build the user message. With images attached we use the OpenAI-style
+    // content-array shape (`[{type:'text'}, {type:'image_url'}]`) which is
+    // the lingua franca our provider adapters speak — Anthropic / Responses
+    // API code converts away from this shape on its own. The same array is
+    // persisted so reloading the session replays the images correctly.
+    const hasImages = !!opts.images && opts.images.length > 0
+    const userMsg: ChatCompletionMessageParam = hasImages
+      ? {
+          role: 'user',
+          content: [
+            ...(opts.message ? [{ type: 'text' as const, text: opts.message }] : []),
+            ...opts.images!.map(img => ({
+              type: 'image_url' as const,
+              image_url: { url: img.dataUrl },
+            })),
+          ],
+        }
+      : { role: 'user', content: opts.message }
     sessions.saveMessage(opts.sessionId, userMsg)
 
-    // Build system prompt (includes skills, memory, project rules, repo map)
-    const systemPrompt = buildSystemPrompt({
-      cwd: sess.cwd,
-      activeSkillIds: appConfig.activeSkillIds ?? [],
-      memoryScope: sess.cwd,
-    })
+    // Chat-mode sessions get a stripped-down conversational prompt; the
+    // default code prompt includes the repo map, project rules, and full
+    // coding-agent persona that would only confuse a chat-only session.
+    const isChatMode = sess.mode === 'chat'
+    const systemPrompt = isChatMode
+      ? buildChatModePrompt({
+          activeSkillIds: appConfig.activeSkillIds ?? [],
+          memoryScope: sess.cwd,
+        })
+      : buildSystemPrompt({
+          cwd: sess.cwd,
+          activeSkillIds: appConfig.activeSkillIds ?? [],
+          memoryScope: sess.cwd,
+        })
 
-    // Connect to MCP servers (best-effort)
-    try {
+    // MCP servers are coding-agent infrastructure — skip them entirely in
+    // chat mode so a chat session never blocks on MCP startup or surfaces
+    // approval prompts the user wouldn't expect from a plain chat.
+    if (!isChatMode) try {
       await mcp.connectToServers(sess.cwd, {
         onStatus: (name, status) => emit('mcp:status', { name, status }),
         approve: async (name, cfg) => {
           // synchronous (blocking) approval — emit event and wait
           return new Promise<boolean>((resolve) => {
-            const token = `mcp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+            // crypto.randomBytes — Math.random is predictable, and although
+            // these tokens are short-lived in-process they're sent over IPC
+            // and matched on response, so an unguessable id keeps a buggy
+            // renderer from accidentally racing-ahead a wrong approval.
+            const token = `mcp_${randomBytes(16).toString('hex')}`
             const handler = (_: any, approvedToken: string, decision: boolean) => {
               if (approvedToken !== token) return
               ipcMain.removeListener('mcp:approvalResponse', handler)
@@ -338,6 +1041,7 @@ function setupIPC(): void {
         reasoningEffort: appConfig.reasoningEffort ?? 'off',
         scope: sess.cwd,
         abortSignal: abort.signal,
+        mode: sess.mode,
       },
       {
         onText: (delta) => emit('agent:text', { sessionId: opts.sessionId, delta }),
@@ -346,9 +1050,18 @@ function setupIPC(): void {
         onToolCall: (call) => emit('agent:toolCall', { sessionId: opts.sessionId, call }),
         onTaskChange: (tasks) => emit('agent:tasks', { sessionId: opts.sessionId, tasks }),
         onToolApproval: async (call) => {
+          // Race the user's decision against (a) the run being aborted and
+          // (b) the renderer being torn down. Without this, hitting Stop
+          // while an approval prompt is up would leave the run frozen
+          // forever waiting on a button that no longer exists.
           return await new Promise<ApprovalResult>((resolve) => {
             run.pendingApprovals.set(call.id, resolve)
             emit('agent:approvalRequest', { sessionId: opts.sessionId, call })
+            const onAbort = () => {
+              if (run.pendingApprovals.delete(call.id)) resolve('no')
+            }
+            if (abort.signal.aborted) onAbort()
+            else abort.signal.addEventListener('abort', onAbort, { once: true })
           })
         },
         onAskUser: async (question, options) => {
@@ -356,15 +1069,21 @@ function setupIPC(): void {
           return await new Promise<string>((resolve) => {
             run.pendingAsks.set(askId, resolve)
             emit('agent:askUser', { sessionId: opts.sessionId, askId, question, options })
+            const onAbort = () => {
+              if (run.pendingAsks.delete(askId)) resolve('') // empty = treated as no answer
+            }
+            if (abort.signal.aborted) onAbort()
+            else abort.signal.addEventListener('abort', onAbort, { once: true })
           })
         },
         onPlanExit: (plan) => emit('agent:planExit', { sessionId: opts.sessionId, plan }),
         onUsage: (u) => emit('agent:usage', { sessionId: opts.sessionId, usage: u }),
+        onStats: (s) => emit('agent:stats', { sessionId: opts.sessionId, stats: s }),
       },
     )
 
     try {
-      const result = await agent.run(opts.message)
+      const result = await agent.run(opts.message, opts.images)
       // Persist any new messages beyond what we had (history + userMsg already saved)
       const newMessages = result.messages.slice(history.length + 1)
       for (const m of newMessages) sessions.saveMessage(opts.sessionId, m)
@@ -384,6 +1103,11 @@ function setupIPC(): void {
         iterations: result.iterations,
         aborted: result.aborted,
         usage: { promptTokens: result.totalPromptTokens, completionTokens: result.totalCompletionTokens, cost },
+        stats: {
+          tokensPerSecond: result.tokensPerSecond,
+          contextWindow: result.contextWindow,
+          isLocal: result.isLocal,
+        },
       })
       return { ok: true, text: result.text, aborted: result.aborted }
     } catch (err: any) {
@@ -395,14 +1119,14 @@ function setupIPC(): void {
     }
   })
 
-  ipcMain.handle('agent:abort', async (_e, sessionId: string) => {
+  registerInvoke('agent:abort', async (sessionId: string) => {
     const run = activeRuns.get(sessionId)
     if (!run) return { ok: false, error: 'No active run' }
     run.abortController.abort()
     return { ok: true }
   })
 
-  ipcMain.handle('agent:approvalResponse', async (_e, sessionId: string, callId: string, decision: ApprovalResult) => {
+  registerInvoke('agent:approvalResponse', async (sessionId: string, callId: string, decision: ApprovalResult) => {
     const run = activeRuns.get(sessionId)
     if (!run) return { ok: false, error: 'No active run' }
     const resolve = run.pendingApprovals.get(callId)
@@ -568,7 +1292,7 @@ function setupIPC(): void {
     try {
       const http = await import('http')
       return await new Promise<boolean>((resolve) => {
-        const req = http.get('http://localhost:11434/api/tags', (res) => resolve(res.statusCode === 200))
+        const req = http.get('http://127.0.0.1:11434/api/tags', (res) => resolve(res.statusCode === 200))
         req.on('error', () => resolve(false))
         req.setTimeout(3000, () => { req.destroy(); resolve(false) })
       })
@@ -578,7 +1302,7 @@ function setupIPC(): void {
     try {
       const http = await import('http')
       return await new Promise<any>((resolve, reject) => {
-        const req = http.get('http://localhost:11434/api/tags', (res) => {
+        const req = http.get('http://127.0.0.1:11434/api/tags', (res) => {
           let data = ''
           res.on('data', (c) => (data += c))
           res.on('end', () => {
@@ -603,7 +1327,7 @@ function setupIPC(): void {
   ipcMain.handle('auth:delete', async (_e, providerId: string) => ({ ok: auth.deleteCredential(providerId) }))
 
   // ── Provider definitions (id, methods, baseUrl, consoleUrl, description) ──
-  ipcMain.handle('auth:providers', async () => ({ ok: true, providers: auth.PROVIDERS }))
+  registerInvoke('auth:providers', async () => ({ ok: true, providers: auth.PROVIDERS }))
 
   // ── Detected CLIs / cached tokens on this machine ──
   ipcMain.handle('auth:detect', async () => {
@@ -629,6 +1353,26 @@ function setupIPC(): void {
   ipcMain.handle('auth:openrouterOAuth', async () => {
     try {
       const cred = await auth.openRouterOAuth((msg) => emitAuthStatus('openrouter', 'oauth', msg))
+      return { ok: true, credential: cred }
+    } catch (err: any) {
+      return { ok: false, error: auth.scrubSecrets(err?.message ?? String(err)) }
+    }
+  })
+
+  // ── Anthropic OAuth PKCE (Claude Pro/Max subscription) ──
+  ipcMain.handle('auth:anthropicOAuth', async () => {
+    try {
+      const cred = await loginAnthropicOAuth((msg) => emitAuthStatus('anthropic', 'oauth', msg))
+      return { ok: true, credential: cred }
+    } catch (err: any) {
+      return { ok: false, error: auth.scrubSecrets(err?.message ?? String(err)) }
+    }
+  })
+
+  // ── OpenAI Codex OAuth PKCE (ChatGPT Plus/Pro subscription) ──
+  ipcMain.handle('auth:openaiOAuth', async () => {
+    try {
+      const cred = await loginOpenAICodexOAuth((msg) => emitAuthStatus('openai', 'oauth', msg))
       return { ok: true, credential: cred }
     } catch (err: any) {
       return { ok: false, error: auth.scrubSecrets(err?.message ?? String(err)) }
@@ -677,7 +1421,134 @@ function setupIPC(): void {
 
   // ── App config ──
   ipcMain.handle('config:get', async () => ({ ok: true, config: loadAppConfig() }))
-  ipcMain.handle('config:save', async (_e, config: AppConfig) => { saveAppConfig(config); return { ok: true } })
+  ipcMain.handle('config:save', async (_e, config: AppConfig) => {
+    saveAppConfig(config)
+    // Side-effects of changed flags. Cheap to re-apply on every save —
+    // they're idempotent — and avoids requiring the renderer to know which
+    // keys are "live" vs "persisted-only".
+    applyKeepAlivePreference()
+    applyAutoLaunchPreference()
+    refreshTrayMenu()
+    return { ok: true }
+  })
+
+  // ── Remote access ──
+  // The renderer drives all remote-access state through these handlers so
+  // the Settings panel doesn't have to know anything about the HTTP server's
+  // internals (port binding, device-token storage, etc.).
+  ipcMain.handle('remote:status', async () => {
+    const cfg = loadAppConfig()
+    const port = cfg.remote?.port ?? 7843
+    return {
+      ok: true,
+      enabled: !!cfg.remote?.enabled,
+      running: !!remoteServer,
+      port,
+      // Devices are returned WITHOUT their tokens — there's no need to show
+      // the secret in the device list, and not exposing it via IPC is one
+      // less surface for renderer-side leaks.
+      devices: (cfg.remote?.devices ?? []).map((d) => ({
+        id: d.id,
+        label: d.label,
+        platform: d.platform,
+        createdAt: d.createdAt,
+        lastSeenAt: d.lastSeenAt,
+      })),
+      addresses: remoteServer ? remoteServer.addresses() : localAddresses(port),
+    }
+  })
+  ipcMain.handle('remote:setEnabled', async (_e, enabled: boolean) => {
+    const cfg = loadAppConfig()
+    const next: AppConfig = {
+      ...cfg,
+      remote: {
+        enabled,
+        port: cfg.remote?.port ?? 7843,
+        devices: cfg.remote?.devices ?? [],
+      },
+    }
+    saveAppConfig(next)
+    if (enabled) {
+      const result = await startRemoteServerNow()
+      refreshTrayMenu()
+      return result
+    } else {
+      await stopRemoteServerNow()
+      return { ok: true }
+    }
+  })
+  ipcMain.handle('remote:setPort', async (_e, port: number) => {
+    if (typeof port !== 'number' || port < 1024 || port > 65535) {
+      return { ok: false, error: 'Port must be between 1024 and 65535' }
+    }
+    const cfg = loadAppConfig()
+    const next: AppConfig = {
+      ...cfg,
+      remote: {
+        enabled: cfg.remote?.enabled ?? false,
+        port,
+        devices: cfg.remote?.devices ?? [],
+      },
+    }
+    saveAppConfig(next)
+    if (remoteServer) {
+      await stopRemoteServerNow()
+      return await startRemoteServerNow()
+    }
+    return { ok: true }
+  })
+
+  /** Generate a fresh pairing code. The code expires in 5 minutes;
+   *  generating a new one invalidates any prior un-redeemed code. The
+   *  renderer turns the returned URI into a QR for the phone to scan. */
+  ipcMain.handle('remote:beginPairing', async () => {
+    const cfg = loadAppConfig()
+    if (!cfg.remote?.enabled) return { ok: false, error: 'Enable remote access first' }
+    if (!remoteServer) return { ok: false, error: 'Remote server not running' }
+    const { code, expiresAt } = issuePairingCode()
+    const port = cfg.remote.port
+    // Pairing URI: stable across platforms, deep-linkable from a future
+    // native phone app. The host portion is the most-likely-routable LAN IP.
+    const lanUrls = remoteServer.addresses().filter((u) => !u.includes('127.0.0.1'))
+    const primaryHost = lanUrls[0] ?? `http://127.0.0.1:${port}`
+    const pairingUri = `codemaxxing://pair?host=${encodeURIComponent(primaryHost)}&code=${code}`
+    return {
+      ok: true,
+      code,
+      expiresAt,
+      // Plain HTTP URL the redeeming client should POST to. Phone apps that
+      // can't deep-link `codemaxxing://` (e.g. browsers) use this directly.
+      pairUrl: `${primaryHost}/api/pair`,
+      pairingUri,
+      ttlSeconds: Math.floor((expiresAt - Date.now()) / 1000),
+    }
+  })
+
+  /** Cancel an outstanding pairing code. Used when the user closes the
+   *  pairing modal — we don't want stale codes lingering until expiry. */
+  ipcMain.handle('remote:cancelPairing', async () => {
+    pendingPairings.clear()
+    return { ok: true }
+  })
+
+  /** Revoke a previously paired device. Removes it from the device list
+   *  AND restarts the server so any in-flight requests using that device's
+   *  token are immediately rejected. (Without the restart, an existing SSE
+   *  connection would happily keep streaming for hours.) */
+  ipcMain.handle('remote:revokeDevice', async (_e, deviceId: string) => {
+    const cfg = loadAppConfig()
+    const before = cfg.remote?.devices ?? []
+    const after = before.filter((d) => d.id !== deviceId)
+    if (before.length === after.length) return { ok: false, error: 'Device not found' }
+    saveAppConfig({ ...cfg, remote: { enabled: cfg.remote?.enabled ?? false, port: cfg.remote?.port ?? 7843, devices: after } })
+    if (remoteServer) {
+      await stopRemoteServerNow()
+      await startRemoteServerNow()
+    }
+    refreshTrayMenu()
+    mainWindow?.webContents.send('remote:devicesChanged')
+    return { ok: true }
+  })
 
   // ── Themes ──
   ipcMain.handle('themes:list', async () => ({
@@ -715,8 +1586,226 @@ function setupIPC(): void {
     return homedir()
   })
 
+  // ── File search (for @-mentions and command palette) ──
+  // Simple ranked search. Walks cwd BFS, skipping common heavy dirs, and ranks
+  // by basename match quality. Returns relative paths. Capped to keep snappy.
+  const FILE_EXCLUDES = new Set([
+    'node_modules', '.git', 'dist', 'dist-electron', 'release', 'build', '.next', '.turbo',
+    '.cache', '.vite', 'coverage', '__pycache__', '.venv', 'venv', 'target', '.DS_Store',
+  ])
+  const MAX_FILE_SCAN = 5000 // upper bound on entries walked per query
+  const SEARCH_TIMEOUT_MS = 400
+
+  function scoreFilePath(rel: string, q: string): number {
+    if (!q) return 1 // no query — everything ranks equal; sort by path length
+    const base = basename(rel).toLowerCase()
+    const full = rel.toLowerCase()
+    const needle = q.toLowerCase()
+    if (base === needle) return 1000
+    if (base.startsWith(needle)) return 800 - base.length
+    if (base.includes(needle)) return 600 - base.length
+    if (full.includes(needle)) return 400 - full.length
+    // Fuzzy: all chars of q appear in order in base
+    let i = 0
+    for (const ch of base) { if (ch === needle[i]) i++; if (i === needle.length) break }
+    if (i === needle.length) return 200 - base.length
+    i = 0
+    for (const ch of full) { if (ch === needle[i]) i++; if (i === needle.length) break }
+    if (i === needle.length) return 100 - full.length
+    return -1
+  }
+
+  // List entries in one directory (non-recursive). Used by the Files panel
+  // tree view — children are fetched lazily on expand. Directories sort first,
+  // then files; both alphabetically.
+  ipcMain.handle('files:tree', async (_e, opts: { path: string }) => {
+    try {
+      const { path } = opts
+      if (!path || !existsSync(path)) return { ok: false, error: 'invalid path', entries: [] }
+      const st = statSync(path)
+      if (!st.isDirectory()) return { ok: false, error: 'not a directory', entries: [] }
+      let names: string[]
+      try { names = readdirSync(path) } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err), entries: [] }
+      }
+      const entries = [] as Array<{ name: string; path: string; dir: boolean; size: number; hidden: boolean }>
+      for (const name of names) {
+        if (FILE_EXCLUDES.has(name)) continue
+        const full = join(path, name)
+        try {
+          const s = statSync(full)
+          entries.push({
+            name,
+            path: full,
+            dir: s.isDirectory(),
+            size: s.isFile() ? s.size : 0,
+            hidden: name.startsWith('.'),
+          })
+        } catch { /* skip unreadable */ }
+      }
+      entries.sort((a, b) => {
+        if (a.dir !== b.dir) return a.dir ? -1 : 1
+        if (a.hidden !== b.hidden) return a.hidden ? 1 : -1
+        return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+      })
+      return { ok: true, entries }
+    } catch (err: any) {
+      return { ok: false, error: err?.message ?? String(err), entries: [] }
+    }
+  })
+
+  // Read a single file for in-app viewing. Caps size and refuses to touch
+  // obvious binaries so the renderer doesn't choke.
+  const MAX_READ_BYTES = 1024 * 1024 // 1 MB
+  const BINARY_EXTS = new Set([
+    'png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'bmp', 'tiff', 'heic',
+    'mp4', 'mov', 'webm', 'avi', 'mkv', 'mp3', 'wav', 'ogg', 'flac',
+    'zip', 'tar', 'gz', 'bz2', 'xz', '7z', 'rar',
+    'pdf', 'psd', 'sketch', 'fig',
+    'exe', 'dll', 'so', 'dylib', 'class', 'jar', 'wasm',
+    'ttf', 'otf', 'woff', 'woff2',
+    'node', 'DS_Store',
+  ])
+  ipcMain.handle('files:read', async (_e, opts: { path: string; maxBytes?: number }) => {
+    try {
+      const { path } = opts
+      const cap = Math.min(opts.maxBytes ?? MAX_READ_BYTES, MAX_READ_BYTES)
+      if (!path || !existsSync(path)) return { ok: false, error: 'File not found' }
+      const st = statSync(path)
+      if (!st.isFile()) return { ok: false, error: 'Not a regular file' }
+      const ext = extname(path).replace(/^\./, '').toLowerCase()
+      if (BINARY_EXTS.has(ext)) {
+        return { ok: true, binary: true, size: st.size, ext, truncated: false, content: '' }
+      }
+      const truncated = st.size > cap
+      const mtime = st.mtimeMs
+      const buf = readFileSync(path)
+      const slice = truncated ? buf.subarray(0, cap) : buf
+      // Heuristic: if the first 4KB contains a null byte, treat as binary
+      const scan = slice.subarray(0, Math.min(4096, slice.length))
+      for (let i = 0; i < scan.length; i++) {
+        if (scan[i] === 0) return { ok: true, binary: true, size: st.size, ext, truncated, mtime, content: '' }
+      }
+      return { ok: true, binary: false, size: st.size, ext, truncated, mtime, content: slice.toString('utf8') }
+    } catch (err: any) {
+      return { ok: false, error: err?.message ?? String(err) }
+    }
+  })
+
+  // Write a single file back to disk. Refuses to leave the session cwd,
+  // refuses binary extensions, and supports optimistic-concurrency via
+  // `expectedMtime`. If the file's mtime has drifted, the handler returns a
+  // { conflict: true, currentMtime, currentContent } packet so the renderer
+  // can show a "keep mine / reload / show diff" banner instead of silently
+  // clobbering agent-authored writes.
+  ipcMain.handle('files:write', async (_e, opts: {
+    path: string
+    cwd: string
+    content: string
+    expectedMtime?: number
+    force?: boolean
+  }) => {
+    try {
+      const { path, cwd, content, expectedMtime, force } = opts
+      if (!path || !cwd) return { ok: false, error: 'missing path/cwd' }
+      if (!existsSync(cwd)) return { ok: false, error: 'cwd does not exist' }
+      const rel = relative(cwd, path)
+      if (!rel || rel.startsWith('..') || rel.includes('/..')) {
+        return { ok: false, error: 'path is outside the session working directory' }
+      }
+      const ext = extname(path).replace(/^\./, '').toLowerCase()
+      if (BINARY_EXTS.has(ext)) {
+        return { ok: false, error: 'binary files cannot be edited here' }
+      }
+      if (content.length > MAX_READ_BYTES) {
+        return { ok: false, error: `file exceeds ${MAX_READ_BYTES / 1024 / 1024} MB cap` }
+      }
+      if (existsSync(path)) {
+        const st = statSync(path)
+        if (!st.isFile()) return { ok: false, error: 'not a regular file' }
+        if (!force && typeof expectedMtime === 'number') {
+          // Allow ~2ms jitter — some filesystems don't store sub-ms precision.
+          if (Math.abs(st.mtimeMs - expectedMtime) > 2) {
+            let currentContent = ''
+            let binary = false
+            const cap = MAX_READ_BYTES
+            const truncated = st.size > cap
+            const buf = readFileSync(path)
+            const slice = truncated ? buf.subarray(0, cap) : buf
+            const scan = slice.subarray(0, Math.min(4096, slice.length))
+            for (let i = 0; i < scan.length; i++) {
+              if (scan[i] === 0) { binary = true; break }
+            }
+            if (!binary) currentContent = slice.toString('utf8')
+            return {
+              ok: false,
+              conflict: true,
+              currentMtime: st.mtimeMs,
+              currentContent,
+              truncated,
+            }
+          }
+        }
+      }
+      writeFileSync(path, content, 'utf8')
+      const st2 = statSync(path)
+      return { ok: true, mtime: st2.mtimeMs, size: st2.size }
+    } catch (err: any) {
+      return { ok: false, error: err?.message ?? String(err) }
+    }
+  })
+
+  ipcMain.handle('files:search', async (_e, opts: { cwd: string; query: string; limit?: number }) => {
+    try {
+      const { cwd, query } = opts
+      const limit = Math.max(1, Math.min(opts.limit ?? 30, 200))
+      if (!cwd || !existsSync(cwd)) return { ok: false, error: 'invalid cwd', files: [] }
+      const q = (query ?? '').trim()
+      const start = Date.now()
+      const queue: string[] = [cwd]
+      const results: Array<{ path: string; score: number; dir: boolean }> = []
+      let scanned = 0
+      while (queue.length > 0 && scanned < MAX_FILE_SCAN) {
+        if (Date.now() - start > SEARCH_TIMEOUT_MS) break
+        const dir = queue.shift()!
+        let entries: string[]
+        try { entries = readdirSync(dir) } catch { continue }
+        for (const name of entries) {
+          if (name.startsWith('.') && name !== '.env' && name !== '.gitignore') continue
+          if (FILE_EXCLUDES.has(name)) continue
+          scanned++
+          const full = join(dir, name)
+          let st
+          try { st = statSync(full) } catch { continue }
+          const rel = relative(cwd, full)
+          if (st.isDirectory()) {
+            queue.push(full)
+            // Allow dirs to match too, lower priority
+            const score = scoreFilePath(rel, q)
+            if (score > 0 || !q) results.push({ path: rel, score: score - 50, dir: true })
+          } else if (st.isFile()) {
+            const score = scoreFilePath(rel, q)
+            if (score > 0 || !q) results.push({ path: rel, score, dir: false })
+          }
+          if (scanned >= MAX_FILE_SCAN) break
+        }
+      }
+      // Sort: higher score first, then shorter path, files before dirs at same score
+      results.sort((a, b) => (b.score - a.score) || (a.dir === b.dir ? a.path.length - b.path.length : a.dir ? 1 : -1))
+      const files = results.slice(0, limit).map(r => ({
+        path: r.path,
+        name: basename(r.path),
+        dir: r.dir,
+        ext: r.dir ? '' : extname(r.path).replace(/^\./, ''),
+      }))
+      return { ok: true, files, truncated: scanned >= MAX_FILE_SCAN }
+    } catch (err: any) {
+      return { ok: false, error: err?.message ?? String(err), files: [] }
+    }
+  })
+
   // ── Preview: run commands in session cwd, stream stdout/stderr ──
-  const activeChildren = new Map<string, ChildProcess>()
+  // (activeChildren is hoisted to module scope for shutdown cleanup.)
   ipcMain.handle('run:start', async (_e, opts: { runId: string; command: string; cwd: string }) => {
     const { runId, command, cwd } = opts
     if (!command?.trim()) return { ok: false, error: 'Empty command' }

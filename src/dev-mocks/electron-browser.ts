@@ -77,7 +77,7 @@ const MOCK_PROVIDERS = [
     name: 'Ollama (local)',
     description: 'Run models locally — no API key needed',
     methods: ['none'],
-    baseUrl: 'http://localhost:11434/v1',
+    baseUrl: 'http://127.0.0.1:11434/v1',
     local: true,
   },
   {
@@ -85,7 +85,7 @@ const MOCK_PROVIDERS = [
     name: 'LM Studio (local)',
     description: 'Local OpenAI-compatible server',
     methods: ['none'],
-    baseUrl: 'http://localhost:1234/v1',
+    baseUrl: 'http://127.0.0.1:1234/v1',
     local: true,
   },
   {
@@ -153,6 +153,7 @@ export function installBrowserMock(): void {
       onAskUser: noop,
       onPlanExit: noop,
       onUsage: noop,
+      onStats: noop,
       onDone: noop,
       onError: noop,
     },
@@ -167,6 +168,8 @@ export function installBrowserMock(): void {
       detect: () => ok({ detected: MOCK_DETECTED }),
       apiKey: () => ok({ credential: null }),
       openrouterOAuth: () => ok({ credential: null }),
+      anthropicOAuth: () => ok({ credential: null }),
+      openaiOAuth: () => ok({ credential: null }),
       anthropicSetupToken: () => ok({ credential: null }),
       copilotDeviceFlow: () => ok({ credential: null }),
       importCodex: () => ok({ credential: null }),
@@ -174,8 +177,51 @@ export function installBrowserMock(): void {
       onStatus: noop,
     },
 
-    llm: { listModels: () => ok({ models: [] }), testConnection: () => ok() },
-    ollama: { isRunning: () => Promise.resolve(false), listModels: () => ok({ models: [] }) },
+    // Real local-provider probes — even in browser dev mode, hit LM Studio /
+    // Ollama directly so the New Session model dropdown actually populates.
+    // Both servers ship with permissive CORS so cross-origin fetch works from
+    // localhost:5173. Anything else (including all hosted providers) returns
+    // empty since we have no API key path in the browser shim.
+    llm: {
+      listModels: async (providerId: string) => {
+        try {
+          if (providerId === 'lmstudio') {
+            const r = await fetch('http://127.0.0.1:1234/v1/models', { signal: AbortSignal.timeout(3000) })
+            if (!r.ok) return { ok: false, error: `LM Studio returned ${r.status}` }
+            const j = await r.json()
+            return { ok: true, models: (j.data || []).map((m: any) => ({ id: m.id, name: m.id })) }
+          }
+          if (providerId === 'ollama') {
+            const r = await fetch('http://127.0.0.1:11434/v1/models', { signal: AbortSignal.timeout(3000) })
+            if (!r.ok) return { ok: false, error: `Ollama returned ${r.status}` }
+            const j = await r.json()
+            return { ok: true, models: (j.data || []).map((m: any) => ({ id: m.id, name: m.id })) }
+          }
+        } catch (e: any) {
+          return { ok: false, error: String(e?.message ?? e) }
+        }
+        return { ok: true, models: [] }
+      },
+      testConnection: () => ok(),
+    },
+    ollama: {
+      isRunning: async () => {
+        try {
+          const r = await fetch('http://127.0.0.1:11434/api/tags', { signal: AbortSignal.timeout(2000) })
+          return r.ok
+        } catch { return false }
+      },
+      listModels: async () => {
+        try {
+          const r = await fetch('http://127.0.0.1:11434/api/tags', { signal: AbortSignal.timeout(3000) })
+          if (!r.ok) return { ok: false, error: `Ollama returned ${r.status}` }
+          const j = await r.json()
+          return { ok: true, models: (j.models || []).map((m: any) => ({ name: m.name, size: m.size })) }
+        } catch (e: any) {
+          return { ok: false, error: String(e?.message ?? e) }
+        }
+      },
+    },
 
     config: {
       get: () =>
@@ -196,9 +242,30 @@ export function installBrowserMock(): void {
 
     themes: { list: () => ok({ themes: MOCK_THEMES }) },
 
+    // Browser-mode stub. Real remote-access lives entirely in main.ts so
+    // there's no point implementing it here — we just satisfy the shape so
+    // SettingsModal renders without crashing and shows "Remote: off".
+    remote: {
+      status: () => Promise.resolve({ ok: true, enabled: false, running: false, port: 7843, devices: [], addresses: ['http://127.0.0.1:7843'] }),
+      setEnabled: () => Promise.resolve({ ok: false, error: 'Remote access requires the desktop app' }),
+      setPort: () => Promise.resolve({ ok: false, error: 'Remote access requires the desktop app' }),
+      beginPairing: () => Promise.resolve({ ok: false, error: 'Remote access requires the desktop app' }),
+      cancelPairing: () => Promise.resolve({ ok: true }),
+      revokeDevice: () => Promise.resolve({ ok: false, error: 'Remote access requires the desktop app' }),
+      onDevicesChanged: () => () => { /* no-op in browser */ },
+    },
+
     project: {
       pickDirectory: () => ok({ path: undefined, name: undefined }),
       defaultCwd: () => Promise.resolve('/Users/you'),
+    },
+
+    files: {
+      search: () => ok({ files: [] }),
+      tree: () => ok({ entries: [] }),
+      read: () => ok({ binary: false, content: '', ext: '', size: 0, truncated: false, mtime: 0 }),
+      write: () => ok({ mtime: Date.now(), size: 0 }),
+      getPathForFile: () => '',
     },
 
     run: { start: () => ok(), stop: () => ok(), onStarted: noop, onOutput: noop, onExit: noop },

@@ -1,7 +1,15 @@
 {
-  "name": "codemaxxing-mac",
+  "name": "codemaxxing-desktop",
   "version": "1.0.0",
-  "description": "Native macOS GUI for Codemaxxing — the open-source coding agent, reimagined.",
+  "description": "Native desktop app for Codemaxxing — the open-source coding agent. Connect any LLM, drive a real agent loop, on macOS, Windows, and Linux.",
+  "homepage": "https://github.com/MarcosV6/codemaxxing-desktop",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MarcosV6/codemaxxing-desktop.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MarcosV6/codemaxxing-desktop/issues"
+  },
   "main": "dist-electron/main.js",
   "type": "module",
   "scripts": {
@@ -20,12 +28,25 @@
   },
   "keywords": [
     "ai",
-    "coding",
+    "ai-agent",
+    "coding-agent",
     "agent",
-    "macos",
     "desktop",
+    "electron",
+    "react",
+    "macos",
+    "windows",
+    "linux",
     "llm",
-    "codemaxxing"
+    "local-llm",
+    "lm-studio",
+    "ollama",
+    "anthropic",
+    "openai",
+    "openrouter",
+    "claude",
+    "codemaxxing",
+    "mcp"
   ],
   "author": "Marcos Vallejo",
   "license": "MIT",
@@ -35,9 +56,19 @@
     "directories": {
       "output": "release"
     },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "asarUnpack": [
+      "**/*.node"
+    ],
     "mac": {
       "category": "public.app-category.developer-tools",
-      "target": ["dmg", "zip"],
+      "target": [
+        { "target": "dmg", "arch": ["arm64", "x64"] },
+        { "target": "zip", "arch": ["arm64", "x64"] }
+      ],
       "icon": "public/icon.icns",
       "hardenedRuntime": false,
       "entitlements": null,
@@ -51,10 +82,34 @@
         { "x": 380, "y": 100 }
       ]
     },
-    "files": [
-      "dist/**/*",
-      "dist-electron/**/*"
-    ]
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ],
+      "icon": "public/icon.ico",
+      "publisherName": "Marcos Vallejo"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": false,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "linux": {
+      "target": [
+        { "target": "AppImage", "arch": ["x64", "arm64"] },
+        { "target": "tar.gz", "arch": ["x64", "arm64"] },
+        { "target": "deb", "arch": ["x64", "arm64"] }
+      ],
+      "icon": "public/icon.png",
+      "category": "Development",
+      "synopsis": "Native desktop app for the codemaxxing coding agent",
+      "description": "Connect any LLM (local or remote) and drive a real agent loop from a polished GUI."
+    }
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
@@ -70,6 +125,7 @@
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-markdown": "^9.0.1",
+    "react-virtuoso": "^4.18.6",
     "rehype-highlight": "^7.0.0",
     "remark-gfm": "^4.0.0",
     "zustand": "^5.0.3"

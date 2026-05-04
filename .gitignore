@@ -6,6 +6,11 @@ dist/
 dist-electron/
 release/
 
+# Stray root-level main.js — older Vite config used to emit here instead of
+# dist-electron/. Keep it ignored so the stale artifact never ends up in
+# source control.
+/main.js
+
 # Environment
 .env
 .env.*

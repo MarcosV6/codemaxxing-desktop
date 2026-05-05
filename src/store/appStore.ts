@@ -131,6 +131,11 @@ interface AppState {
   /** Streaming stats (tok/s, context window, locality). Persists across runs for display. */
   currentStats: { tokensPerSecond: number | null; contextWindow: number; isLocal: boolean } | null
   currentTasks: Task[]
+  /** Most recent user prompt text. Captured at sendMessage time so that
+   *  if the run errors out (e.g. context window overflow) we can offer a
+   *  one-click retry without making the user re-type — the error message
+   *  attaches it as `retryPrompt`. */
+  lastUserPrompt: string | null
 
   // ── Approvals / asks / plans ──
   pendingApproval: PendingApproval | null
@@ -215,6 +220,10 @@ interface AppState {
   // Slash commands + session ops
   dispatchSlashCommand: (raw: string) => Promise<boolean>
   compactSession: (keepRecent?: number) => Promise<void>
+  /** Compact the active session AND immediately re-send `prompt` against the
+   *  newly-forked session. The combo error-recovery path used by the
+   *  context_overflow error banner's "Compact & retry" button. */
+  compactAndRetry: (prompt: string, keepRecent?: number) => Promise<void>
 
   pickDirectory: () => Promise<string | null>
   openSettings: () => void
@@ -455,6 +464,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   currentUsage: null,
   lastPromptTokens: null,
   currentStats: null,
+  lastUserPrompt: null,
   currentTasks: [],
   pendingApproval: null,
   pendingMCPApproval: null,
@@ -661,11 +671,19 @@ export const useAppStore = create<AppState>((set, get) => ({
         if (sessionId !== get().activeSessionId) return
         set((s) => {
           if (!s.activeSession) return { isRunning: false }
+          const kind = classifyAgentError(error)
           const errMsg: ChatMessage = {
             id: 'msg_' + hex(),
             type: 'error',
             content: error,
             timestamp: Date.now(),
+            errorKind: kind,
+            // Only attach the retry prompt for failure modes where retry
+            // makes sense — for auth errors, e.g., the user has to fix
+            // credentials before any retry can possibly succeed.
+            ...(kind === 'context_overflow' || kind === 'rate_limit' || kind === 'network'
+              ? { retryPrompt: s.lastUserPrompt ?? undefined }
+              : {}),
           }
           return {
             activeSession: { ...s.activeSession, messages: [...s.activeSession.messages, errMsg] },
@@ -1001,6 +1019,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       currentSegments: [],
       currentUsage: null,
       currentIteration: 0,
+      // Stash for one-click retry after recoverable failures (context overflow, etc.).
+      lastUserPrompt: message,
     }))
 
     if ((activeSession.title === 'Untitled' || !activeSession.title) && activeSession.messages.length === 0) {
@@ -1329,6 +1349,21 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  compactAndRetry: async (prompt: string, keepRecent = 6) => {
+    // Same compact flow → switch to the new session → re-send the prompt.
+    // We do these sequentially because sendMessage requires the activeSession
+    // to be the one we want to send to, and switchSession is what flips it.
+    const { activeSessionId } = get()
+    if (!activeSessionId) return
+    const r = await window.electron.sessionOps.compact(activeSessionId, keepRecent)
+    if (!r.ok || !r.newSessionId) return
+    await get().loadSessions()
+    await get().switchSession(r.newSessionId)
+    // Retry. The new session won't have the user's pending prompt in its
+    // history, so this re-runs cleanly against the summarized context.
+    await get().sendMessage(prompt)
+  },
+
   pickDirectory: async () => {
     const result = await window.electron.project.pickDirectory()
     if (!result.ok || !result.path) return null
@@ -1345,6 +1380,57 @@ export const useAppStore = create<AppState>((set, get) => ({
   setDrawer: (drawer) => set({ activeDrawer: drawer }),
   setCommandPaletteOpen: (open: boolean) => set({ commandPaletteOpen: open }),
 }))
+
+/**
+ * Heuristic-classify an agent error string into recovery categories. The
+ * provider error messages aren't standardized — Anthropic, OpenAI Responses
+ * API, OpenRouter, LM Studio, Ollama all phrase the same conditions
+ * differently — so we match against substrings for each known shape.
+ *
+ * Categories drive the in-chat error renderer's recovery actions:
+ *   context_overflow → offer "Compact & retry" (forks session with summary)
+ *   rate_limit       → offer "Retry in 30s" (auto-retry after backoff)
+ *   network          → offer "Retry"
+ *   auth             → no retry; point user at Settings → Providers
+ *   generic          → no retry; just show the message
+ */
+function classifyAgentError(error: string): NonNullable<ChatMessage['errorKind']> {
+  const lower = error.toLowerCase()
+  if (
+    lower.includes('context window') ||
+    lower.includes('context length') ||
+    lower.includes('exceeds the context') ||
+    lower.includes('exceed the context') ||
+    lower.includes('input is too long') ||
+    lower.includes('maximum context length') ||
+    lower.includes('too many tokens') ||
+    lower.includes('prompt is too long') ||
+    /tokens?.*\b(exceed|over|too)/i.test(error)
+  ) return 'context_overflow'
+  if (
+    lower.includes('rate limit') ||
+    lower.includes('rate-limit') ||
+    lower.includes('429') ||
+    lower.includes('too many requests') ||
+    lower.includes('quota')
+  ) return 'rate_limit'
+  if (
+    lower.includes('unauthor') ||
+    lower.includes('invalid api key') ||
+    lower.includes('invalid_api_key') ||
+    lower.includes('expired token') ||
+    lower.includes('access token') ||
+    lower.includes('401')
+  ) return 'auth'
+  if (
+    lower.includes('econnrefused') ||
+    lower.includes('enotfound') ||
+    lower.includes('etimedout') ||
+    lower.includes('failed to fetch') ||
+    lower.includes('network')
+  ) return 'network'
+  return 'generic'
+}
 
 function defaultModelsFor(providerId: string): ModelInfo[] {
   if (providerId === 'anthropic') {

@@ -1,12 +1,13 @@
 import React, { useState, useCallback, useEffect } from 'react'
 import { ChatMessage, ImageAttachment, MessageSegment } from '../../types'
+import { useAppStore } from '../../store/appStore'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import { ToolCallBlock } from './ToolCallBlock'
 import { ThinkingBlock } from './ThinkingBlock'
 import { CodeBlock } from './CodeBlock'
-import { AlertCircle, Copy, Check, X } from 'lucide-react'
+import { AlertCircle, Copy, Check, X, Layers, RotateCw, MessageSquarePlus, Settings as SettingsIcon } from 'lucide-react'
 
 interface MessageBubbleProps {
   message: ChatMessage
@@ -273,21 +274,202 @@ function MessageBubbleInner({ message }: MessageBubbleProps) {
   }
 
   if (message.type === 'error') {
-    return (
-      <div className="mb-4 animate-fade-in">
-        <div
-          className="flex items-start gap-2 px-3 py-2.5 rounded-lg text-[13px]"
-          style={{
-            backgroundColor: 'color-mix(in srgb, var(--theme-error) 10%, transparent)',
-            color: 'var(--theme-error)',
-          }}
-        >
-          <AlertCircle size={14} className="mt-0.5 shrink-0" />
-          <span>{message.content}</span>
-        </div>
-      </div>
-    )
+    return <ErrorBanner message={message} />
   }
 
   return null
+}
+
+/**
+ * Actionable error banner. Generic errors render as a plain red banner;
+ * classified errors (context_overflow, rate_limit, etc.) get a tailored
+ * recovery affordance — a button that resolves the problem and re-runs
+ * the user's last prompt against the recovered state.
+ *
+ * The classification happens at error-receipt time in the store
+ * (`classifyAgentError`), so this component is purely presentational.
+ */
+function ErrorBanner({ message }: { message: ChatMessage }) {
+  const compactAndRetry = useAppStore((s) => s.compactAndRetry)
+  const sendMessage = useAppStore((s) => s.sendMessage)
+  const createSession = useAppStore((s) => s.createSession)
+  const activeSession = useAppStore((s) => s.activeSession)
+  const openSettings = useAppStore((s) => s.openSettings)
+  const isRunning = useAppStore((s) => s.isRunning)
+  const [busy, setBusy] = useState(false)
+
+  const kind = message.errorKind ?? 'generic'
+  const retryPrompt = message.retryPrompt
+
+  // Strip the wire-protocol noise that providers prepend to error messages
+  // ("Responses API stream error: ...", "Anthropic streaming error: ...")
+  // — keep the human-readable detail only.
+  const cleanMessage = message.content
+    .replace(/^Responses API stream error:\s*/i, '')
+    .replace(/^Anthropic streaming error:\s*/i, '')
+    .replace(/^OpenAI streaming error:\s*/i, '')
+
+  const handleCompactRetry = useCallback(async () => {
+    if (!retryPrompt || busy || isRunning) return
+    setBusy(true)
+    try {
+      await compactAndRetry(retryPrompt)
+    } finally {
+      setBusy(false)
+    }
+  }, [retryPrompt, busy, isRunning, compactAndRetry])
+
+  const handleNewSessionRetry = useCallback(async () => {
+    if (!activeSession || busy || isRunning) return
+    setBusy(true)
+    try {
+      const id = await createSession({
+        cwd: activeSession.cwd,
+        provider: activeSession.provider,
+        model: activeSession.model,
+        mode: activeSession.mode,
+      })
+      // createSession switches to the new session for us. Send the prompt
+      // there if we have one.
+      if (id && retryPrompt) await sendMessage(retryPrompt)
+    } finally {
+      setBusy(false)
+    }
+  }, [activeSession, busy, isRunning, createSession, sendMessage, retryPrompt])
+
+  const handlePlainRetry = useCallback(async () => {
+    if (!retryPrompt || busy || isRunning) return
+    setBusy(true)
+    try {
+      await sendMessage(retryPrompt)
+    } finally {
+      setBusy(false)
+    }
+  }, [retryPrompt, busy, isRunning, sendMessage])
+
+  // Headline + helper text per kind. The text below the headline reframes
+  // the failure in plain language so the user knows what they're being
+  // asked to do.
+  let headline: string
+  let detail: string | null = null
+  switch (kind) {
+    case 'context_overflow':
+      headline = 'This conversation is too long for the model'
+      detail =
+        'The history has grown past the model\'s context window. ' +
+        'Compact summarizes older turns into a brief note and forks the session, then retries your message — the recent turns and the summary stay; the bulk gets folded down.'
+      break
+    case 'rate_limit':
+      headline = 'Provider rate limit hit'
+      detail = 'The provider is asking us to slow down. Retry shortly.'
+      break
+    case 'auth':
+      headline = 'Authentication issue'
+      detail = 'Your credentials are missing, expired, or rejected. Check Settings → Providers.'
+      break
+    case 'network':
+      headline = 'Network error'
+      detail = 'Couldn\'t reach the provider. If you\'re using a local model (LM Studio / Ollama), make sure the server is running.'
+      break
+    default:
+      headline = cleanMessage
+  }
+
+  return (
+    <div className="mb-4 animate-fade-in">
+      <div
+        className="rounded-lg overflow-hidden"
+        style={{
+          backgroundColor: 'color-mix(in srgb, var(--theme-error) 9%, transparent)',
+          border: '1px solid color-mix(in srgb, var(--theme-error) 22%, transparent)',
+        }}
+      >
+        <div className="flex items-start gap-2 px-3 py-2.5 text-[13px]" style={{ color: 'var(--theme-error)' }}>
+          <AlertCircle size={14} className="mt-0.5 shrink-0" />
+          <div className="flex-1 min-w-0 space-y-1">
+            <div className="font-medium leading-snug">{headline}</div>
+            {detail && (
+              <div className="text-[12px] opacity-85 leading-relaxed" style={{ color: 'var(--theme-text)' }}>
+                {detail}
+              </div>
+            )}
+            {kind !== 'generic' && headline !== cleanMessage && (
+              <details className="text-[11px] opacity-60 leading-relaxed mt-1" style={{ color: 'var(--theme-muted)' }}>
+                <summary className="cursor-pointer select-none hover:opacity-100">show provider message</summary>
+                <pre className="mt-1 whitespace-pre-wrap font-mono text-[10.5px]">{cleanMessage}</pre>
+              </details>
+            )}
+          </div>
+        </div>
+
+        {/* Recovery actions per error kind */}
+        {(kind === 'context_overflow' && retryPrompt) && (
+          <div
+            className="flex flex-wrap items-center gap-2 px-3 py-2"
+            style={{ borderTop: '1px solid color-mix(in srgb, var(--theme-error) 16%, transparent)' }}
+          >
+            <ActionButton primary onClick={handleCompactRetry} disabled={busy || isRunning} icon={<Layers size={11} />}>
+              {busy ? 'Compacting…' : 'Compact & retry'}
+            </ActionButton>
+            <ActionButton onClick={handleNewSessionRetry} disabled={busy || isRunning} icon={<MessageSquarePlus size={11} />}>
+              Start fresh session
+            </ActionButton>
+          </div>
+        )}
+        {(kind === 'rate_limit' || kind === 'network') && retryPrompt && (
+          <div
+            className="flex flex-wrap items-center gap-2 px-3 py-2"
+            style={{ borderTop: '1px solid color-mix(in srgb, var(--theme-error) 16%, transparent)' }}
+          >
+            <ActionButton primary onClick={handlePlainRetry} disabled={busy || isRunning} icon={<RotateCw size={11} />}>
+              {busy ? 'Retrying…' : 'Retry'}
+            </ActionButton>
+          </div>
+        )}
+        {kind === 'auth' && (
+          <div
+            className="flex flex-wrap items-center gap-2 px-3 py-2"
+            style={{ borderTop: '1px solid color-mix(in srgb, var(--theme-error) 16%, transparent)' }}
+          >
+            <ActionButton primary onClick={openSettings} icon={<SettingsIcon size={11} />}>
+              Open Settings
+            </ActionButton>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ActionButton({
+  children, onClick, disabled, primary, icon,
+}: {
+  children: React.ReactNode
+  onClick: () => void
+  disabled?: boolean
+  primary?: boolean
+  icon?: React.ReactNode
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[12px] font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+      style={primary
+        ? {
+            color: 'var(--theme-error)',
+            backgroundColor: 'color-mix(in srgb, var(--theme-error) 16%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--theme-error) 32%, transparent)',
+          }
+        : {
+            color: 'var(--theme-text)',
+            backgroundColor: 'transparent',
+            border: '1px solid var(--theme-hairline-strong)',
+          }
+      }
+    >
+      {icon}
+      {children}
+    </button>
+  )
 }

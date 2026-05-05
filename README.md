@@ -67,10 +67,10 @@ cd codemaxxing-desktop
 npm install
 # Pick one:
 npm run electron:build:win        # NSIS installer + portable zip
-npm run electron:build:linux      # AppImage + tar.gz
+npm run electron:build:linux      # AppImage + tar.gz + .deb
 ```
 
-Output lands in `release/`. See [WINDOWS_RELEASE.md](WINDOWS_RELEASE.md) for known platform-specific gotchas (traffic-light padding, signing notes).
+Output lands in `release/`. **Detailed step-by-step (prereqs, troubleshooting, smoke tests):** [docs/BUILDING.md](docs/BUILDING.md). For known platform-specific UI gotchas (traffic-light padding etc.), see [WINDOWS_RELEASE.md](WINDOWS_RELEASE.md).
 
 ### From source (any platform — dev workflow)
 

@@ -293,8 +293,8 @@ export interface ElectronAPI {
 
   // Config
   config: {
-    get: () => Promise<{ ok: boolean; config?: { theme: string; autoApprove: boolean; approvalMode?: ApprovalMode; reasoningEffort?: ReasoningEffort; activeSkillIds?: string[]; lastCwd: string | null; lastProvider: string | null; lastModel: string | null; keepAliveInBackground?: boolean; autoLaunch?: boolean; remote?: { enabled: boolean; port: number; devices?: PairedDeviceSummary[] } }; error?: string }>
-    save: (config: { theme: string; autoApprove: boolean; approvalMode?: ApprovalMode; reasoningEffort?: ReasoningEffort; activeSkillIds?: string[]; lastCwd: string | null; lastProvider: string | null; lastModel: string | null; keepAliveInBackground?: boolean; autoLaunch?: boolean; remote?: { enabled: boolean; port: number; devices?: PairedDeviceSummary[] } }) => Promise<{ ok: boolean }>
+    get: () => Promise<{ ok: boolean; config?: { theme: string; autoApprove: boolean; approvalMode?: ApprovalMode; reasoningEffort?: ReasoningEffort; activeSkillIds?: string[]; lastCwd: string | null; lastProvider: string | null; lastModel: string | null; keepAliveInBackground?: boolean; autoLaunch?: boolean; remote?: { enabled: boolean; port: number; devices?: PairedDeviceSummary[] }; autoCompactEnabled?: boolean; autoCompactThreshold?: number }; error?: string }>
+    save: (config: { theme: string; autoApprove: boolean; approvalMode?: ApprovalMode; reasoningEffort?: ReasoningEffort; activeSkillIds?: string[]; lastCwd: string | null; lastProvider: string | null; lastModel: string | null; keepAliveInBackground?: boolean; autoLaunch?: boolean; remote?: { enabled: boolean; port: number; devices?: PairedDeviceSummary[] }; autoCompactEnabled?: boolean; autoCompactThreshold?: number }) => Promise<{ ok: boolean }>
   }
 
   // Remote access — HTTP+SSE server for phone clients / external tools

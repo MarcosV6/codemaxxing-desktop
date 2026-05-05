@@ -244,6 +244,8 @@ contextBridge.exposeInMainWorld('electron', {
       keepAliveInBackground?: boolean
       autoLaunch?: boolean
       remote?: { enabled: boolean; port: number; token: string }
+      autoCompactEnabled?: boolean
+      autoCompactThreshold?: number
     }) => ipcRenderer.invoke('config:save', config),
   },
 

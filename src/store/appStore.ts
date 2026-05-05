@@ -63,6 +63,13 @@ interface AppConfig {
   // We don't store the device tokens in the renderer — only metadata.
   // PairedDeviceSummary mirrors what main.ts strips before sending in `remote:status`.
   remote?: { enabled: boolean; port: number; devices?: PairedDeviceSummary[] }
+  // Auto-compact: when the last turn's prompt-token count crosses this
+  // fraction of the model's context window, fork the session through
+  // the existing /compact path BEFORE sending the next user message.
+  // Defaults: enabled=true, threshold=0.85 (15% headroom for the next
+  // turn's response). Tunable from Settings → Agent.
+  autoCompactEnabled?: boolean
+  autoCompactThreshold?: number
 }
 
 interface SessionMeta {
@@ -440,7 +447,22 @@ function mergeConfig(raw: any): AppConfig {
           devices: Array.isArray(raw.remote.devices) ? raw.remote.devices : [],
         } }
       : {}),
+    // Auto-compact: enabled by default. Old configs without these fields
+    // get the default-on behavior so the user benefits without having to
+    // toggle anything. Threshold clamped to a sane band [0.5, 0.95].
+    autoCompactEnabled: raw?.autoCompactEnabled === false ? false : true,
+    autoCompactThreshold: clampThreshold(
+      typeof raw?.autoCompactThreshold === 'number' ? raw.autoCompactThreshold : 0.85,
+    ),
   }
+}
+
+/** Keep auto-compact threshold within a sensible band. Below 0.5 means
+ *  we'd compact constantly (every 50% fill); above 0.95 means we'd cut
+ *  it too close to the limit and the next turn could still 400. */
+function clampThreshold(v: number): number {
+  if (!Number.isFinite(v)) return 0.85
+  return Math.max(0.5, Math.min(0.95, v))
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -993,14 +1015,66 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   sendMessage: async (message: string, images?: ImageAttachment[]) => {
-    const { activeSessionId, activeSession, isRunning } = get()
-    if (!activeSessionId || !activeSession || isRunning) return
+    const initial = get()
+    if (!initial.activeSessionId || !initial.activeSession || initial.isRunning) return
 
     // Slash commands always run locally and don't carry images.
     if (message.startsWith('/')) {
       const handled = await get().dispatchSlashCommand(message)
       if (handled) return
     }
+
+    // ── Auto-compact pre-flight ──
+    // The ratio we check is `lastPromptTokens / contextWindow` — i.e., how
+    // full the LAST request was. We use that as a proxy for the upcoming
+    // request because we can't know the exact size of a turn before
+    // building it, but the fill is monotonically growing turn-over-turn
+    // until we compact. If we were already 85%+ full last time, the next
+    // turn will only be more, so compact NOW rather than letting the
+    // provider 400. Skipped on first message (no last-turn data) and
+    // when the user explicitly disabled it in Settings → Agent.
+    const cfg = initial.appConfig
+    const ctx = initial.currentStats?.contextWindow ?? 0
+    const used = initial.lastPromptTokens ?? 0
+    const threshold = cfg.autoCompactThreshold ?? 0.85
+    if (
+      cfg.autoCompactEnabled !== false &&
+      ctx > 0 && used > 0 &&
+      used / ctx >= threshold
+    ) {
+      // Yield to the UI so the typing-indicator / loading state is visible
+      // during the brief compaction roundtrip — otherwise the user clicks
+      // Send and sees nothing for ~1s.
+      set({ isRunning: true })
+      const r = await window.electron.sessionOps.compact(initial.activeSessionId, 6)
+      if (r.ok && r.newSessionId) {
+        await get().loadSessions()
+        await get().switchSession(r.newSessionId)
+        // Insert an inline note in the new session so the user sees what
+        // just happened. Renderer-only (not persisted to DB) — survives
+        // until reload, which is fine.
+        const pct = Math.round((used / ctx) * 100)
+        set((s) => {
+          if (!s.activeSession) return {}
+          const note: ChatMessage = {
+            id: 'msg_' + hex(),
+            type: 'assistant',
+            content: `*Auto-compacted at ${pct}% context fill — older turns summarized into a brief note, recent turns kept verbatim. Continuing your message in this fresh session.*`,
+            timestamp: Date.now(),
+          }
+          return { activeSession: { ...s.activeSession, messages: [...s.activeSession.messages, note] } }
+        })
+      }
+      // Drop the temporary isRunning so the recursive call's own
+      // isRunning check passes; the recursive sendMessage flips it back.
+      set({ isRunning: false })
+      // Recursive re-entry. Fresh state has lastPromptTokens=null after
+      // switchSession, so this hits the normal path on the new session.
+      return get().sendMessage(message, images)
+    }
+
+    const { activeSessionId, activeSession } = get()
+    if (!activeSessionId || !activeSession) return
 
     const hasImages = !!images && images.length > 0
     const userMsg: ChatMessage = {

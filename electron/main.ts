@@ -126,6 +126,10 @@ interface AppConfig {
   keepAliveInBackground?: boolean
   autoLaunch?: boolean
   remote?: RemoteAccessConfig
+  // Auto-compact: pre-flight context-window check before each user
+  // message. See store-side mergeConfig for defaults + clamp range.
+  autoCompactEnabled?: boolean
+  autoCompactThreshold?: number
 }
 
 const CONFIG_DIR = join(homedir(), '.codemaxxing-mac')
@@ -183,6 +187,10 @@ function loadAppConfig(): AppConfig {
         keepAliveInBackground: !!data.keepAliveInBackground,
         autoLaunch: !!data.autoLaunch,
         ...(remote ? { remote } : {}),
+        autoCompactEnabled: data.autoCompactEnabled === false ? false : true,
+        autoCompactThreshold: typeof data.autoCompactThreshold === 'number'
+          ? Math.max(0.5, Math.min(0.95, data.autoCompactThreshold))
+          : 0.85,
       }
     }
   } catch { /* fall through */ }
@@ -190,6 +198,7 @@ function loadAppConfig(): AppConfig {
     theme: 'codemaxxing', autoApprove: false, approvalMode: 'suggest', reasoningEffort: 'off',
     activeSkillIds: [], lastCwd: null, lastProvider: null, lastModel: null,
     keepAliveInBackground: false, autoLaunch: false,
+    autoCompactEnabled: true, autoCompactThreshold: 0.85,
   }
 }
 

@@ -521,6 +521,11 @@ function AgentTab() {
   const appConfig = useAppStore((s) => s.appConfig)
   const setApprovalMode = useAppStore((s) => s.setApprovalMode)
   const setReasoningEffort = useAppStore((s) => s.setReasoningEffort)
+  const setAppConfig = useAppStore((s) => s.setAppConfig)
+  // Threshold UI is a slider in the 50-95% band (matches the clamp band
+  // applied at config-load time). Display in whole percent — 85 reads
+  // better than 0.85 in a settings panel.
+  const autoCompactPct = Math.round(((appConfig.autoCompactThreshold ?? 0.85)) * 100)
 
   const modes: Array<{ value: ApprovalMode; label: string; description: string }> = [
     { value: 'suggest', label: 'Suggest', description: 'Ask before every edit and shell command.' },
@@ -593,6 +598,61 @@ function AgentTab() {
         </div>
         <div className="text-[11.5px] opacity-60 mt-2">
           {efforts.find(e => e.value === appConfig.reasoningEffort)?.description}
+        </div>
+      </section>
+
+      <section>
+        <div className="text-[11px] uppercase tracking-wider opacity-60 font-medium mb-2">Auto-compact</div>
+        <div
+          className="rounded-lg p-3 space-y-3"
+          style={{ backgroundColor: 'var(--theme-bg-subtle)', border: '1px solid var(--theme-border)' }}
+        >
+          <label className="flex items-start justify-between gap-3 cursor-pointer">
+            <div>
+              <div className="text-[13px] font-medium">Auto-compact long conversations</div>
+              <div className="text-[11.5px] opacity-65 mt-0.5 leading-relaxed">
+                When the conversation reaches the threshold below of the model's context window,
+                Codemaxxing automatically summarizes older turns and continues in a fresh session.
+                Prevents the "input exceeds context window" error before it happens.
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              checked={appConfig.autoCompactEnabled !== false}
+              onChange={(e) => void setAppConfig({ ...appConfig, autoCompactEnabled: e.target.checked })}
+              className="mt-1 w-4 h-4 shrink-0"
+              style={{ accentColor: 'var(--theme-primary)' }}
+            />
+          </label>
+
+          {appConfig.autoCompactEnabled !== false && (
+            <div>
+              <div className="flex items-center justify-between text-[12px] mb-1">
+                <span className="opacity-70">Compact at</span>
+                <span className="font-mono" style={{ color: 'var(--theme-primary)' }}>{autoCompactPct}%</span>
+              </div>
+              <input
+                type="range"
+                min={50} max={95} step={5}
+                value={autoCompactPct}
+                onChange={(e) => {
+                  const next = Math.max(50, Math.min(95, Number(e.target.value)))
+                  void setAppConfig({ ...appConfig, autoCompactThreshold: next / 100 })
+                }}
+                className="w-full"
+                style={{ accentColor: 'var(--theme-primary)' }}
+              />
+              <div className="flex justify-between text-[10px] opacity-50 font-mono mt-0.5">
+                <span>50%</span>
+                <span>aggressive</span>
+                <span>95%</span>
+              </div>
+              <div className="text-[11px] opacity-60 mt-2 leading-relaxed">
+                Lower = compact earlier (more headroom, more summary cost). Higher = compact later
+                (closer to the limit). Default 85% leaves ~15% headroom for the next response.
+              </div>
+            </div>
+          )}
         </div>
       </section>
     </div>

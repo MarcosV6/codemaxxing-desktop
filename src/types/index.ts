@@ -69,6 +69,12 @@ export interface Theme {
   key?: string
   name: string
   description?: string
+  /** When true, the theme is treated as a light-mode theme. Used to derive
+   *  the right direction for surface tints (cards, raised surfaces, user-
+   *  message bubbles): dark themes get a slightly LIGHTER tint relative to
+   *  the bg; light themes get a slightly DARKER tint. Without this flag a
+   *  light theme would still render dark cards on a light background. */
+  isLight?: boolean
   colors: {
     primary: string
     secondary: string
@@ -86,6 +92,12 @@ export interface Theme {
     suggestion: string
     bg?: string
     bgSubtle?: string
+    /** Optional explicit overrides. If omitted, applyThemeToDom derives
+     *  these from `bg` + `isLight` so theme authors don't have to think
+     *  about them — but light themes that want a specific paper tint or
+     *  warm cream card color can set them explicitly. */
+    bgRaised?: string
+    bubble?: string
   }
 }
 

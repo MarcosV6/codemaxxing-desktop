@@ -278,8 +278,28 @@ function applyThemeToDom(theme: Theme) {
   set('--theme-warning', c.warning)
   set('--theme-border', c.border)
   set('--theme-suggestion', c.suggestion)
-  set('--theme-bg', c.bg ?? '#0a0a0f')
+  const bg = c.bg ?? '#0a0a0f'
+  set('--theme-bg', bg)
   set('--theme-bg-subtle', c.bgSubtle ?? '#0d0d14')
+
+  // Surface tints — derive direction from isLight so light themes don't
+  // end up with dark cards floating on a white page. CSS-side defaults
+  // in globals.css are dark-theme tuned and would persist otherwise.
+  //
+  //   Dark themes:  raised/bubble are SLIGHTLY LIGHTER than bg
+  //   Light themes: raised/bubble are SLIGHTLY DARKER than bg
+  //
+  // We use `color-mix` so the tint comes from the actual bg, not a
+  // hardcoded color — themes with a tinted bg (e.g. solarized, sepia)
+  // keep their tone.
+  const isLight = !!theme.isLight
+  const tintToward = isLight ? 'black' : 'white'
+  set('--theme-bg-raised', c.bgRaised ?? `color-mix(in srgb, ${bg} 92%, ${tintToward})`)
+  set('--theme-bubble', c.bubble ?? `color-mix(in srgb, ${bg} 88%, ${tintToward})`)
+  // Mark the root with the theme polarity so any CSS rules that need to
+  // branch on light vs dark (scrollbars, syntax highlight overrides, etc.)
+  // can use a simple `:root[data-theme-mode="light"] ...` selector.
+  root.setAttribute('data-theme-mode', isLight ? 'light' : 'dark')
 }
 
 function convertPersistedMessages(rawMessages: any[]): ChatMessage[] {

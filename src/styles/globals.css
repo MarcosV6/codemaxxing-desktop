@@ -28,6 +28,33 @@
   --theme-hairline-strong: color-mix(in srgb, var(--theme-border) 55%, transparent);
 }
 
+/* ─────────────────────────────────────────────────────────────────────
+   Light-theme overrides for white-tint utilities.
+   Tailwind classes like `hover:bg-white/5` paint a translucent WHITE
+   layer over the background — on dark themes that lifts the surface;
+   on light themes (white-on-white) it's invisible, so hovers and
+   selected states have no visual feedback. We invert these to a
+   translucent BLACK layer when the theme is light. The two-attribute
+   selector beats Tailwind's single-class specificity, so no !important
+   needed. Only fires when applyThemeToDom has set data-theme-mode=light.
+   ───────────────────────────────────────────────────────────────────── */
+:root[data-theme-mode="light"] [class*="bg-white/"]:not(:hover) {
+  background-color: rgba(0, 0, 0, 0.04);
+}
+:root[data-theme-mode="light"] [class*="hover\\:bg-white"]:hover {
+  background-color: rgba(0, 0, 0, 0.05);
+}
+/* The Tailwind class `bg-white/[0.07]` is the standard "active/selected"
+   tint used in the command palette and InputArea slash menu — bump
+   slightly higher than hover so selected items still stand out. */
+:root[data-theme-mode="light"] [class*="bg-white/\\[0\\.07\\]"],
+:root[data-theme-mode="light"] [class*="bg-white/\\[0\\.08\\]"] {
+  background-color: rgba(0, 0, 0, 0.07);
+}
+/* The shared focus ring uses `--theme-bg` to paint a halo against the
+   page background. On light themes the existing rule still works
+   correctly (--theme-bg is white), so no extra override needed there. */
+
 @layer base {
   * {
     -webkit-font-smoothing: antialiased;

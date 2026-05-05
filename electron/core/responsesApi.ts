@@ -12,7 +12,25 @@
  * main process bundle.
  */
 
+import { randomBytes } from 'node:crypto'
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat/completions'
+
+/**
+ * Mint a fresh tool-call ID in the Responses API's required format.
+ * The API rejects anything where `input[N].id` (function_call) doesn't
+ * begin with `fc_`. Used for re-id-ing stored history that may carry
+ * IDs from a different provider's wire format (e.g. user switched from
+ * a Chat-Completions model to a Responses-API model mid-session, or an
+ * older run pre-dated the Responses path entirely).
+ *
+ * 24 hex chars (= 12 random bytes) gives ~3.7 × 10²⁸ entropy — collision
+ * within a single request is statistically impossible. We don't need
+ * cross-request uniqueness because we set `store: false`, so the API
+ * holds no state about previous IDs.
+ */
+function freshFunctionCallId(): string {
+  return 'fc_' + randomBytes(12).toString('hex')
+}
 
 // ── Inlined from utils/repair-tool-args.ts ──
 function repairToolArgs(raw: string): string {
@@ -187,6 +205,31 @@ export async function chatWithResponsesAPI(options: ResponsesAPIOptions): Promis
   } = options
 
   // ── Build input items from message history ──
+  //
+  // Tool-call IDs come from many places: this provider's earlier responses
+  // (real `fc_xxx`), other providers via the cross-provider model switcher
+  // (Anthropic's `toolu_xxx`, Chat Completions `call_xxx`, or earlier
+  // builds' opaque IDs), or migrated sessions from before this code path
+  // existed. The Responses API rejects anything where `function_call.id`
+  // doesn't begin with `fc_`, so we maintain a per-request remap that
+  // mints fresh `fc_xxx` IDs and pairs each `function_call` with its
+  // matching `function_call_output` via the SAME minted ID.
+  //
+  // Important: this remap is per-REQUEST, not persisted. Each replay
+  // generates new IDs. Safe because `store: false` means the API doesn't
+  // care about cross-request identity — within a single payload, the
+  // call and its output just need to share an ID.
+  const idRemap = new Map<string, string>()
+  const remapToolId = (originalId: string | undefined | null): string => {
+    const key = String(originalId ?? '')
+    let mapped = idRemap.get(key)
+    if (!mapped) {
+      mapped = freshFunctionCallId()
+      idRemap.set(key, mapped)
+    }
+    return mapped
+  }
+
   const inputItems: any[] = []
   for (const msg of messages) {
     if (msg.role === 'system') continue
@@ -214,10 +257,11 @@ export async function chatWithResponsesAPI(options: ResponsesAPIOptions): Promis
           })
         }
         for (const tc of (msg as any).tool_calls) {
+          const minted = remapToolId(tc.id)
           inputItems.push({
             type: 'function_call',
-            id: tc.id,
-            call_id: tc.id,
+            id: minted,
+            call_id: minted,
             name: tc.function?.name || tc.name || '',
             arguments: typeof tc.function?.arguments === 'string'
               ? tc.function.arguments
@@ -232,9 +276,13 @@ export async function chatWithResponsesAPI(options: ResponsesAPIOptions): Promis
         })
       }
     } else if (msg.role === 'tool') {
+      // Pair the output to whichever `function_call` we already rewrote
+      // above. If we somehow have an orphan tool message (no preceding
+      // assistant call_id), `remapToolId('')` still mints a stable id —
+      // the API will then reject that with a clearer error than before.
       inputItems.push({
         type: 'function_call_output',
-        call_id: (msg as any).tool_call_id || '',
+        call_id: remapToolId((msg as any).tool_call_id),
         output: serializeContent(msg.content),
       })
     }

@@ -22,16 +22,40 @@ Claude Desktop is locked to Anthropic. Codex Desktop is locked to OpenAI. Every 
 
 ## Install
 
-> **Status:** v1.0.0 preview. macOS arm64 zip ships from GitHub Releases; Windows/Linux builds from source. Signed installers + auto-update will follow.
+> **Status:** v1.0.0 preview. macOS Apple Silicon + Intel ship from GitHub Releases; Windows/Linux build from source. Signed installers + auto-update will follow.
 
-### macOS (Apple Silicon)
+### macOS
 
-1. Download the latest `Codemaxxing-<version>-arm64-mac.zip` from [Releases](https://github.com/MarcosV6/codemaxxing-desktop/releases).
-2. Unzip → drag `Codemaxxing.app` to `/Applications`.
-3. **First launch:** the app is ad-hoc signed (no Apple Developer ID yet), so Gatekeeper will warn. Either right-click → Open, or run:
-   ```bash
-   xattr -cr /Applications/Codemaxxing.app
-   ```
+Pick the build for your Mac from the latest [release](https://github.com/MarcosV6/codemaxxing-desktop/releases):
+
+| Mac | Download |
+|---|---|
+| **Apple Silicon** (M1, M2, M3, M4) | [`Codemaxxing-1.0.0-arm64-mac.zip`](https://github.com/MarcosV6/codemaxxing-desktop/releases/download/v1.0.0/Codemaxxing-1.0.0-arm64-mac.zip) |
+| **Intel** | [`Codemaxxing-1.0.0-mac.zip`](https://github.com/MarcosV6/codemaxxing-desktop/releases/download/v1.0.0/Codemaxxing-1.0.0-mac.zip) |
+
+> Not sure which you have? Click the **Apple menu** (top-left) → **About This Mac**. If "Chip" says **Apple M…** use the Apple Silicon link. If "Processor" says **Intel** use the Intel one.
+
+#### One-liner install (Terminal)
+
+The fastest path — handles download, unzip, drop into `/Applications`, and removes the quarantine flag so Gatekeeper doesn't block it:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/MarcosV6/codemaxxing-desktop/main/install-mac.sh)
+```
+
+Then launch from Applications. Done.
+
+#### Manual install (no Terminal)
+
+1. Download the zip for your Mac (links above).
+2. Unzip it. Drag **Codemaxxing.app** into your **Applications** folder.
+3. Double-click the app → macOS will say _"Apple could not verify…"_ → click **Done**.
+4. Open **System Settings → Privacy & Security → scroll to the bottom**.
+5. You'll see _"Codemaxxing was blocked to protect your Mac"_ → click **Open Anyway**.
+6. Confirm with Touch ID or password.
+7. App opens. Future launches won't show the warning.
+
+> **Why?** The app isn't signed by an Apple Developer ID yet (that's a $99/year subscription that hasn't been bought). macOS treats anything unsigned as suspicious by default. The above is a one-time approval — Apple's intended workflow for trusted software you're choosing to run.
 
 ### Windows / Linux
 

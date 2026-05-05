@@ -30,7 +30,7 @@ First public release. macOS arm64 zip ships from GitHub Releases; Windows + Linu
 
 ### Known issues
 
-- Builds are ad-hoc signed on macOS (no Apple Developer ID yet) — Gatekeeper warns on first launch. Workaround in [README.md](README.md#install).
+- Builds are ad-hoc signed on macOS (no Apple Developer ID yet) — Gatekeeper warns on first launch. Use the one-line installer (`install-mac.sh`) which strips the quarantine flag, or follow the manual System Settings → Privacy & Security → "Open Anyway" flow documented in [README.md](README.md#install).
 - Windows + Linux installers are not yet published to GitHub Releases. Build from source with `npm run electron:build:win` / `electron:build:linux`.
 - App icon is the default Electron icon. Drop `icon.icns` / `icon.ico` / `icon.png` into `public/` to override.
 - Approval prompts auto-raise the desktop window for visibility — this is intentional (so you don't miss prompts when working in another app) but means a paired remote device can interrupt your foreground app.

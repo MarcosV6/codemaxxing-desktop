@@ -339,23 +339,30 @@ export function ChatArea() {
   const scrollerRef = useRef<HTMLElement | null>(null)
   const followRafRef = useRef<number | null>(null)
 
-  // Virtuoso owns the scroller. We track at-bottom state so we don't yank the
-  // viewport when the user has scrolled up to read history.
-  const atBottomRef = useRef(true)
+  // User intent. False = the user is happy at/near the bottom and we should
+  // keep them pinned. True = they explicitly wheeled / touch-scrolled up and
+  // want to read history; we leave them alone until they scroll back.
+  //
+  // Why a separate flag instead of trusting `Virtuoso.atBottomStateChange`:
+  // when the Footer grows during streaming, Virtuoso reports `atBottom=false`
+  // for a frame because the user's scrollTop hasn't caught up to the new
+  // scrollHeight yet. Gating auto-follow on that signal is the bug — it
+  // disengages following the moment the agent starts emitting tokens. We
+  // only let user wheel/touch events flip this.
+  const userScrolledAwayRef = useRef(false)
 
   // rAF-coalesced scroll-to-bottom. Streaming fires hundreds of store updates
   // per second; we coalesce to one DOM write per frame to avoid layout
   // thrashing, and also avoid fighting Virtuoso's own scroll-restoration on
-  // row recycle.
+  // row recycle. Setting scrollTop programmatically does NOT fire wheel/
+  // touch events, so this can't accidentally trigger the user-scrolled-away
+  // detection below.
   const scheduleFollow = useCallback(() => {
     if (followRafRef.current != null) return
     followRafRef.current = requestAnimationFrame(() => {
       followRafRef.current = null
       const el = scrollerRef.current
       if (!el) return
-      // scrollTop = scrollHeight reaches past the last row into the Footer,
-      // which is where the live tail (currentSegments / WorkingIndicator /
-      // PlanBanner / AskUserPrompt) lives.
       el.scrollTop = el.scrollHeight
     })
   }, [])
@@ -364,15 +371,32 @@ export function ChatArea() {
   // ChatArea (which would in turn cause Virtuoso to reconcile every token —
   // visibly choppy on long streams). The Footer subscribes via its own
   // selector, so the only thing we need to do up here is drive scroll.
+  //
+  // Gate decision: we DON'T use `userScrolledAwayRef` as a hard gate —
+  // instead, we compute the actual DOM distance-to-bottom right here and
+  // follow if we're within `NEAR_BOTTOM_PX`. That handles the case where
+  // wheel detection missed (touchpad inertia, keyboard scrolls, etc.) and
+  // makes the auto-follow self-healing: as soon as the user scrolls back
+  // to bottom, the next token will pin them again.
+  const NEAR_BOTTOM_PX = 240
   useEffect(() => {
     const unsub = useAppStore.subscribe((state, prev) => {
-      if (!atBottomRef.current) return
       const liveChanged =
         state.currentSegments !== prev.currentSegments ||
         state.pendingAsk !== prev.pendingAsk ||
         state.pendingPlan !== prev.pendingPlan ||
         state.isRunning !== prev.isRunning
-      if (liveChanged) scheduleFollow()
+      if (!liveChanged) return
+      // If the user has explicitly wheeled away, don't yank them back.
+      if (userScrolledAwayRef.current) return
+      // If they're near enough to the bottom that following won't surprise
+      // them, follow. Otherwise leave them alone — they're reading history.
+      const el = scrollerRef.current
+      if (el) {
+        const distance = el.scrollHeight - el.scrollTop - el.clientHeight
+        if (distance > NEAR_BOTTOM_PX) return
+      }
+      scheduleFollow()
     })
     return () => {
       unsub()
@@ -389,7 +413,7 @@ export function ChatArea() {
     const hasAttachments = attachments.length > 0
     if (!trimmed && !hasAttachments) return
     // User is actively engaging — re-enable follow-the-stream behavior.
-    atBottomRef.current = true
+    userScrolledAwayRef.current = false
     scheduleFollow()
     void sendMessage(trimmed, hasAttachments ? attachments : undefined)
     setInput('')
@@ -400,7 +424,7 @@ export function ChatArea() {
     inputRef.current?.focus()
     // Re-stick to bottom when switching sessions — previous session's scroll
     // state shouldn't bleed over and silently suppress auto-scroll here.
-    atBottomRef.current = true
+    userScrolledAwayRef.current = false
     // Snap to the end of the new session's history on the next paint. Wait
     // two frames so Virtuoso has measured rows for the new data set; one
     // frame is sometimes not enough on the very first session paint.
@@ -529,11 +553,69 @@ export function ChatArea() {
   // and triggers a reconcile of the whole list. Most of the props are static
   // anyway; capturing them in refs/useCallback keeps Virtuoso completely
   // still during streams.
-  const handleAtBottomStateChange = useCallback((at: boolean) => {
-    atBottomRef.current = at
+  //
+  // Note: we no longer wire `atBottomStateChange` to anything — it fires
+  // false-positives (atBottom=false when content grows) that disengage the
+  // auto-follow exactly when we want to stay engaged. The intent flag is
+  // driven by real wheel/touch events instead, attached in handleScrollerRef.
+  const handleAtBottomStateChange = useCallback((_at: boolean) => {
+    // intentionally empty — see comment above
   }, [])
+
+  // Detect real user "I want to scroll away" intent from the input devices
+  // themselves rather than from Virtuoso's interpretation of position. We
+  // listen on the actual scroller element so we see events whether the user
+  // is using a trackpad, mouse wheel, or touch. Programmatic scroll (our
+  // own scrollTop write) does NOT fire wheel/touch events, so this can't
+  // accidentally trigger itself.
+  const detachIntentListenerRef = useRef<(() => void) | null>(null)
   const handleScrollerRef = useCallback((el: HTMLElement | Window | null) => {
-    scrollerRef.current = (el && el !== window) ? (el as HTMLElement) : null
+    // Detach previous listener if the scroller is being replaced.
+    if (detachIntentListenerRef.current) {
+      detachIntentListenerRef.current()
+      detachIntentListenerRef.current = null
+    }
+    const next = (el && el !== window) ? (el as HTMLElement) : null
+    scrollerRef.current = next
+    if (!next) return
+
+    // Wheel: deltaY < 0 means scrolling UP (away from the tail). That's the
+    // primary signal for "user wants to read history, leave them alone."
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) {
+        userScrolledAwayRef.current = true
+      } else if (e.deltaY > 0) {
+        // Scrolling down — if they reach the bottom we re-engage. Check on
+        // the next microtask so scrollTop reflects the post-event position.
+        queueMicrotask(() => {
+          const distance = next.scrollHeight - next.scrollTop - next.clientHeight
+          if (distance < 16) userScrolledAwayRef.current = false
+        })
+      }
+    }
+    // Touch: any touchmove on the scroller indicates the user is dragging
+    // it. We can't always distinguish up vs down from a single event, so
+    // we re-evaluate position after each move.
+    const onTouchMove = () => {
+      queueMicrotask(() => {
+        const distance = next.scrollHeight - next.scrollTop - next.clientHeight
+        userScrolledAwayRef.current = distance >= 16
+      })
+    }
+    next.addEventListener('wheel', onWheel, { passive: true })
+    next.addEventListener('touchmove', onTouchMove, { passive: true })
+    detachIntentListenerRef.current = () => {
+      next.removeEventListener('wheel', onWheel)
+      next.removeEventListener('touchmove', onTouchMove)
+    }
+  }, [])
+
+  // Tear down the intent listener when ChatArea itself unmounts.
+  useEffect(() => () => {
+    if (detachIntentListenerRef.current) {
+      detachIntentListenerRef.current()
+      detachIntentListenerRef.current = null
+    }
   }, [])
   const renderItem = useCallback(
     (_idx: number, msg: ChatMessage) => (

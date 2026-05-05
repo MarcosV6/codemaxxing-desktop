@@ -41,7 +41,7 @@ interface DetectedAuth {
   description: string
 }
 
-interface ModelInfo {
+export interface ModelInfo {
   name: string
   id: string
 }

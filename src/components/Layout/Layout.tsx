@@ -2,8 +2,8 @@ import React, { useState, useEffect, useRef } from 'react'
 import { ChatArea } from '../Chat/ChatArea'
 import { StatusBar } from '../Shared/StatusBar'
 import { PreviewPanel } from '../Preview/PreviewPanel'
-import { useAppStore } from '../../store/appStore'
-import { Plus, MessageSquare, MessageCircle, PanelLeftClose, PanelLeft, PanelRight, Settings, Trash2, Folder, BookmarkCheck, Bot, Clock, ChevronDown, FolderTree } from 'lucide-react'
+import { useAppStore, type ModelInfo } from '../../store/appStore'
+import { Plus, MessageSquare, MessageCircle, PanelLeftClose, PanelLeft, PanelRight, Settings, Trash2, Folder, BookmarkCheck, Bot, Clock, ChevronDown, FolderTree, Loader2, Search } from 'lucide-react'
 import { ApprovalModal, MCPApprovalModal } from '../Modals/ApprovalModal'
 import { SettingsModal } from '../Modals/SettingsModal'
 import { NewSessionModal } from '../Modals/NewSessionModal'
@@ -54,6 +54,18 @@ export function Layout() {
   const [renameDraft, setRenameDraft] = useState('')
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
   const modelPickerRef = useRef<HTMLDivElement>(null)
+  // Per-provider model lists for the picker. Keyed by provider id. We fetch
+  // these in parallel when the picker opens so the user can switch BOTH
+  // provider and model in one click — without this, the dropdown only
+  // showed the current session provider's models, which forced you to
+  // delete-and-recreate a session just to swap from LM Studio to Anthropic.
+  const [allModels, setAllModels] = useState<Record<string, ModelInfo[]>>({})
+  // Providers whose model fetch is still in flight. Used for per-section
+  // loading spinners — local providers (LM Studio, Ollama) can be slow if
+  // the server is starting up, and we don't want one slow provider to
+  // delay rendering the rest of the list.
+  const [loadingProviders, setLoadingProviders] = useState<Set<string>>(new Set())
+  const [modelFilter, setModelFilter] = useState('')
 
   // Close model picker on outside click / escape
   useEffect(() => {
@@ -72,7 +84,43 @@ export function Layout() {
     }
   }, [modelPickerOpen])
 
-  // When the picker opens, refresh the model list for the session's provider
+  // Fetch models for every authed provider when the picker opens. We use
+  // direct IPC (not the store's loadModels) because loadModels overwrites
+  // the global `availableModels` — calling it for 6 providers in parallel
+  // would race and last-writer-wins. A local map per provider sidesteps that.
+  useEffect(() => {
+    if (!modelPickerOpen) return
+    const authed = providers.filter((p) => p.authed)
+    if (authed.length === 0) return
+    setModelFilter('')
+    setLoadingProviders(new Set(authed.map((p) => p.id)))
+    let cancelled = false
+    authed.forEach((p) => {
+      void window.electron.llm.listModels(p.id)
+        .then((res) => {
+          if (cancelled) return
+          const models = res.ok && res.models ? res.models : []
+          setAllModels((prev) => ({ ...prev, [p.id]: models }))
+        })
+        .catch(() => {
+          if (cancelled) return
+          setAllModels((prev) => ({ ...prev, [p.id]: [] }))
+        })
+        .finally(() => {
+          if (cancelled) return
+          setLoadingProviders((prev) => {
+            const next = new Set(prev)
+            next.delete(p.id)
+            return next
+          })
+        })
+    })
+    return () => { cancelled = true }
+  }, [modelPickerOpen, providers])
+
+  // Keep the store's availableModels in sync with the active session's
+  // provider too, since other surfaces (NewSessionModal in re-edit, etc.)
+  // still read from it. Cheap — fires once per session-provider change.
   useEffect(() => {
     if (modelPickerOpen && activeSession?.provider) {
       void loadModels(activeSession.provider)
@@ -347,54 +395,148 @@ export function Layout() {
                     </button>
                     {modelPickerOpen && (
                       <div
-                        className="absolute right-0 top-full mt-1 rounded-xl shadow-xl z-20 overflow-hidden min-w-[260px]"
+                        className="absolute right-0 top-full mt-1 rounded-xl shadow-xl z-20 overflow-hidden min-w-[320px]"
                         style={{
                           backgroundColor: 'var(--theme-bg-raised, var(--theme-bg-subtle))',
                           border: '1px solid var(--theme-hairline-strong)',
                           WebkitAppRegion: 'no-drag',
                         } as React.CSSProperties}
                       >
-                        <div className="px-3 py-1.5 text-[10.5px] uppercase tracking-wider opacity-50" style={{ color: 'var(--theme-muted)' }}>
-                          Model · {activeSession.provider}
+                        {/* Search bar — useful once you have a few providers
+                            with dozens of models each. Focuses on open. */}
+                        <div className="flex items-center gap-2 px-3 py-2" style={{ borderBottom: '1px solid var(--theme-hairline)' }}>
+                          <Search size={11} style={{ color: 'var(--theme-muted)' }} />
+                          <input
+                            autoFocus
+                            value={modelFilter}
+                            onChange={(e) => setModelFilter(e.target.value)}
+                            placeholder="Filter models…"
+                            className="flex-1 bg-transparent outline-none text-[12px] font-mono"
+                            style={{ color: 'var(--theme-text)' }}
+                          />
+                          {modelFilter && (
+                            <button onClick={() => setModelFilter('')} className="text-[10.5px] opacity-60 hover:opacity-100">
+                              clear
+                            </button>
+                          )}
                         </div>
-                        <div className="max-h-[320px] overflow-y-auto pb-1">
-                          {availableModels.length === 0 ? (
-                            <div className="px-3 py-3 text-[12px] opacity-60" style={{ color: 'var(--theme-muted)' }}>
-                              Loading models…
-                            </div>
-                          ) : (
-                            availableModels.map((m) => {
-                              const selected = m.name === activeSession.model
+
+                        {/* Body: every authed provider gets its own section.
+                            Active provider's section is rendered first so the
+                            current model is at the top of the list. */}
+                        <div className="max-h-[420px] overflow-y-auto pb-1">
+                          {(() => {
+                            const authed = providers.filter((p) => p.authed)
+                            if (authed.length === 0) {
                               return (
-                                <button
-                                  key={m.id}
-                                  onClick={async () => {
-                                    setModelPickerOpen(false)
-                                    if (m.name !== activeSession.model) {
-                                      await updateSessionModel(activeSession.id, activeSession.provider, m.name)
-                                    }
-                                  }}
-                                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12.5px] transition-colors hover:bg-white/[0.05]"
-                                  style={selected ? { backgroundColor: 'color-mix(in srgb, var(--theme-primary) 12%, transparent)' } : undefined}
-                                >
-                                  <span className="font-mono flex-1 truncate" style={{ color: selected ? 'var(--theme-primary)' : 'var(--theme-text)' }}>
-                                    {m.name}
-                                  </span>
-                                  {selected && (
-                                    <span className="text-[10.5px] font-mono opacity-70" style={{ color: 'var(--theme-primary)' }}>
-                                      active
-                                    </span>
+                                <div className="px-3 py-4 text-[12px] opacity-60 text-center" style={{ color: 'var(--theme-muted)' }}>
+                                  No providers configured.<br />
+                                  <span className="text-[11px]">Open Settings → Providers to add one.</span>
+                                </div>
+                              )
+                            }
+                            // Sort: active provider first, then alphabetical
+                            const sorted = [...authed].sort((a, b) => {
+                              if (a.id === activeSession.provider) return -1
+                              if (b.id === activeSession.provider) return 1
+                              return a.name.localeCompare(b.name)
+                            })
+                            const filter = modelFilter.trim().toLowerCase()
+                            // Track whether ANY model matched the filter so we
+                            // can show "no results" once for the whole picker
+                            // instead of an empty section per provider.
+                            let totalMatches = 0
+                            const sections = sorted.map((p) => {
+                              const list = allModels[p.id] ?? []
+                              const filtered = filter
+                                ? list.filter((m) => m.name.toLowerCase().includes(filter) || m.id.toLowerCase().includes(filter))
+                                : list
+                              totalMatches += filtered.length
+                              const isLoading = loadingProviders.has(p.id)
+                              const isActiveProvider = p.id === activeSession.provider
+                              return { provider: p, models: filtered, isLoading, isActiveProvider }
+                            })
+
+                            if (filter && totalMatches === 0) {
+                              return (
+                                <div className="px-3 py-6 text-[12px] opacity-60 text-center" style={{ color: 'var(--theme-muted)' }}>
+                                  No models match "{modelFilter}"
+                                </div>
+                              )
+                            }
+
+                            return sections.map(({ provider, models, isLoading, isActiveProvider }) => {
+                              // Hide non-active provider sections when they're
+                              // empty + finished loading + filter is empty —
+                              // a provider with zero models is just noise.
+                              if (!isActiveProvider && !isLoading && models.length === 0 && !filter) return null
+                              return (
+                                <div key={provider.id} className="pt-1.5">
+                                  <div
+                                    className="flex items-center justify-between px-3 py-1 text-[10.5px] uppercase tracking-wider"
+                                    style={{ color: 'var(--theme-muted)', opacity: 0.6 }}
+                                  >
+                                    <div className="flex items-center gap-1.5">
+                                      <span>{provider.name}</span>
+                                      {isActiveProvider && (
+                                        <span
+                                          className="text-[9px] font-mono px-1 py-[1px] rounded"
+                                          style={{
+                                            color: 'var(--theme-primary)',
+                                            backgroundColor: 'color-mix(in srgb, var(--theme-primary) 14%, transparent)',
+                                          }}
+                                        >
+                                          current
+                                        </span>
+                                      )}
+                                    </div>
+                                    {isLoading && <Loader2 size={10} className="animate-spin opacity-70" />}
+                                  </div>
+                                  {models.length === 0 && !isLoading ? (
+                                    <div className="px-3 py-1.5 text-[11px] opacity-50 italic" style={{ color: 'var(--theme-muted)' }}>
+                                      {filter ? 'no matches' : 'no models — server reachable but empty'}
+                                    </div>
+                                  ) : (
+                                    models.map((m) => {
+                                      const selected = isActiveProvider && m.name === activeSession.model
+                                      return (
+                                        <button
+                                          key={`${provider.id}::${m.id}`}
+                                          onClick={async () => {
+                                            setModelPickerOpen(false)
+                                            // Always pass both provider AND model — switching
+                                            // providers within a session works because the IPC
+                                            // already accepts the pair; the bug was purely
+                                            // that the picker only showed one provider.
+                                            if (!selected) {
+                                              await updateSessionModel(activeSession.id, provider.id, m.name)
+                                            }
+                                          }}
+                                          className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12.5px] transition-colors hover:bg-white/[0.05]"
+                                          style={selected ? { backgroundColor: 'color-mix(in srgb, var(--theme-primary) 12%, transparent)' } : undefined}
+                                        >
+                                          <span className="font-mono flex-1 truncate" style={{ color: selected ? 'var(--theme-primary)' : 'var(--theme-text)' }}>
+                                            {m.name}
+                                          </span>
+                                          {selected && (
+                                            <span className="text-[10.5px] font-mono opacity-70" style={{ color: 'var(--theme-primary)' }}>
+                                              active
+                                            </span>
+                                          )}
+                                        </button>
+                                      )
+                                    })
                                   )}
-                                </button>
+                                </div>
                               )
                             })
-                          )}
+                          })()}
                         </div>
                         <div
                           className="px-3 py-1.5 text-[10.5px] opacity-50 flex items-center justify-between"
                           style={{ borderTop: '1px solid var(--theme-hairline)', color: 'var(--theme-muted)' }}
                         >
-                          <span>{providers.find(p => p.id === activeSession.provider)?.name ?? activeSession.provider}</span>
+                          <span>{(providers.find(p => p.id === activeSession.provider)?.name ?? activeSession.provider)} · {activeSession.model}</span>
                           <span>⎋ close</span>
                         </div>
                       </div>

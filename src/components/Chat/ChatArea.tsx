@@ -357,13 +357,26 @@ export function ChatArea() {
   // row recycle. Setting scrollTop programmatically does NOT fire wheel/
   // touch events, so this can't accidentally trigger the user-scrolled-away
   // detection below.
+  // Two-frame follow. Why two: when a new MESSAGE is appended (e.g. user
+  // hits Send), Virtuoso runs its measurement pass over multiple frames —
+  // first frame renders the item invisibly to measure it, second frame
+  // applies the measured height. A single rAF reads scrollHeight before
+  // Virtuoso has the final layout, so scrollTop = scrollHeight lands at
+  // the wrong place and the user has to manually scroll. Writing to
+  // scrollTop on TWO consecutive frames catches both fast cases (tokens
+  // streaming into a stable layout) and slow cases (new row insertion).
   const scheduleFollow = useCallback(() => {
     if (followRafRef.current != null) return
     followRafRef.current = requestAnimationFrame(() => {
-      followRafRef.current = null
-      const el = scrollerRef.current
-      if (!el) return
-      el.scrollTop = el.scrollHeight
+      const el1 = scrollerRef.current
+      if (el1) el1.scrollTop = el1.scrollHeight
+      // Second frame: re-pin after Virtuoso settled its post-measurement
+      // layout. Cheap — scrollTop already at scrollHeight is a no-op.
+      followRafRef.current = requestAnimationFrame(() => {
+        followRafRef.current = null
+        const el2 = scrollerRef.current
+        if (el2) el2.scrollTop = el2.scrollHeight
+      })
     })
   }, [])
 

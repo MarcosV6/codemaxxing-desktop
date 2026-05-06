@@ -1,5 +1,6 @@
 import React from 'react'
 import { useAppStore } from '../../store/appStore'
+import { getModelContextWindow } from '../../utils/modelContext'
 
 function formatTokens(n: number): string {
   if (n < 1_000) return n.toString()
@@ -96,7 +97,14 @@ export function StatusBar() {
 
   const sessionCost = activeSession.estimatedCost ?? 0
   const messageCount = activeSession.messages?.length ?? 0
-  const contextWindow = currentStats?.contextWindow ?? 128_000
+  // Prefer the agent-pushed runtime value when we have it (handles local
+  // models where the actual loaded window may differ from the static
+  // guess). Fall back to the model-name lookup for fresh / freshly-switched
+  // sessions before the first run completes — without this we showed 128k
+  // for everything, which silently lied for gpt-5.5 (400k), Claude (200k),
+  // gpt-4.1 (1M), gemini (up to 2M), etc.
+  const contextWindow = currentStats?.contextWindow
+    ?? getModelContextWindow(activeSession.model, activeSession.provider)
   // Best proxy for current context fill: last observed prompt_tokens for a
   // single API call (matches what the model actually saw on its last turn).
   const contextUsed = lastPromptTokens ?? 0

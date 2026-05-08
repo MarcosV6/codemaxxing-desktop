@@ -125,6 +125,34 @@ function toolMessage(callId: string, content: string): ChatCompletionMessagePara
 }
 
 /**
+ * Coerce a chat-completions message array into a shape strict OpenAI-compat
+ * servers (llama.cpp, vLLM, some forks of text-generation-webui) accept.
+ *
+ * Specifically: an assistant message that ONLY made tool calls has
+ * `content: null` per the OpenAI spec. OpenAI's own API accepts that;
+ * llama.cpp's request validator returns 500 with "Expected 'content' to be
+ * a string or an array". Same shape comes from Anthropic adapters too.
+ *
+ * Fix: replace `null`/`undefined` content with an empty string. Doesn't
+ * change semantics — the assistant didn't say anything textual on that
+ * turn. Done in one place at the request boundary so we don't have to
+ * remember at every messages.push() site.
+ *
+ * Also strips top-level `null` content on tool messages, just in case.
+ */
+function sanitizeMessagesForChatCompletions(
+  messages: ChatCompletionMessageParam[],
+): ChatCompletionMessageParam[] {
+  return messages.map((m) => {
+    const msg = m as any
+    if (msg.content == null) {
+      return { ...msg, content: '' } as ChatCompletionMessageParam
+    }
+    return m
+  })
+}
+
+/**
  * Parse tool-call arguments produced by the model, forgiving common quirks
  * from local inference servers (Ollama, LM Studio, llama.cpp). Tries, in order:
  *   1. Plain JSON.parse
@@ -690,7 +718,10 @@ export class CodingAgent {
       const client = new OpenAI({ apiKey: this.config.apiKey || 'not-needed', baseURL: this.config.baseUrl })
       const params: any = {
         model: this.config.model,
-        messages: [{ role: 'system', content: this.config.systemPrompt }, ...messages],
+        messages: sanitizeMessagesForChatCompletions([
+          { role: 'system', content: this.config.systemPrompt },
+          ...messages,
+        ]),
         tools: tools.length > 0 ? tools : undefined,
         stream: true,
         stream_options: { include_usage: true },

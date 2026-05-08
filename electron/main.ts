@@ -1,4 +1,21 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, clipboard, powerSaveBlocker, Tray, Menu, nativeImage } from 'electron'
+import dns from 'node:dns'
+
+// Prefer IPv4 when resolving hostnames. Node 22 / undici default to IPv6
+// first, which silently breaks any LAN/VPN scenario where the remote host
+// has both A and AAAA records but the actual server is only bound to the
+// IPv4 interface. Real-world examples we've hit:
+//   - LM Studio / Ollama / llama.cpp bound to 0.0.0.0 (IPv4 only) over
+//     Tailscale: AAAA resolves to a routable Tailscale IPv6, the connect
+//     succeeds at TCP level but llama-server isn't listening, RST.
+//   - macOS Bonjour mDNS .local hostnames similarly returning both
+//     families when the service is IPv4-only.
+//
+// Setting this global preference forces A records to be tried first;
+// IPv6 still falls back if IPv4 fails. Has no effect on cloud providers
+// (they all serve IPv4). Must run BEFORE any HTTP client is constructed.
+dns.setDefaultResultOrder('ipv4first')
+
 import {
   startRemoteServer, generateDeviceToken, generatePairingCode, timingSafeStrEq,
   localAddresses, type RemoteServerHandle,
@@ -850,22 +867,60 @@ function setupIPC(): void {
         return { ok: true, models: QWEN_MODELS.map(m => ({ name: m, id: m })) }
       }
 
-      // Local providers: skip the OpenAI SDK entirely and use a plain HTTP
-      // GET. The SDK has historically had quirks with edge cases (gzip from
-      // some local servers, weird Connection headers, etc.) that result in an
-      // empty array even when the server is healthy. Direct fetch is also
+      // Local & self-hosted providers: skip the OpenAI SDK entirely and
+      // use a plain HTTP GET. The SDK has historically had quirks with
+      // edge cases (gzip from some local servers, weird Connection
+      // headers, server-sent text/event-stream where models.list expects
+      // application/json, etc.) that result in an empty array or opaque
+      // errors even when the server is healthy. Direct fetch is also
       // ~10x faster to fail when the server isn't running.
-      if (providerId === 'lmstudio' || providerId === 'ollama') {
-        console.log('[llm:listModels] local probe', providerId, baseUrl)
-        const url = new URL('models', baseUrl.endsWith('/') ? baseUrl : baseUrl + '/').toString()
-        const res = await fetch(url, { signal: AbortSignal.timeout(4000) })
-        if (!res.ok) {
-          return { ok: false, error: `${providerId} returned HTTP ${res.status}` }
+      //
+      // 'custom' falls into this bucket because the typical custom
+      // provider IS a self-hosted server (llama.cpp, vLLM, text-gen-webui,
+      // a Tailscale-exposed home rig, etc.). For these, the SDK is
+      // overkill and its layered error messages obscure what's actually
+      // wrong (DNS, TCP, TLS, HTTP shape — all collapsed to "Connection
+      // error.").
+      if (providerId === 'lmstudio' || providerId === 'ollama' || providerId === 'custom') {
+        if (!baseUrl) {
+          return { ok: false, error: 'No base URL configured for this provider. Open Settings → Providers and set the URL of your server (e.g. http://your-tailnet-host:8080/v1).' }
         }
-        const json: any = await res.json()
-        const models = Array.isArray(json?.data) ? json.data : []
-        console.log('[llm:listModels]', providerId, 'returned', models.length, 'models')
-        return { ok: true, models: models.map((m: any) => ({ name: m.id, id: m.id })) }
+        console.log('[llm:listModels] local probe', providerId, baseUrl)
+        let url: string
+        try {
+          url = new URL('models', baseUrl.endsWith('/') ? baseUrl : baseUrl + '/').toString()
+        } catch {
+          return { ok: false, error: `Invalid base URL "${baseUrl}". Expected something like http://host:port/v1` }
+        }
+        try {
+          const res = await fetch(url, { signal: AbortSignal.timeout(4000) })
+          if (!res.ok) {
+            return { ok: false, error: `Server at ${url} returned HTTP ${res.status}. Make sure it speaks the OpenAI-compatible /models endpoint.` }
+          }
+          const json: any = await res.json()
+          const models = Array.isArray(json?.data) ? json.data : []
+          console.log('[llm:listModels]', providerId, 'returned', models.length, 'models')
+          return { ok: true, models: models.map((m: any) => ({ name: m.id, id: m.id })) }
+        } catch (err: any) {
+          // Pull out the underlying cause (DNS, TCP, TLS) when undici
+          // wraps it. Surface what we actually tried so the user can
+          // tell whether the URL or the server is the problem.
+          const cause = (err?.cause?.code ?? err?.code ?? '') as string
+          const rootMsg = err?.cause?.message ?? err?.message ?? String(err)
+          let hint = ''
+          if (cause === 'ENOTFOUND' || /ENOTFOUND/.test(rootMsg)) {
+            hint = ' — hostname could not be resolved. Check spelling, and that your VPN/Tailscale is connected.'
+          } else if (cause === 'ECONNREFUSED' || /ECONNREFUSED/.test(rootMsg)) {
+            hint = ' — server is not accepting connections. Verify it\'s running and listening on this port.'
+          } else if (cause === 'ETIMEDOUT' || /ETIMEDOUT|timeout|timed out/i.test(rootMsg)) {
+            hint = ' — connection timed out. Check firewall/network reachability.'
+          } else if (cause === 'ECONNRESET' || /ECONNRESET/.test(rootMsg)) {
+            hint = ' — connection reset. Possibly an IPv4/IPv6 mismatch (server bound to one, client connecting to the other).'
+          } else if (/CERT_|certificate/i.test(rootMsg)) {
+            hint = ' — TLS certificate error. If using a self-signed cert, you\'ll need to use plain http or trust the cert.'
+          }
+          return { ok: false, error: `Couldn't reach ${url}: ${rootMsg}${hint}` }
+        }
       }
 
       const client = new OpenAI({ apiKey, baseURL: baseUrl })

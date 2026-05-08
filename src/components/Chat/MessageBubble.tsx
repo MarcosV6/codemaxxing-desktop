@@ -359,6 +359,12 @@ function ErrorBanner({ message }: { message: ChatMessage }) {
         'The history has grown past the model\'s context window. ' +
         'Compact summarizes older turns into a brief note and forks the session, then retries your message — the recent turns and the summary stay; the bulk gets folded down.'
       break
+    case 'unsupported_history':
+      headline = 'This server doesn\'t accept the conversation\'s tool history'
+      detail =
+        'Some self-hosted OpenAI-compat servers (older llama.cpp builds, llamafile, vLLM forks) reject input messages that include structured tool calls. ' +
+        'Compact rewrites the history as a clean prose summary — drops the structured tool fields the server can\'t parse — and retries your message. The model keeps the gist of what was done previously without choking on the wire format.'
+      break
     case 'rate_limit':
       headline = 'Provider rate limit hit'
       detail = 'The provider is asking us to slow down. Retry shortly.'
@@ -403,7 +409,7 @@ function ErrorBanner({ message }: { message: ChatMessage }) {
         </div>
 
         {/* Recovery actions per error kind */}
-        {(kind === 'context_overflow' && retryPrompt) && (
+        {((kind === 'context_overflow' || kind === 'unsupported_history') && retryPrompt) && (
           <div
             className="flex flex-wrap items-center gap-2 px-3 py-2"
             style={{ borderTop: '1px solid color-mix(in srgb, var(--theme-error) 16%, transparent)' }}

@@ -47,7 +47,7 @@ export interface ChatMessage {
    *  actionable recovery (e.g. context_overflow → "Compact session" button).
    *  Optional and additive; existing errors that don't classify still
    *  render as the generic red banner. */
-  errorKind?: 'context_overflow' | 'auth' | 'rate_limit' | 'network' | 'generic'
+  errorKind?: 'context_overflow' | 'unsupported_history' | 'auth' | 'rate_limit' | 'network' | 'generic'
   /** The user message that triggered this error. Used to retry the same
    *  prompt against a freshly compacted session without making the user
    *  re-type. */

@@ -703,7 +703,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             // Only attach the retry prompt for failure modes where retry
             // makes sense — for auth errors, e.g., the user has to fix
             // credentials before any retry can possibly succeed.
-            ...(kind === 'context_overflow' || kind === 'rate_limit' || kind === 'network'
+            ...(kind === 'context_overflow' || kind === 'rate_limit' || kind === 'network' || kind === 'unsupported_history'
               ? { retryPrompt: s.lastUserPrompt ?? undefined }
               : {}),
           }
@@ -1503,6 +1503,19 @@ function classifyAgentError(error: string): NonNullable<ChatMessage['errorKind']
     lower.includes('failed to fetch') ||
     lower.includes('network')
   ) return 'network'
+  // Strict-server schema errors. Some self-hosted OpenAI-compat servers
+  // (older llama.cpp, llamafile, vLLM forks) reject input messages that
+  // include `tool_calls`, `role: 'tool'`, or multi-part content with
+  // 5xx + a generic-sounding "Expected 'content' to be a string or an
+  // array" message — even when content was fine and tool_calls is the
+  // real problem. The recovery is the same as context_overflow:
+  // compact-and-retry, which forks the session with a clean prose
+  // summary and drops the structured tool-call history.
+  if (
+    /content.*string.*array|expected.*content/i.test(error) ||
+    /(invalid|unexpected).*(tool_calls|role)/i.test(error) ||
+    /tool_calls.*not.*supported/i.test(error)
+  ) return 'unsupported_history'
   return 'generic'
 }
 

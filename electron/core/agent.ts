@@ -153,71 +153,6 @@ function sanitizeMessagesForChatCompletions(
 }
 
 /**
- * Strict-server compatibility mode. Some self-hosted OpenAI-compat servers
- * (older llama.cpp builds, llamafile, some vLLM forks, text-generation-webui)
- * reject input messages that include `tool_calls`, multi-part content, or
- * `role: 'tool'`. Their validators usually return 5xx with messages like
- * "Expected 'content' to be a string or an array" — even when the offending
- * field is `tool_calls`, not `content`.
- *
- * This rewrite is one-way lossy: it preserves CONTEXT (the agent still
- * knows what tools it called and what they returned) but loses the
- * structured fields the strict server can't parse. Triggered automatically
- * on a 5xx retry — see streamOpenAI.
- */
-function compatModeRewrite(
-  messages: ChatCompletionMessageParam[],
-): ChatCompletionMessageParam[] {
-  const out: ChatCompletionMessageParam[] = []
-  for (const m of messages) {
-    const msg = m as any
-    // Coerce multi-part content to plain text so 'image_url' parts don't
-    // show up either. Strict servers don't take arrays of objects.
-    let content: string
-    if (typeof msg.content === 'string') {
-      content = msg.content
-    } else if (Array.isArray(msg.content)) {
-      content = (msg.content as any[])
-        .map(p => (p?.type === 'text' && typeof p.text === 'string' ? p.text : p?.type === 'image_url' ? '[image]' : ''))
-        .filter(Boolean)
-        .join(' ')
-    } else if (msg.content == null) {
-      content = ''
-    } else {
-      try { content = JSON.stringify(msg.content) } catch { content = '' }
-    }
-
-    if (msg.role === 'tool') {
-      // Strict servers don't speak `role: 'tool'`. Reframe as a user-side
-      // narration so the conversation thread reads sensibly.
-      out.push({ role: 'user', content: `[Tool result for call ${msg.tool_call_id || '?'}]\n${content}` } as any)
-      continue
-    }
-
-    if (msg.role === 'assistant' && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
-      // Inline-prose the tool calls so the model sees what it requested,
-      // even though the structured tool_calls field is dropped. Ensures
-      // some content is present even if the assistant turn was tool-only.
-      const callsText = msg.tool_calls
-        .map((tc: any) => {
-          const name = tc?.function?.name ?? tc?.name ?? 'tool'
-          const args = typeof tc?.function?.arguments === 'string'
-            ? tc.function.arguments
-            : JSON.stringify(tc?.function?.arguments ?? tc?.input ?? {})
-          return `[Called ${name} with ${args}]`
-        })
-        .join('\n')
-      const merged = [content, callsText].filter(Boolean).join('\n')
-      out.push({ role: 'assistant', content: merged || '[tool call]' } as any)
-      continue
-    }
-
-    out.push({ ...msg, content } as ChatCompletionMessageParam)
-  }
-  return out
-}
-
-/**
  * Parse tool-call arguments produced by the model, forgiving common quirks
  * from local inference servers (Ollama, LM Studio, llama.cpp). Tries, in order:
  *   1. Plain JSON.parse
@@ -798,17 +733,18 @@ export class CodingAgent {
     let { client, params } = buildParams()
     let stream: any
     let didRefresh = false
-    let didCompatRetry = false
     // Some local inference servers (older Ollama builds, strict llama.cpp
     // shims) reject unknown request fields with HTTP 400. Retry once without
     // the optional extensions so a local model still has a chance.
     //
-    // A second class of strict-server failure: 5xx with messages like
-    // "Expected 'content' to be a string or an array" when the input
-    // includes tool_calls, role: 'tool' messages, or multi-part content.
-    // Recover by replaying with compatModeRewrite which flattens those
-    // shapes into plain prose. One-shot — if compat-mode also fails,
-    // surface the original error.
+    // Strict-server tool-call schema failures are NOT auto-retried with
+    // a flattened-message replay anymore. We tried that briefly and the
+    // resulting "[Called X with Y]" prose got mimicked by the model on
+    // the next turn — it started emitting the same syntactic pattern in
+    // its output instead of real tool calls, breaking the agent loop in
+    // a more confusing way. Surface the error to the user instead; the
+    // ErrorBanner offers a Compact-and-retry recovery that drops the
+    // tool history cleanly without poisoning future turns.
     //
     // Separately, an OAuth access token may have rotated server-side between
     // our proactive `maybeRefreshOAuth()` and now — covered by a one-shot 401
@@ -834,18 +770,6 @@ export class CodingAgent {
         const looksLikeBadRequest =
           status === 400 ||
           /unknown|unsupported|unexpected|invalid|not supported/i.test(msg)
-        const looksLikeStrictServerSchema =
-          (status >= 400 && status < 600) &&
-          /content.*string.*array|expected.*content|tool_calls|invalid.*role/i.test(msg)
-        if (!didCompatRetry && looksLikeStrictServerSchema) {
-          // Replay the same request with the messages flattened — drops
-          // tool_calls / tool messages / multi-part content. Lossy but
-          // gets the strict server unstuck on existing sessions that have
-          // tool-call history.
-          didCompatRetry = true
-          params = { ...params, messages: compatModeRewrite(params.messages) }
-          continue
-        }
         if (!looksLikeBadRequest) throw err
         const fallback: any = { ...params }
         delete fallback.stream_options

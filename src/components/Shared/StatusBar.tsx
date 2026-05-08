@@ -36,6 +36,24 @@ function basename(p: string): string {
 }
 
 /**
+ * Compact display of a model identifier. llama.cpp / llamafile / vLLM
+ * sometimes report the full filesystem path of the loaded gguf instead
+ * of a short id (e.g. "/home/marcos/models/gguf/Qwen3.6-27B-Q5_K_M/Qwen3.6-27B-Q5_K_M.gguf").
+ * Strip the directories and the .gguf extension so the bottom bar reads
+ * like a model name (e.g. "Qwen3.6-27B-Q5_K_M") instead of a path. The
+ * full string is kept in the title attribute for hover.
+ */
+function prettyModelName(model: string): string {
+  if (!model) return model
+  // Forward AND backslash for Windows paths, in case a Windows-built
+  // llama-server reports its model with backslashes.
+  const lastSlash = Math.max(model.lastIndexOf('/'), model.lastIndexOf('\\'))
+  let name = lastSlash >= 0 ? model.slice(lastSlash + 1) : model
+  if (name.toLowerCase().endsWith('.gguf')) name = name.slice(0, -'.gguf'.length)
+  return name
+}
+
+/**
  * 8-segment context gauge. When auto-compact is enabled, segments past
  * the threshold get a faint red tint to show the "danger zone" — that's
  * the part of the context window we won't actually let the user fill,
@@ -228,8 +246,8 @@ export function StatusBar() {
         )}
 
         {activeSession.model && (
-          <span className="text-[10.5px] opacity-65 whitespace-nowrap" title={`${activeSession.provider ?? ''} / ${activeSession.model}`}>
-            {activeSession.model}
+          <span className="text-[10.5px] opacity-65 whitespace-nowrap truncate max-w-[240px]" title={`${activeSession.provider ?? ''} / ${activeSession.model}`}>
+            {prettyModelName(activeSession.model)}
           </span>
         )}
 

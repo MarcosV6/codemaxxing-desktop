@@ -305,18 +305,15 @@ export async function detectModelContextWindow(opts: {
 export function isLocalProvider(providerType: 'openai' | 'anthropic', baseUrl: string | undefined): boolean {
   if (providerType === 'anthropic') return false
   if (!baseUrl) return false
-  try {
-    const url = new URL(baseUrl)
-    const host = url.hostname
-    if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '0.0.0.0') return true
-    if (host.endsWith('.local')) return true
-    if (/^10\./.test(host)) return true
-    if (/^192\.168\./.test(host)) return true
-    if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true
-    return false
-  } catch {
-    return false
-  }
+  // The simplest correct rule: any URL that isn't on the known-cloud
+  // allow-list is "local-ish" — running on the user's hardware (or LAN, or
+  // VPN tail). That's the right framing for the TPS counter, the
+  // local-warning UI, etc. Previously we hard-coded only loopback +
+  // RFC1918 ranges, which silently excluded Tailscale (*.ts.net), Bonjour
+  // (*.local — actually still here), public-IP self-hosted boxes, and
+  // anything else where the user is paying their own GPU.
+  if (isCloudUrl(baseUrl)) return false
+  return true
 }
 
 /** 1234 → "1.2k", 128000 → "128k". */

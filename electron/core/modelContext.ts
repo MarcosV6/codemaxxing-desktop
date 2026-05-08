@@ -178,6 +178,91 @@ export async function detectOpenRouterContextWindow(baseUrl: string, model: stri
   }
 }
 
+/**
+ * llama.cpp / llama-server: two paths.
+ *
+ *   1. /props — the canonical introspection endpoint. Returns
+ *      `default_generation_settings.n_ctx` which is the loaded context
+ *      length (i.e. respects --ctx-size at server start time).
+ *   2. /v1/models — newer llama.cpp builds include `meta.n_ctx_train`
+ *      (training-time context, not the loaded one). We use it as a
+ *      secondary signal because /props is occasionally disabled and the
+ *      training-time number is at least an upper bound the user picked.
+ *
+ * Strips trailing /v1 from baseUrl since /props lives at the server root.
+ */
+export async function detectLlamaCppContextWindow(baseUrl: string, _model: string): Promise<number | null> {
+  const root = stripV1Suffix(baseUrl)
+  // First-choice: /props. Fastest, single fetch, gives the loaded n_ctx.
+  const props = await fetchWithTimeout(`${root}/props`)
+  if (props) {
+    try {
+      const data: any = await props.json()
+      const n = data?.default_generation_settings?.n_ctx ?? data?.n_ctx
+      if (typeof n === 'number' && n > 0) return n
+    } catch { /* fall through to /v1/models */ }
+  }
+  // Fallback: /v1/models with `meta.n_ctx_train`.
+  const models = await fetchWithTimeout(`${root}/v1/models`)
+  if (models) {
+    try {
+      const data: any = await models.json()
+      const entries: any[] = Array.isArray(data?.data) ? data.data : []
+      for (const e of entries) {
+        const n = e?.meta?.n_ctx_train ?? e?.meta?.n_ctx ?? e?.context_length
+        if (typeof n === 'number' && n > 0) return n
+      }
+    } catch { /* nothing usable */ }
+  }
+  return null
+}
+
+/**
+ * Race every server-introspection probe in parallel and return the first
+ * non-null answer. Cheap because each probe fails fast against the wrong
+ * server (the wrong endpoints 404 in <100ms typically), and bounded to
+ * 2s by the underlying fetchWithTimeout. We don't need to know which
+ * specific server we're talking to — whichever shape responds wins.
+ */
+async function probeSelfHostedContextWindow(baseUrl: string, model: string): Promise<number | null> {
+  const probes = await Promise.allSettled([
+    detectLlamaCppContextWindow(baseUrl, model),
+    detectOllamaContextWindow(baseUrl, model),
+    detectLMStudioContextWindow(baseUrl, model),
+    detectOpenRouterContextWindow(baseUrl, model),
+  ])
+  for (const r of probes) {
+    if (r.status === 'fulfilled' && r.value && r.value > 0) return r.value
+  }
+  return null
+}
+
+/**
+ * Hostnames we recognize as cloud APIs and won't waste a probe round-trip
+ * on. Anything not on this list is treated as potentially self-hosted —
+ * including Tailscale (.ts.net), Bonjour (.local), private RFC1918 ranges,
+ * and arbitrary public-IP hostnames the user might point a Custom Provider
+ * at. Better to spend ~2s probing on first session start than to silently
+ * report 32k for a self-hosted gpu rig with a 128k window.
+ */
+const CLOUD_URL_PATTERNS = [
+  'api.anthropic.com',
+  'api.openai.com',
+  'openrouter.ai',
+  'api.githubcopilot.com',
+  'dashscope.aliyuncs.com',
+  'chatgpt.com',
+  'generativelanguage.googleapis.com',
+  'azure.com',
+  'aws.amazon.com',
+  'amazonaws.com',
+]
+
+function isCloudUrl(url: string): boolean {
+  const lower = url.toLowerCase()
+  return CLOUD_URL_PATTERNS.some(p => lower.includes(p))
+}
+
 /** Primary entry. Tries provider-specific detection, then static table, then fallback. */
 export async function detectModelContextWindow(opts: {
   model: string
@@ -192,30 +277,23 @@ export async function detectModelContextWindow(opts: {
 
   const url = baseUrl.toLowerCase()
 
-  if (url.includes('openrouter.ai')) {
-    const detected = await detectOpenRouterContextWindow(baseUrl, model)
-    if (detected) return detected
-  }
-  if (url.includes(':11434') || url.includes('ollama')) {
-    const detected = await detectOllamaContextWindow(baseUrl, model)
-    if (detected) return detected
-  }
-  if (url.includes(':1234') || url.includes('lmstudio') || url.includes('lm-studio')) {
-    const detected = await detectLMStudioContextWindow(baseUrl, model)
-    if (detected) return detected
+  // Cloud providers we know — go straight to static lookup since these
+  // don't expose a useful context-window field on /models.
+  if (isCloudUrl(url)) {
+    if (url.includes('openrouter.ai')) {
+      const detected = await detectOpenRouterContextWindow(baseUrl, model)
+      if (detected) return detected
+    }
+    return getStaticContextWindow(model) ?? FALLBACK_WINDOW
   }
 
-  const isLoopback =
-    url.includes('localhost') ||
-    url.includes('127.0.0.1') ||
-    url.includes('::1') ||
-    /^https?:\/\/(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(url)
-  if (isLoopback) {
-    const ollama = await detectOllamaContextWindow(baseUrl, model)
-    if (ollama) return ollama
-    const lmstudio = await detectLMStudioContextWindow(baseUrl, model)
-    if (lmstudio) return lmstudio
-  }
+  // Self-hosted (LAN, Tailscale, .local, public IP custom server, etc.):
+  // race all known introspection endpoints in parallel — whichever shape
+  // the server speaks wins. Custom Provider over Tailscale to llama.cpp
+  // hits this path and gets the real loaded n_ctx instead of the 32k
+  // FALLBACK_WINDOW.
+  const detected = await probeSelfHostedContextWindow(baseUrl, model)
+  if (detected) return detected
 
   return getStaticContextWindow(model) ?? FALLBACK_WINDOW
 }

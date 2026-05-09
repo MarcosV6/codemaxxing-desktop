@@ -339,43 +339,40 @@ export function ChatArea() {
   const scrollerRef = useRef<HTMLElement | null>(null)
   const followRafRef = useRef<number | null>(null)
 
-  // User intent. False = the user is happy at/near the bottom and we should
-  // keep them pinned. True = they explicitly wheeled / touch-scrolled up and
-  // want to read history; we leave them alone until they scroll back.
+  // User intent. False = pin to bottom on every layout change. True = user
+  // has scrolled up and we should leave them alone until they come back down.
   //
-  // Why a separate flag instead of trusting `Virtuoso.atBottomStateChange`:
-  // when the Footer grows during streaming, Virtuoso reports `atBottom=false`
-  // for a frame because the user's scrollTop hasn't caught up to the new
-  // scrollHeight yet. Gating auto-follow on that signal is the bug — it
-  // disengages following the moment the agent starts emitting tokens. We
-  // only let user wheel/touch events flip this.
+  // Updated in real time by a `scroll` event listener on the scroller (see
+  // handleScrollerRef): every scroll event re-classifies based on the
+  // CURRENT distance to bottom. This makes the flag self-healing — the
+  // user wheels up → away. They wheel back → not-away. They keyboard-scroll
+  // → same logic. Programmatic scrollTop = scrollHeight also fires scroll
+  // events with distance = 0, which keeps the flag correctly false.
   const userScrolledAwayRef = useRef(false)
+  // Pixel slop below which we treat the user as "at the bottom." Generous
+  // enough to absorb sub-pixel rounding and not flicker between true/false
+  // when scrollHeight grows by half a line.
+  const NEAR_BOTTOM_PX = 16
 
-  // rAF-coalesced scroll-to-bottom. Streaming fires hundreds of store updates
-  // per second; we coalesce to one DOM write per frame to avoid layout
-  // thrashing, and also avoid fighting Virtuoso's own scroll-restoration on
-  // row recycle. Setting scrollTop programmatically does NOT fire wheel/
-  // touch events, so this can't accidentally trigger the user-scrolled-away
-  // detection below.
-  // Two-frame follow. Why two: when a new MESSAGE is appended (e.g. user
-  // hits Send), Virtuoso runs its measurement pass over multiple frames —
-  // first frame renders the item invisibly to measure it, second frame
-  // applies the measured height. A single rAF reads scrollHeight before
-  // Virtuoso has the final layout, so scrollTop = scrollHeight lands at
-  // the wrong place and the user has to manually scroll. Writing to
-  // scrollTop on TWO consecutive frames catches both fast cases (tokens
-  // streaming into a stable layout) and slow cases (new row insertion).
+  // rAF-coalesced two-frame scroll-to-bottom. Two frames because Virtuoso
+  // measures variable-height rows over multiple frames (first frame renders
+  // a row invisibly to measure it, second frame applies the height). Writing
+  // scrollTop = scrollHeight on TWO consecutive frames catches both fast
+  // cases (tokens streaming into stable layout) and slow cases (new row
+  // insertion, tool-call block expansion, image loads).
+  //
+  // Gates inside the rAF on userScrolledAwayRef so a stale schedule that
+  // queued before the user scrolled up doesn't yank them back when it fires.
   const scheduleFollow = useCallback(() => {
     if (followRafRef.current != null) return
+    if (userScrolledAwayRef.current) return
     followRafRef.current = requestAnimationFrame(() => {
       const el1 = scrollerRef.current
-      if (el1) el1.scrollTop = el1.scrollHeight
-      // Second frame: re-pin after Virtuoso settled its post-measurement
-      // layout. Cheap — scrollTop already at scrollHeight is a no-op.
+      if (el1 && !userScrolledAwayRef.current) el1.scrollTop = el1.scrollHeight
       followRafRef.current = requestAnimationFrame(() => {
         followRafRef.current = null
         const el2 = scrollerRef.current
-        if (el2) el2.scrollTop = el2.scrollHeight
+        if (el2 && !userScrolledAwayRef.current) el2.scrollTop = el2.scrollHeight
       })
     })
   }, [])
@@ -383,15 +380,11 @@ export function ChatArea() {
   // Subscribe to live state imperatively so token deltas don't re-render
   // ChatArea (which would in turn cause Virtuoso to reconcile every token —
   // visibly choppy on long streams). The Footer subscribes via its own
-  // selector, so the only thing we need to do up here is drive scroll.
-  //
-  // Gate decision: we DON'T use `userScrolledAwayRef` as a hard gate —
-  // instead, we compute the actual DOM distance-to-bottom right here and
-  // follow if we're within `NEAR_BOTTOM_PX`. That handles the case where
-  // wheel detection missed (touchpad inertia, keyboard scrolls, etc.) and
-  // makes the auto-follow self-healing: as soon as the user scrolls back
-  // to bottom, the next token will pin them again.
-  const NEAR_BOTTOM_PX = 240
+  // selector. Up here we only need to drive scroll. ResizeObserver
+  // (attached in handleScrollerRef below) handles content-size changes
+  // that don't have a corresponding store event — but we keep this
+  // subscription as a redundant trigger to belt-and-suspenders against
+  // the case where ResizeObserver doesn't fire promptly.
   useEffect(() => {
     const unsub = useAppStore.subscribe((state, prev) => {
       const liveChanged =
@@ -399,17 +392,7 @@ export function ChatArea() {
         state.pendingAsk !== prev.pendingAsk ||
         state.pendingPlan !== prev.pendingPlan ||
         state.isRunning !== prev.isRunning
-      if (!liveChanged) return
-      // If the user has explicitly wheeled away, don't yank them back.
-      if (userScrolledAwayRef.current) return
-      // If they're near enough to the bottom that following won't surprise
-      // them, follow. Otherwise leave them alone — they're reading history.
-      const el = scrollerRef.current
-      if (el) {
-        const distance = el.scrollHeight - el.scrollTop - el.clientHeight
-        if (distance > NEAR_BOTTOM_PX) return
-      }
-      scheduleFollow()
+      if (liveChanged) scheduleFollow()
     })
     return () => {
       unsub()
@@ -575,15 +558,26 @@ export function ChatArea() {
     // intentionally empty — see comment above
   }, [])
 
-  // Detect real user "I want to scroll away" intent from the input devices
-  // themselves rather than from Virtuoso's interpretation of position. We
-  // listen on the actual scroller element so we see events whether the user
-  // is using a trackpad, mouse wheel, or touch. Programmatic scroll (our
-  // own scrollTop write) does NOT fire wheel/touch events, so this can't
-  // accidentally trigger itself.
+  // Wire two observers on the actual scroller element so we react to layout
+  // reality, not just store events:
+  //
+  //   1. `scroll` event → updates userScrolledAwayRef based on the current
+  //      distance to bottom. Fires for user scrolls AND our own programmatic
+  //      writes; both are correct outcomes (user scrolls away → away; we
+  //      scrolled to bottom → not-away). This catches every input modality
+  //      uniformly: wheel, trackpad, touch, keyboard arrows, page-down, etc.
+  //
+  //   2. ResizeObserver on the inner content element → schedules a follow
+  //      on every layout change. Fires for token streaming growth, tool-
+  //      call block expansion, image loads, animations resolving, message
+  //      list reconciliation — anything that changes scrollHeight. The
+  //      store-subscriber path is kept as a redundant trigger but this is
+  //      the primary mechanism, because it sees the actual change rather
+  //      than its upstream cause.
+  //
+  // Both teardown cleanly via the returned unsubscribe.
   const detachIntentListenerRef = useRef<(() => void) | null>(null)
   const handleScrollerRef = useCallback((el: HTMLElement | Window | null) => {
-    // Detach previous listener if the scroller is being replaced.
     if (detachIntentListenerRef.current) {
       detachIntentListenerRef.current()
       detachIntentListenerRef.current = null
@@ -592,38 +586,33 @@ export function ChatArea() {
     scrollerRef.current = next
     if (!next) return
 
-    // Wheel: deltaY < 0 means scrolling UP (away from the tail). That's the
-    // primary signal for "user wants to read history, leave them alone."
-    const onWheel = (e: WheelEvent) => {
-      if (e.deltaY < 0) {
-        userScrolledAwayRef.current = true
-      } else if (e.deltaY > 0) {
-        // Scrolling down — if they reach the bottom we re-engage. Check on
-        // the next microtask so scrollTop reflects the post-event position.
-        queueMicrotask(() => {
-          const distance = next.scrollHeight - next.scrollTop - next.clientHeight
-          if (distance < 16) userScrolledAwayRef.current = false
-        })
-      }
+    const updateAwayFlag = () => {
+      const distance = next.scrollHeight - next.scrollTop - next.clientHeight
+      userScrolledAwayRef.current = distance > NEAR_BOTTOM_PX
     }
-    // Touch: any touchmove on the scroller indicates the user is dragging
-    // it. We can't always distinguish up vs down from a single event, so
-    // we re-evaluate position after each move.
-    const onTouchMove = () => {
-      queueMicrotask(() => {
-        const distance = next.scrollHeight - next.scrollTop - next.clientHeight
-        userScrolledAwayRef.current = distance >= 16
-      })
-    }
-    next.addEventListener('wheel', onWheel, { passive: true })
-    next.addEventListener('touchmove', onTouchMove, { passive: true })
-    detachIntentListenerRef.current = () => {
-      next.removeEventListener('wheel', onWheel)
-      next.removeEventListener('touchmove', onTouchMove)
-    }
-  }, [])
+    next.addEventListener('scroll', updateAwayFlag, { passive: true })
 
-  // Tear down the intent listener when ChatArea itself unmounts.
+    // Observe the inner content element's size. Virtuoso renders a single
+    // child as the scroll content; that's what we observe.
+    let ro: ResizeObserver | null = null
+    const inner = next.firstElementChild as HTMLElement | null
+    if (inner && typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => {
+        // Hand off to the rAF-coalesced scheduler. scheduleFollow re-checks
+        // userScrolledAwayRef inside the rAF, so a resize fired after the
+        // user scrolled up doesn't yank them back.
+        scheduleFollow()
+      })
+      ro.observe(inner)
+    }
+
+    detachIntentListenerRef.current = () => {
+      next.removeEventListener('scroll', updateAwayFlag)
+      if (ro) ro.disconnect()
+    }
+  }, [scheduleFollow])
+
+  // Tear down on unmount.
   useEffect(() => () => {
     if (detachIntentListenerRef.current) {
       detachIntentListenerRef.current()

@@ -198,6 +198,71 @@ gh release upload v1.0.0 release/<file-1> release/<file-2> --repo MarcosV6/codem
 
 If you'd rather use the web UI: go to https://github.com/MarcosV6/codemaxxing-desktop/releases/tag/v1.0.0 → **Edit** → drag the binaries into the assets area.
 
-## CI alternative (when you have an extra hour)
+## Releasing (automated)
 
-Eventually you'll want GitHub Actions to build all three platforms automatically on every release tag. Sketched out in [`docs/CI.md`](CI.md) when that lands. For now, manual builds are fine.
+CI builds every platform for you. Two workflows live in [`.github/workflows`](../.github/workflows):
+
+- **`ci.yml`** — runs on every push/PR to `main`: typecheck, lint, and unit tests. This is the gate; keep it green.
+- **`release.yml`** — runs when you push a tag like `v1.1.0`. It builds on four runners in parallel (macOS arm64, macOS x64, Windows x64, Linux x64), then attaches all the installers to the GitHub Release for that tag.
+
+### Cut a release
+
+```bash
+# bump "version" in package.json first (e.g. 1.0.0 → 1.1.0), commit, then:
+git tag v1.1.0
+git push origin v1.1.0
+```
+
+Watch it under the repo's **Actions** tab. When the matrix finishes, the **Publish GitHub Release** job creates/updates the release and uploads:
+
+- macOS: `*-arm64-mac.zip`, `*-mac.zip`, and the matching `.dmg`s
+- Windows: `Codemaxxing Setup *.exe`, `*-win.zip`
+- Linux: `*.AppImage`, `*.deb`, `*.tar.gz`
+
+`workflow_dispatch` (the **Run workflow** button) runs the build matrix without publishing — handy for checking a platform still builds before you tag.
+
+> **Native arch only.** CI builds each platform for its runner's native arch (no Windows/Linux arm64 yet) because `better-sqlite3` is a native addon and `electron-rebuild` only compiles for the host arch. Cross-arch builds need a cross toolchain — a later addition.
+
+### Manual fallback
+
+The per-platform `npm run electron:build:*` commands above still work if you'd rather build by hand, then `gh release upload` (see the previous section).
+
+## Code signing & notarization
+
+By default — and in CI without secrets — builds are **ad-hoc signed**: they run, but macOS Gatekeeper and Windows SmartScreen warn on first open (the README documents the one-time bypass). To ship builds that *don't* nag, you need paid certificates. The project is already wired for them; here's the checklist.
+
+### macOS (Apple Developer ID + notarization — $99/yr)
+
+1. Enroll at https://developer.apple.com, create a **Developer ID Application** certificate, export it as a `.p12`.
+2. Create an **app-specific password** for your Apple ID (appleid.apple.com → Sign-In & Security).
+3. In `package.json`, enable the hardened runtime + entitlements (the entitlements file already exists at [`build/entitlements.mac.plist`](../build/entitlements.mac.plist)):
+
+   ```jsonc
+   "mac": {
+     "hardenedRuntime": true,
+     "entitlements": "build/entitlements.mac.plist",
+     "entitlementsInherit": "build/entitlements.mac.plist",
+     "notarize": { "teamId": "YOURTEAMID" }
+   }
+   ```
+
+4. Add these as **repo secrets** (Settings → Secrets and variables → Actions). `release.yml` already passes them through:
+
+   | Secret | Value |
+   |---|---|
+   | `CSC_LINK` | base64 of your `.p12` (`base64 -i cert.p12 \| pbcopy`) |
+   | `CSC_KEY_PASSWORD` | the `.p12` export password |
+   | `APPLE_ID` | your Apple ID email |
+   | `APPLE_APP_SPECIFIC_PASSWORD` | the app-specific password from step 2 |
+   | `APPLE_TEAM_ID` | your 10-character Team ID |
+
+### Windows (Authenticode — price varies by CA)
+
+Buy a code-signing certificate (OV, or EV to skip SmartScreen reputation entirely), then add:
+
+| Secret | Value |
+|---|---|
+| `WIN_CSC_LINK` | base64 of your `.pfx` |
+| `WIN_CSC_KEY_PASSWORD` | the `.pfx` password |
+
+With the secrets present, the next tagged release is signed (and, on macOS, notarized) automatically — no workflow edits needed.

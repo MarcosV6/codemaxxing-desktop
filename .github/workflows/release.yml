@@ -1,0 +1,109 @@
+name: Release
+
+# Builds installers for every supported platform and attaches them to the
+# GitHub Release for the pushed tag. Push a tag like `v1.1.0` to trigger.
+# `workflow_dispatch` lets you exercise the build matrix without releasing.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Native arch per runner — avoids cross-compiling the better-sqlite3
+          # native addon, which electron-rebuild only builds for the host arch.
+          - { os: macos-14, platform: mac, arch: arm64 }
+          - { os: macos-13, platform: mac, arch: x64 }
+          - { os: windows-latest, platform: win, arch: x64 }
+          - { os: ubuntu-latest, platform: linux, arch: x64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # deb packaging needs fakeroot/dpkg present on the runner
+      - name: Install Linux packaging tools
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fakeroot dpkg
+
+      # postinstall rebuilds better-sqlite3 against Electron's ABI for this arch
+      - run: npm ci
+
+      - run: npm run build:app
+
+      - name: Package (${{ matrix.platform }} ${{ matrix.arch }})
+        run: npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signing is OPTIONAL and unset by default: with these secrets empty,
+          # electron-builder falls back to ad-hoc signing (runnable, but
+          # Gatekeeper/SmartScreen still nag) — identical to the manual builds
+          # shipped so far. Populate them in repo Settings → Secrets to get
+          # signed + notarized releases with no other code change. See
+          # docs/BUILDING.md → "Code signing & notarization".
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Collect installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}-${{ matrix.arch }}
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.exe
+            release/*.AppImage
+            release/*.deb
+            release/*.tar.gz
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p dist-release
+          find artifacts -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' \
+            -o -name '*.AppImage' -o -name '*.deb' -o -name '*.tar.gz' \) \
+            -exec cp -v {} dist-release/ \;
+          ls -la dist-release
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-release/*
+          fail_on_unmatched_files: false
+          draft: false
+          generate_release_notes: true

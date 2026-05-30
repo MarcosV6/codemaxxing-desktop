@@ -52,26 +52,24 @@ function CodeBlockInner({ children, languageClass = '', rawText }: CodeBlockProp
           border: '1px solid var(--theme-hairline)',
         }}
       >
-        {(lang || true) && (
-          <div
-            className="flex items-center justify-between px-3 py-1.5 text-[10.5px] font-mono uppercase tracking-wider"
-            style={{
-              color: 'var(--theme-muted)',
-              borderBottom: '1px solid var(--theme-hairline)',
-              backgroundColor: 'color-mix(in srgb, var(--theme-bg-raised) 60%, transparent)',
-            }}
+        <div
+          className="flex items-center justify-between px-3 py-1.5 text-[10.5px] font-mono uppercase tracking-wider"
+          style={{
+            color: 'var(--theme-muted)',
+            borderBottom: '1px solid var(--theme-hairline)',
+            backgroundColor: 'color-mix(in srgb, var(--theme-bg-raised) 60%, transparent)',
+          }}
+        >
+          <span className="opacity-70">{lang || 'plain'}</span>
+          <button
+            onClick={onCopy}
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded opacity-60 hover:opacity-100 hover:bg-white/5 transition-all focus-ring"
+            title={copied ? 'Copied!' : 'Copy code'}
           >
-            <span className="opacity-70">{lang || 'plain'}</span>
-            <button
-              onClick={onCopy}
-              className="flex items-center gap-1 px-1.5 py-0.5 rounded opacity-60 hover:opacity-100 hover:bg-white/5 transition-all focus-ring"
-              title={copied ? 'Copied!' : 'Copy code'}
-            >
-              {copied ? <Check size={10} /> : <Copy size={10} />}
-              <span className="normal-case tracking-normal">{copied ? 'Copied' : 'Copy'}</span>
-            </button>
-          </div>
-        )}
+            {copied ? <Check size={10} /> : <Copy size={10} />}
+            <span className="normal-case tracking-normal">{copied ? 'Copied' : 'Copy'}</span>
+          </button>
+        </div>
         <pre className="px-3.5 py-3 overflow-x-auto text-[12.5px] leading-[1.6] m-0">
           {children}
         </pre>

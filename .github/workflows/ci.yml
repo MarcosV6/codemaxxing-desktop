@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Typecheck, lint, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # Skip the better-sqlite3 native rebuild — none of these checks run the
+      # packaged app, so the addon isn't needed and this keeps the gate fast.
+      - run: npm ci --ignore-scripts
+
+      - run: npm run typecheck
+
+      - run: npm run lint
+
+      - run: npm test

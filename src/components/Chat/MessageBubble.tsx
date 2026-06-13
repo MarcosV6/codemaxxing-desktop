@@ -87,7 +87,7 @@ const markdownComponents = {
   ),
 }
 
-const MarkdownText = React.memo(function MarkdownText({ text }: { text: string }) {
+export const MarkdownText = React.memo(function MarkdownText({ text }: { text: string }) {
   return (
     <div
       className="text-[14px] leading-[1.65] prose-invert"

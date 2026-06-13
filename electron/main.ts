@@ -24,8 +24,8 @@ import { join, dirname, basename, relative, extname } from 'path'
 import { fileURLToPath } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { existsSync, readFileSync, mkdirSync, writeFileSync, readdirSync, statSync } from 'fs'
-import { homedir } from 'os'
-import { spawn, type ChildProcess } from 'child_process'
+import { homedir, totalmem, cpus } from 'os'
+import { spawn, execFile, type ChildProcess } from 'child_process'
 import { randomBytes } from 'crypto'
 import OpenAI from 'openai'
 import Anthropic from '@anthropic-ai/sdk'
@@ -44,6 +44,7 @@ import * as gitMod from './core/git.js'
 import * as skillsMod from './core/skills.js'
 import * as checkpoints from './core/checkpoints.js'
 import * as bgAgents from './core/backgroundAgents.js'
+import { makeHardwareProfile, recommendModels } from './core/cookbook.js'
 import * as cron from './core/cron.js'
 import { runSubagent } from './core/subagent.js'
 
@@ -971,6 +972,9 @@ function setupIPC(): void {
   ipcMain.handle('session:updateModel', async (_e, id: string, provider: string, model: string) => {
     sessions.updateSessionModel(id, provider, model); return { ok: true }
   })
+  ipcMain.handle('session:updateMode', async (_e, id: string, mode: 'code' | 'chat') => {
+    sessions.updateSessionMode(id, mode); return { ok: true }
+  })
   ipcMain.handle('session:setCwd', async (_e, id: string, cwd: string) => {
     const s = sessions.getSession(id)
     if (!s) return { ok: false, error: 'Not found' }
@@ -1382,6 +1386,471 @@ function setupIPC(): void {
     } catch (err: any) { return { ok: false, error: err.message } }
   })
 
+  // ── Cookbook (local model manager) ──
+  const cookbookPulls = new Map<string, ChildProcess>()
+  const execText = (cmd: string, args: string[]): Promise<string> =>
+    new Promise((resolve) => {
+      try {
+        execFile(cmd, args, { timeout: 5000 }, (err, stdout) => resolve(err ? '' : String(stdout).trim()))
+      } catch { resolve('') }
+    })
+
+  ipcMain.handle('cookbook:profile', async () => {
+    const totalRamGb = Math.max(1, Math.round(totalmem() / (1024 ** 3)))
+    const isDarwin = process.platform === 'darwin'
+    const unifiedMemory = isDarwin && process.arch === 'arm64'
+    // Chip name: sysctl gives the marketing name on macOS ("Apple M2 Max");
+    // everywhere else (Windows/Linux) fall back to os.cpus() model, which is
+    // cross-platform ("Intel(R) Core(TM) i7-9700K", "AMD Ryzen 7 5800X", …).
+    const chip = (isDarwin ? await execText('sysctl', ['-n', 'machdep.cpu.brand_string']) : '')
+      || cpus()[0]?.model?.trim()
+      || undefined
+    const profile = makeHardwareProfile({ platform: process.platform, arch: process.arch, totalRamGb, unifiedMemory, chip })
+    return { ok: true, profile, recommendations: recommendModels(profile, { limit: 8 }) }
+  })
+
+  ipcMain.handle('cookbook:ollama', async () => {
+    const http = await import('http')
+    const whichCmd = process.platform === 'win32' ? 'where' : 'which'
+    const installed = !!(await execText(whichCmd, ['ollama']))
+    const running = await new Promise<boolean>((resolve) => {
+      const req = http.get('http://127.0.0.1:11434/api/tags', (res) => resolve(res.statusCode === 200))
+      req.on('error', () => resolve(false))
+      req.setTimeout(2500, () => { req.destroy(); resolve(false) })
+    })
+    let models: Array<{ name: string; size: number }> = []
+    if (running) {
+      models = await new Promise((resolve) => {
+        const req = http.get('http://127.0.0.1:11434/api/tags', (res) => {
+          let data = ''
+          res.on('data', (c) => (data += c))
+          res.on('end', () => {
+            try { const j = JSON.parse(data); resolve((j.models || []).map((m: any) => ({ name: m.name, size: m.size }))) }
+            catch { resolve([]) }
+          })
+        })
+        req.on('error', () => resolve([]))
+        req.setTimeout(3000, () => { req.destroy(); resolve([]) })
+      })
+    }
+    return { ok: true, installed, running, models }
+  })
+
+  ipcMain.handle('cookbook:pull', async (_e, id: string) => {
+    if (!id || !/^[\w.:\-/]+$/.test(id)) return { ok: false, error: 'Invalid model id' }
+    if (cookbookPulls.has(id)) return { ok: false, error: 'Already pulling that model' }
+    return await new Promise<{ ok: boolean; code?: number; error?: string }>((resolve) => {
+      let child: ChildProcess
+      try {
+        child = spawn('ollama', ['pull', id])
+      } catch (err: any) {
+        resolve({ ok: false, error: err?.message || 'Could not start ollama — is it installed?' }); return
+      }
+      cookbookPulls.set(id, child)
+      const onChunk = (chunk: Buffer) => {
+        const text = chunk.toString()
+        const pct = text.match(/(\d{1,3})%/)
+        const percent = pct ? Math.min(100, parseInt(pct[1], 10)) : undefined
+        const status = text.split(/[\r\n]+/).map((l) => l.trim()).filter(Boolean).pop() || ''
+        mainWindow?.webContents.send('cookbook:pullProgress', { id, status, percent })
+      }
+      child.stdout?.on('data', onChunk)
+      child.stderr?.on('data', onChunk)
+      child.on('error', (err) => {
+        cookbookPulls.delete(id)
+        mainWindow?.webContents.send('cookbook:pullProgress', { id, status: err.message, done: true, ok: false })
+        resolve({ ok: false, error: err.message })
+      })
+      child.on('close', (code) => {
+        cookbookPulls.delete(id)
+        const ok = code === 0
+        mainWindow?.webContents.send('cookbook:pullProgress', { id, status: ok ? 'Done' : `Exited with code ${code}`, percent: ok ? 100 : undefined, done: true, ok })
+        resolve({ ok, code: code ?? undefined })
+      })
+    })
+  })
+
+  ipcMain.handle('cookbook:cancelPull', async (_e, id: string) => {
+    const child = cookbookPulls.get(id)
+    if (child) { child.kill(); cookbookPulls.delete(id); return { ok: true } }
+    return { ok: false }
+  })
+
+  // ── Compare (side-by-side model eval) ──
+  ipcMain.handle('compare:run', async (_e, opts: { prompt: string; cwd?: string; entries: Array<{ provider: string; model: string }> }) => {
+    const appConfig = loadAppConfig()
+    const cwd = opts.cwd || homedir()
+    // Chat-mode system prompt: pure conversational answer, read-only tools only,
+    // so the comparison reflects the models — not destructive side effects.
+    const comparePrompt = 'You are a helpful assistant being compared side-by-side with other models. Answer the user as clearly and helpfully as you can.'
+    const runOne = async (entry: { provider: string; model: string }) => {
+      const cred = auth.getCredential(entry.provider)
+      const route = providerRoute(entry.provider)
+      if (route.needsKey && !cred) {
+        return { provider: entry.provider, model: entry.model, ok: false, error: `No credentials for ${entry.provider}` }
+      }
+      const started = Date.now()
+      try {
+        const agent = new CodingAgent(
+          {
+            provider: route.providerType,
+            model: entry.model,
+            baseUrl: cred?.baseUrl || route.baseUrl,
+            apiKey: cred?.apiKey || 'not-needed',
+            cwd,
+            systemPrompt: comparePrompt,
+            messages: [],
+            mode: 'chat',
+            approvalMode: 'full-auto',
+            reasoningEffort: appConfig.reasoningEffort ?? 'off',
+          },
+          {},
+        )
+        const result = await agent.run(opts.prompt)
+        return {
+          provider: entry.provider,
+          model: entry.model,
+          ok: true,
+          text: result.text,
+          latencyMs: Date.now() - started,
+          promptTokens: result.totalPromptTokens,
+          completionTokens: result.totalCompletionTokens,
+        }
+      } catch (err: any) {
+        return { provider: entry.provider, model: entry.model, ok: false, error: auth.scrubSecrets(err?.message ?? String(err)), latencyMs: Date.now() - started }
+      }
+    }
+    const results = await Promise.all((opts.entries || []).map(runOne))
+    return { ok: true, results }
+  })
+
+  // ── Deep Research (plan → web search → read → synthesize) ──
+  ipcMain.handle('research:run', async (_e, opts: { sessionId?: string; provider?: string; model?: string; cwd?: string; query: string }) => {
+    let provider = opts.provider
+    let model = opts.model
+    let cwd = opts.cwd
+    if ((!provider || !model) && opts.sessionId) {
+      const sess = sessions.getSession(opts.sessionId)
+      if (sess) { provider = provider || sess.provider; model = model || sess.model; cwd = cwd || sess.cwd }
+    }
+    if (!provider || !model) return { ok: false, error: 'No model selected — open a session first.' }
+    const cred = auth.getCredential(provider)
+    const route = providerRoute(provider)
+    if (route.needsKey && !cred) return { ok: false, error: `No credentials for ${provider}` }
+    const appConfig = loadAppConfig()
+    const researchPrompt = [
+      "You are a deep research agent. Investigate the user's question thoroughly and produce a cited report.",
+      'Process:',
+      '1. Break the question into 3-6 focused sub-questions.',
+      '2. Use web_search to find sources, then web_fetch to read the most relevant pages. Search and read MULTIPLE sources — do not answer from memory alone.',
+      '3. Cross-check key claims across sources; note any disagreements.',
+      '4. Synthesize a clear, well-structured Markdown report.',
+      'Format: a short summary up front, then sections with headers. Cite sources inline as [1], [2], … and end with a "## Sources" list mapping each number to its URL.',
+      'Be thorough but skip filler. Prefer primary or authoritative sources.',
+    ].join('\n')
+    try {
+      const agent = new CodingAgent(
+        {
+          provider: route.providerType,
+          model,
+          baseUrl: cred?.baseUrl || route.baseUrl,
+          apiKey: cred?.apiKey || 'not-needed',
+          cwd: cwd || homedir(),
+          systemPrompt: researchPrompt,
+          messages: [],
+          mode: 'chat',
+          approvalMode: 'full-auto',
+          reasoningEffort: appConfig.reasoningEffort ?? 'medium',
+        },
+        {
+          onText: (delta) => emit('research:progress', { kind: 'text', delta }),
+          onToolCall: (call) => emit('research:progress', { kind: 'tool', call }),
+        },
+      )
+      const result = await agent.run(opts.query)
+      return { ok: true, report: result.text, promptTokens: result.totalPromptTokens, completionTokens: result.totalCompletionTokens }
+    } catch (err: any) {
+      return { ok: false, error: auth.scrubSecrets(err?.message ?? String(err)) }
+    }
+  })
+
+  // ── Documents (JSON-backed, AI-assisted editor) ──
+  const DOCS_PATH = join(CONFIG_DIR, 'documents.json')
+  type DocItem = { id: string; title: string; content: string; updatedAt: number }
+  const readDocs = (): DocItem[] => {
+    try {
+      if (existsSync(DOCS_PATH)) {
+        const d = JSON.parse(readFileSync(DOCS_PATH, 'utf-8'))
+        return Array.isArray(d.documents) ? d.documents : []
+      }
+    } catch { /* corrupt → fresh */ }
+    return []
+  }
+  const writeDocs = (documents: DocItem[]) => {
+    if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 })
+    writeFileSync(DOCS_PATH, JSON.stringify({ documents }, null, 2))
+  }
+  ipcMain.handle('documents:list', async () => ({ ok: true, documents: readDocs() }))
+  ipcMain.handle('documents:save', async (_e, doc: { id?: string; title: string; content: string }) => {
+    const docs = readDocs()
+    if (doc.id) {
+      const existing = docs.find((d) => d.id === doc.id)
+      if (existing) {
+        existing.title = doc.title; existing.content = doc.content; existing.updatedAt = Date.now()
+        writeDocs(docs); return { ok: true, doc: existing }
+      }
+    }
+    const created = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7), title: doc.title || 'Untitled', content: doc.content || '', updatedAt: Date.now() }
+    docs.unshift(created); writeDocs(docs); return { ok: true, doc: created }
+  })
+  ipcMain.handle('documents:delete', async (_e, id: string) => {
+    writeDocs(readDocs().filter((d) => d.id !== id)); return { ok: true }
+  })
+  ipcMain.handle('documents:assist', async (_e, opts: { sessionId?: string; content: string; instruction: string }) => {
+    let provider: string | undefined, model: string | undefined, cwd: string | undefined
+    if (opts.sessionId) { const s = sessions.getSession(opts.sessionId); if (s) { provider = s.provider; model = s.model; cwd = s.cwd } }
+    if (!provider || !model) return { ok: false, error: 'No model — open a session first.' }
+    const cred = auth.getCredential(provider)
+    const route = providerRoute(provider)
+    if (route.needsKey && !cred) return { ok: false, error: `No credentials for ${provider}` }
+    const sys = 'You are a precise document editor. Apply the user instruction to the document and return ONLY the full revised document in Markdown — no preamble, no explanation, and do not wrap the whole thing in a code fence.'
+    const task = `Instruction: ${opts.instruction}\n\n--- Document ---\n${opts.content}`
+    try {
+      const agent = new CodingAgent(
+        { provider: route.providerType, model, baseUrl: cred?.baseUrl || route.baseUrl, apiKey: cred?.apiKey || 'not-needed', cwd: cwd || homedir(), systemPrompt: sys, messages: [], mode: 'chat', approvalMode: 'full-auto', reasoningEffort: loadAppConfig().reasoningEffort ?? 'off' },
+        {},
+      )
+      const result = await agent.run(task)
+      return { ok: true, content: result.text }
+    } catch (err: any) {
+      return { ok: false, error: auth.scrubSecrets(err?.message ?? String(err)) }
+    }
+  })
+
+  // ── Notes & Tasks (JSON-backed quick capture) ──
+  const NOTES_PATH = join(CONFIG_DIR, 'notes.json')
+  type NoteItem = { id: string; text: string; createdAt: number }
+  type TaskItem = { id: string; text: string; done: boolean; createdAt: number }
+  const readNotesStore = (): { notes: NoteItem[]; tasks: TaskItem[] } => {
+    try {
+      if (existsSync(NOTES_PATH)) {
+        const d = JSON.parse(readFileSync(NOTES_PATH, 'utf-8'))
+        return { notes: Array.isArray(d.notes) ? d.notes : [], tasks: Array.isArray(d.tasks) ? d.tasks : [] }
+      }
+    } catch { /* corrupt file → start fresh */ }
+    return { notes: [], tasks: [] }
+  }
+  const writeNotesStore = (store: { notes: NoteItem[]; tasks: TaskItem[] }) => {
+    if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 })
+    writeFileSync(NOTES_PATH, JSON.stringify(store, null, 2))
+  }
+  const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7)
+
+  ipcMain.handle('notes:get', async () => ({ ok: true, ...readNotesStore() }))
+  ipcMain.handle('notes:addNote', async (_e, text: string) => {
+    const t = String(text || '').trim()
+    if (!t) return { ok: false, error: 'Empty note' }
+    const store = readNotesStore()
+    const note = { id: genId(), text: t, createdAt: Date.now() }
+    store.notes.unshift(note); writeNotesStore(store); return { ok: true, note }
+  })
+  ipcMain.handle('notes:deleteNote', async (_e, id: string) => {
+    const store = readNotesStore(); store.notes = store.notes.filter((n) => n.id !== id); writeNotesStore(store); return { ok: true }
+  })
+  ipcMain.handle('notes:addTask', async (_e, text: string) => {
+    const t = String(text || '').trim()
+    if (!t) return { ok: false, error: 'Empty task' }
+    const store = readNotesStore()
+    const task = { id: genId(), text: t, done: false, createdAt: Date.now() }
+    store.tasks.unshift(task); writeNotesStore(store); return { ok: true, task }
+  })
+  ipcMain.handle('notes:toggleTask', async (_e, id: string) => {
+    const store = readNotesStore(); const t = store.tasks.find((x) => x.id === id); if (t) t.done = !t.done; writeNotesStore(store); return { ok: true }
+  })
+  ipcMain.handle('notes:deleteTask', async (_e, id: string) => {
+    const store = readNotesStore(); store.tasks = store.tasks.filter((t) => t.id !== id); writeNotesStore(store); return { ok: true }
+  })
+
+  // Reject a hung network promise so the UI surfaces an error instead of
+  // spinning forever on an unreachable or misconfigured server.
+  const withTimeout = <T>(p: Promise<T>, ms: number, label: string): Promise<T> =>
+    Promise.race([p, new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s — check the host and credentials.`)), ms))])
+
+  // ── Email (IMAP fetch + SMTP send) ──
+  const EMAIL_PATH = join(CONFIG_DIR, 'email.json')
+  type EmailAccount = { email: string; password: string; imapHost: string; imapPort: number; smtpHost: string; smtpPort: number }
+  const readEmailAccount = (): EmailAccount | null => {
+    try {
+      if (existsSync(EMAIL_PATH)) {
+        const a = JSON.parse(readFileSync(EMAIL_PATH, 'utf-8'))
+        return { ...a, password: auth.decryptSecret(a.password || '') }
+      }
+    } catch { /* corrupt → none */ }
+    return null
+  }
+  const writeEmailAccount = (a: EmailAccount) => {
+    if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 })
+    writeFileSync(EMAIL_PATH, JSON.stringify({ ...a, password: auth.encryptSecret(a.password || '') }, null, 2), { mode: 0o600 })
+  }
+  const makeImap = async (a: EmailAccount): Promise<any> => {
+    const mod: any = await import('imapflow')
+    const ImapFlow = mod.ImapFlow || mod.default?.ImapFlow
+    return new ImapFlow({ host: a.imapHost, port: a.imapPort, secure: a.imapPort === 993, auth: { user: a.email, pass: a.password }, logger: false, socketTimeout: 30000 })
+  }
+
+  ipcMain.handle('email:getAccount', async () => {
+    const a = readEmailAccount()
+    if (!a) return { ok: true, account: null }
+    return { ok: true, account: { email: a.email, imapHost: a.imapHost, imapPort: a.imapPort, smtpHost: a.smtpHost, smtpPort: a.smtpPort, passwordSet: !!a.password } }
+  })
+  ipcMain.handle('email:saveAccount', async (_e, input: { email: string; password?: string; imapHost: string; imapPort: number; smtpHost: string; smtpPort: number }) => {
+    const prev = readEmailAccount()
+    const account: EmailAccount = {
+      email: input.email,
+      password: input.password ? input.password : (prev?.password || ''),
+      imapHost: input.imapHost, imapPort: Number(input.imapPort) || 993,
+      smtpHost: input.smtpHost, smtpPort: Number(input.smtpPort) || 465,
+    }
+    writeEmailAccount(account)
+    return { ok: true }
+  })
+  ipcMain.handle('email:list', async (_e, opts?: { limit?: number }) => {
+    const a = readEmailAccount(); if (!a) return { ok: false, error: 'No email account configured' }
+    const limit = Math.min(50, Math.max(1, opts?.limit ?? 25))
+    try {
+      const client = await makeImap(a)
+      await withTimeout(client.connect(), 15000, 'Mail server')
+      const messages: any[] = []
+      const lock = await client.getMailboxLock('INBOX')
+      try {
+        const total = client.mailbox && typeof client.mailbox !== 'boolean' ? client.mailbox.exists : 0
+        if (total > 0) {
+          const start = Math.max(1, total - limit + 1)
+          for await (const msg of client.fetch(`${start}:*`, { envelope: true, flags: true })) {
+            const from = msg.envelope?.from?.[0]
+            messages.push({
+              uid: msg.uid,
+              from: from?.address || '',
+              fromName: from?.name || from?.address || '',
+              subject: msg.envelope?.subject || '(no subject)',
+              date: msg.envelope?.date ? new Date(msg.envelope.date).getTime() : 0,
+              seen: msg.flags ? msg.flags.has('\\Seen') : false,
+            })
+          }
+        }
+      } finally { lock.release() }
+      await client.logout()
+      messages.reverse()
+      return { ok: true, messages }
+    } catch (err: any) { return { ok: false, error: auth.scrubSecrets(err?.message ?? String(err)) } }
+  })
+  ipcMain.handle('email:get', async (_e, uid: number) => {
+    const a = readEmailAccount(); if (!a) return { ok: false, error: 'No email account configured' }
+    try {
+      const client = await makeImap(a)
+      await withTimeout(client.connect(), 15000, 'Mail server')
+      let result: any = null
+      const lock = await client.getMailboxLock('INBOX')
+      try {
+        const msg = await client.fetchOne(String(uid), { source: true }, { uid: true })
+        if (msg && msg.source) {
+          const mp: any = await import('mailparser')
+          const parsed = await mp.simpleParser(msg.source)
+          result = {
+            uid,
+            from: parsed.from?.text || '',
+            to: (parsed.to as any)?.text || '',
+            subject: parsed.subject || '(no subject)',
+            date: parsed.date ? parsed.date.getTime() : 0,
+            text: parsed.text || (parsed.html ? String(parsed.html).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : ''),
+          }
+          try { await client.messageFlagsAdd(String(uid), ['\\Seen'], { uid: true }) } catch { /* best-effort read receipt */ }
+        }
+      } finally { lock.release() }
+      await client.logout()
+      if (!result) return { ok: false, error: 'Message not found' }
+      return { ok: true, message: result }
+    } catch (err: any) { return { ok: false, error: auth.scrubSecrets(err?.message ?? String(err)) } }
+  })
+  ipcMain.handle('email:send', async (_e, opts: { to: string; subject: string; text: string }) => {
+    const a = readEmailAccount(); if (!a) return { ok: false, error: 'No email account configured' }
+    try {
+      const nm: any = await import('nodemailer')
+      const createTransport = nm.createTransport || nm.default?.createTransport
+      const transport = createTransport({ host: a.smtpHost, port: a.smtpPort, secure: a.smtpPort === 465, auth: { user: a.email, pass: a.password }, connectionTimeout: 15000, greetingTimeout: 10000, socketTimeout: 20000 })
+      await withTimeout(transport.sendMail({ from: a.email, to: opts.to, subject: opts.subject, text: opts.text }), 30000, 'Mail send')
+      return { ok: true }
+    } catch (err: any) { return { ok: false, error: auth.scrubSecrets(err?.message ?? String(err)) } }
+  })
+
+  // ── Calendar (CalDAV via tsdav) ──
+  const CAL_PATH = join(CONFIG_DIR, 'calendar.json')
+  type CalAccount = { url: string; username: string; password: string }
+  const readCalAccount = (): CalAccount | null => {
+    try {
+      if (existsSync(CAL_PATH)) {
+        const a = JSON.parse(readFileSync(CAL_PATH, 'utf-8'))
+        return { ...a, password: auth.decryptSecret(a.password || '') }
+      }
+    } catch { /* corrupt → none */ }
+    return null
+  }
+  const writeCalAccount = (a: CalAccount) => {
+    if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 })
+    writeFileSync(CAL_PATH, JSON.stringify({ ...a, password: auth.encryptSecret(a.password || '') }, null, 2), { mode: 0o600 })
+  }
+  const parseIcsDate = (s: string): number => {
+    if (!s) return 0
+    const m = s.match(/(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?/)
+    if (!m) return Date.parse(s) || 0
+    const [, y, mo, d, h = '00', mi = '00', se = '00', z] = m
+    return Date.parse(`${y}-${mo}-${d}T${h}:${mi}:${se}${z ? 'Z' : ''}`) || 0
+  }
+  const parseIcsEvent = (ics: string) => {
+    const block = ics.slice(ics.indexOf('BEGIN:VEVENT'))
+    const get = (re: RegExp) => { const m = block.match(re); return m ? m[1].trim() : '' }
+    return {
+      summary: get(/SUMMARY:(.*)/) || '(untitled)',
+      start: parseIcsDate(get(/DTSTART[^:\n]*:([^\n]*)/)),
+      end: parseIcsDate(get(/DTEND[^:\n]*:([^\n]*)/)),
+      location: get(/LOCATION:(.*)/),
+    }
+  }
+  ipcMain.handle('calendar:getAccount', async () => {
+    const a = readCalAccount()
+    if (!a) return { ok: true, account: null }
+    return { ok: true, account: { url: a.url, username: a.username, passwordSet: !!a.password } }
+  })
+  ipcMain.handle('calendar:saveAccount', async (_e, input: { url: string; username: string; password?: string }) => {
+    const prev = readCalAccount()
+    writeCalAccount({ url: input.url, username: input.username, password: input.password ? input.password : (prev?.password || '') })
+    return { ok: true }
+  })
+  ipcMain.handle('calendar:events', async (_e, opts?: { start?: number; end?: number }) => {
+    const a = readCalAccount(); if (!a) return { ok: false, error: 'No calendar account configured' }
+    const start = opts?.start ?? Date.now()
+    const end = opts?.end ?? (Date.now() + 30 * 24 * 60 * 60 * 1000)
+    try {
+      const dav: any = await import('tsdav')
+      const createDAVClient = dav.createDAVClient || dav.default?.createDAVClient
+      const client: any = await withTimeout(createDAVClient({ serverUrl: a.url, credentials: { username: a.username, password: a.password }, authMethod: 'Basic', defaultAccountType: 'caldav' }), 15000, 'CalDAV server')
+      const calendars: any = await withTimeout(client.fetchCalendars(), 15000, 'CalDAV')
+      const events: any[] = []
+      for (const cal of calendars) {
+        let objs: any[] = []
+        try {
+          objs = await client.fetchCalendarObjects({ calendar: cal, timeRange: { start: new Date(start).toISOString(), end: new Date(end).toISOString() } })
+        } catch { objs = [] }
+        for (const o of objs) {
+          if (!o?.data || !String(o.data).includes('BEGIN:VEVENT')) continue
+          events.push({ ...parseIcsEvent(String(o.data)), calendar: cal.displayName || '' })
+        }
+      }
+      events.sort((x, y) => x.start - y.start)
+      return { ok: true, events }
+    } catch (err: any) { return { ok: false, error: auth.scrubSecrets(err?.message ?? String(err)) } }
+  })
+
   // ── Auth / credentials ──
   ipcMain.handle('auth:list', async () => ({ ok: true, credentials: auth.getCredentials().map(c => ({ ...c, apiKey: c.apiKey ? `${c.apiKey.slice(0, 4)}…${c.apiKey.slice(-4)}` : '' })) }))
   ipcMain.handle('auth:save', async (_e, cred: auth.AuthCredential) => {
@@ -1634,6 +2103,7 @@ function setupIPC(): void {
 
       // ── DARK THEMES ──────────────────────────────────────────────────
       { key: 'codemaxxing', name: 'Codemaxxing', description: 'Default dark — calm, balanced, easy on the eyes', colors: { primary: '#7AA2F7', secondary: '#BB9AF7', muted: '#9AA5CE', text: '#C0CAF5', userInput: '#9ECE6A', response: '#C0CAF5', tool: '#7DCFFF', toolResult: '#9AA5CE', error: '#F7768E', success: '#9ECE6A', warning: '#E0AF68', border: '#565F89', suggestion: '#BB9AF7', bg: '#0a0a0f', bgSubtle: '#0d0d14' } },
+      { key: 'ember', name: 'Ember', description: 'Warm coral on deep slate — cozy and focused', colors: { primary: '#E8826B', secondary: '#E6B07A', muted: '#8A93A6', text: '#E4E2DD', userInput: '#7FB5B5', response: '#E4E2DD', tool: '#7FB5B5', toolResult: '#9AA0AE', error: '#E5677A', success: '#8FB573', warning: '#E6B07A', border: '#2A303D', suggestion: '#E8826B', bg: '#171B26', bgSubtle: '#12161F' } },
       { key: 'cyberpunk-neon', name: 'Cyberpunk Neon', description: 'Electric cyan & magenta — Night City terminal', colors: { primary: '#00FFFF', secondary: '#FF00FF', muted: '#5FB5B5', text: '#C0FFFF', userInput: '#00FFFF', response: '#00FFFF', tool: '#FF00FF', toolResult: '#5FB5B5', error: '#FF3355', success: '#00FF88', warning: '#FF8C00', border: '#00FFFF', suggestion: '#FF00FF', bg: '#0a0010', bgSubtle: '#12001e' } },
       { key: 'dracula', name: 'Dracula', description: 'Dark purple tones', colors: { primary: '#BD93F9', secondary: '#FF79C6', muted: '#8E9AC2', text: '#F8F8F2', userInput: '#8BE9FD', response: '#BD93F9', tool: '#FF79C6', toolResult: '#8E9AC2', error: '#FF5555', success: '#50FA7B', warning: '#FFB86C', border: '#44475A', suggestion: '#FF79C6', bg: '#282A36', bgSubtle: '#21222C' } },
       { key: 'gruvbox', name: 'Gruvbox', description: 'Warm retro tones', colors: { primary: '#FE8019', secondary: '#FABD2F', muted: '#A89984', text: '#EBDBB2', userInput: '#83A598', response: '#FE8019', tool: '#FABD2F', toolResult: '#A89984', error: '#FB4934', success: '#B8BB26', warning: '#FABD2F', border: '#3C3836', suggestion: '#FABD2F', bg: '#1D2021', bgSubtle: '#282828' } },

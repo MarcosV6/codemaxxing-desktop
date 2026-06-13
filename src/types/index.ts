@@ -142,3 +142,55 @@ export interface AuthCredentialDisplay {
   label?: string
   createdAt: string
 }
+
+// ── Cookbook (local model manager) ──
+// Renderer-side mirror of electron/core/cookbook.ts (kept in sync by hand,
+// matching this repo's "ported, not shared" convention between main & renderer).
+export interface HardwareProfile {
+  platform: string
+  arch: string
+  totalRamGb: number
+  vramBudgetGb: number
+  unifiedMemory: boolean
+  chip?: string
+}
+
+export type FitClass = 'comfortable' | 'tight' | 'too-big'
+
+export interface CatalogModel {
+  id: string
+  family: string
+  label: string
+  params: number
+  quant: string
+  sizeGb: number
+  minRamGb: number
+  contextWindow: number
+  coder: boolean
+  blurb: string
+}
+
+export interface Recommendation {
+  model: CatalogModel
+  fit: FitClass
+}
+
+export interface PullProgress {
+  id: string
+  status: string
+  percent?: number
+  done?: boolean
+  ok?: boolean
+}
+
+// ── Compare (side-by-side model eval) ──
+export interface CompareResult {
+  provider: string
+  model: string
+  ok: boolean
+  text?: string
+  error?: string
+  latencyMs?: number
+  promptTokens?: number
+  completionTokens?: number
+}

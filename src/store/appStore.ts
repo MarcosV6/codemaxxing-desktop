@@ -99,7 +99,7 @@ export interface PendingPlan {
   plan: string
 }
 
-export type DrawerKind = 'checkpoints' | 'bg-agents' | 'cron' | null
+export type DrawerKind = 'checkpoints' | 'bg-agents' | 'cron' | 'cookbook' | 'notes' | null
 
 interface AppState {
   // ── Lifecycle ──
@@ -163,6 +163,11 @@ interface AppState {
 
   // ── UI state ──
   settingsOpen: boolean
+  compareOpen: boolean
+  researchOpen: boolean
+  documentsOpen: boolean
+  emailOpen: boolean
+  calendarOpen: boolean
   previewOpen: boolean
   filesPanelOpen: boolean
   activeDrawer: DrawerKind
@@ -199,6 +204,7 @@ interface AppState {
   deleteSession: (sessionId: string) => Promise<void>
   updateSessionCwd: (sessionId: string, cwd: string) => Promise<void>
   updateSessionModel: (sessionId: string, provider: string, model: string) => Promise<void>
+  setActiveSessionMode: (mode: 'code' | 'chat') => Promise<void>
   renameSession: (sessionId: string, title: string) => Promise<void>
 
   sendMessage: (message: string, images?: ImageAttachment[]) => Promise<void>
@@ -235,6 +241,16 @@ interface AppState {
   pickDirectory: () => Promise<string | null>
   openSettings: () => void
   closeSettings: () => void
+  openCompare: () => void
+  closeCompare: () => void
+  openResearch: () => void
+  closeResearch: () => void
+  openDocuments: () => void
+  closeDocuments: () => void
+  openEmail: () => void
+  closeEmail: () => void
+  openCalendar: () => void
+  closeCalendar: () => void
   togglePreview: () => void
   setPreviewOpen: (open: boolean) => void
   toggleFilesPanel: () => void
@@ -273,6 +289,19 @@ async function loadProviderDefs(): Promise<Array<Omit<ProviderInfo, 'authed'>>> 
 
 function hex(px = 16): string {
   return Array.from({ length: px }, () => Math.floor(Math.random() * 16).toString(16)).join('')
+}
+
+/** Ambient backdrop style per theme key. Anything not listed falls back to
+ *  the polarity default — 'aurora' glows on dark themes, 'soft' on light.
+ *  Pure presentation, renderer-only: the CSS lives in globals.css under
+ *  `:root[data-backdrop=…] .app-shell` and is built from theme variables,
+ *  so backdrops automatically match each theme's palette. */
+const BACKDROP_BY_THEME: Record<string, string> = {
+  'cyberpunk-neon': 'grid',
+  synthwave: 'grid',
+  hacker: 'scanlines',
+  mono: 'none', // monochrome stays flat on purpose
+  'high-contrast-light': 'none', // accessibility-first — no decoration
 }
 
 function applyThemeToDom(theme: Theme) {
@@ -316,6 +345,8 @@ function applyThemeToDom(theme: Theme) {
   // branch on light vs dark (scrollbars, syntax highlight overrides, etc.)
   // can use a simple `:root[data-theme-mode="light"] ...` selector.
   root.setAttribute('data-theme-mode', isLight ? 'light' : 'dark')
+  const themeKey = (theme as { key?: string }).key ?? ''
+  root.setAttribute('data-backdrop', BACKDROP_BY_THEME[themeKey] ?? (isLight ? 'soft' : 'aurora'))
 }
 
 function convertPersistedMessages(rawMessages: any[]): ChatMessage[] {
@@ -500,6 +531,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   themes: [],
   activeTheme: null,
   settingsOpen: false,
+  compareOpen: false,
+  researchOpen: false,
+  documentsOpen: false,
+  emailOpen: false,
+  calendarOpen: false,
   previewOpen: false,
   filesPanelOpen: false,
   activeDrawer: null,
@@ -1004,6 +1040,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     await get().loadSessions()
   },
 
+  setActiveSessionMode: async (mode: 'code' | 'chat') => {
+    const id = get().activeSession?.id
+    if (!id) return
+    await window.electron.session.updateMode(id, mode)
+    set((s) => ({
+      activeSession: s.activeSession && s.activeSession.id === id ? { ...s.activeSession, mode } : s.activeSession,
+    }))
+    await get().loadSessions()
+  },
+
   renameSession: async (sessionId: string, title: string) => {
     const trimmed = title.trim()
     if (!trimmed) return
@@ -1371,6 +1417,34 @@ export const useAppStore = create<AppState>((set, get) => ({
         void get().loadCronTasks()
         return true
       }
+      case 'cookbook': case 'models': {
+        get().setDrawer('cookbook')
+        return true
+      }
+      case 'notes': case 'tasks': case 'todo': {
+        get().setDrawer('notes')
+        return true
+      }
+      case 'compare': case 'vs': {
+        get().openCompare()
+        return true
+      }
+      case 'research': case 'deep': {
+        get().openResearch()
+        return true
+      }
+      case 'docs': case 'documents': {
+        get().openDocuments()
+        return true
+      }
+      case 'email': case 'mail': {
+        get().openEmail()
+        return true
+      }
+      case 'calendar': case 'cal': {
+        get().openCalendar()
+        return true
+      }
       case 'settings': case 'config': {
         get().openSettings()
         return true
@@ -1403,7 +1477,12 @@ export const useAppStore = create<AppState>((set, get) => ({
             '- `/checkpoint [label]` — save snapshot · `/checkpoints` — open drawer',
             '- `/skills` — show active · `/think <level>` — reasoning effort',
             '- `/memory [query]` — stats or search',
-            '- `/bg` · `/cron` — open drawers · `/settings` — open settings',
+            '- `/bg` · `/cron` · `/cookbook` — open drawers · `/settings` — open settings',
+            '- `/compare` — run one prompt across multiple models side-by-side',
+            '- `/research` — deep web research → a cited report',
+            '- `/notes` — quick notes & tasks drawer',
+            '- `/docs` — AI-assisted documents editor',
+            '- `/email` · `/calendar` — inbox & schedule (configure in-panel)',
           ].join('\n'),
         )
         return true
@@ -1447,6 +1526,16 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   openSettings: () => set({ settingsOpen: true }),
   closeSettings: () => set({ settingsOpen: false }),
+  openCompare: () => set({ compareOpen: true }),
+  closeCompare: () => set({ compareOpen: false }),
+  openResearch: () => set({ researchOpen: true }),
+  closeResearch: () => set({ researchOpen: false }),
+  openDocuments: () => set({ documentsOpen: true }),
+  closeDocuments: () => set({ documentsOpen: false }),
+  openEmail: () => set({ emailOpen: true }),
+  closeEmail: () => set({ emailOpen: false }),
+  openCalendar: () => set({ calendarOpen: true }),
+  closeCalendar: () => set({ calendarOpen: false }),
   togglePreview: () => set((s) => ({ previewOpen: !s.previewOpen })),
   setPreviewOpen: (open: boolean) => set({ previewOpen: open }),
   toggleFilesPanel: () => set((s) => ({ filesPanelOpen: !s.filesPanelOpen })),

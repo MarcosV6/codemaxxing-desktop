@@ -19,6 +19,7 @@ const MOCK_THEMES = [
   // Dark themes — muted/text contrast bumped on the worst offenders
   // (tokyo-night, hacker, blood-moon, synthwave) for legibility
   { key: 'codemaxxing', name: 'Codemaxxing', description: 'Default dark — calm, balanced, easy on the eyes', colors: { primary: '#7AA2F7', secondary: '#BB9AF7', muted: '#9AA5CE', text: '#C0CAF5', userInput: '#9ECE6A', response: '#C0CAF5', tool: '#7DCFFF', toolResult: '#9AA5CE', error: '#F7768E', success: '#9ECE6A', warning: '#E0AF68', border: '#565F89', suggestion: '#BB9AF7', bg: '#0a0a0f', bgSubtle: '#0d0d14' } },
+  { key: 'ember', name: 'Ember', description: 'Warm coral on deep slate — cozy and focused', colors: { primary: '#E8826B', secondary: '#E6B07A', muted: '#8A93A6', text: '#E4E2DD', userInput: '#7FB5B5', response: '#E4E2DD', tool: '#7FB5B5', toolResult: '#9AA0AE', error: '#E5677A', success: '#8FB573', warning: '#E6B07A', border: '#2A303D', suggestion: '#E8826B', bg: '#171B26', bgSubtle: '#12161F' } },
   { key: 'cyberpunk-neon', name: 'Cyberpunk Neon', description: 'Electric cyan & magenta — Night City terminal', colors: { primary: '#00FFFF', secondary: '#FF00FF', muted: '#5FB5B5', text: '#C0FFFF', userInput: '#00FFFF', response: '#00FFFF', tool: '#FF00FF', toolResult: '#5FB5B5', error: '#FF3355', success: '#00FF88', warning: '#FF8C00', border: '#00FFFF', suggestion: '#FF00FF', bg: '#0a0010', bgSubtle: '#12001e' } },
   { key: 'dracula', name: 'Dracula', description: 'Dark purple tones', colors: { primary: '#BD93F9', secondary: '#FF79C6', muted: '#8E9AC2', text: '#F8F8F2', userInput: '#8BE9FD', response: '#BD93F9', tool: '#FF79C6', toolResult: '#8E9AC2', error: '#FF5555', success: '#50FA7B', warning: '#FFB86C', border: '#44475A', suggestion: '#FF79C6', bg: '#282A36', bgSubtle: '#21222C' } },
   { key: 'gruvbox', name: 'Gruvbox', description: 'Warm retro tones', colors: { primary: '#FE8019', secondary: '#FABD2F', muted: '#A89984', text: '#EBDBB2', userInput: '#83A598', response: '#FE8019', tool: '#FABD2F', toolResult: '#A89984', error: '#FB4934', success: '#B8BB26', warning: '#FABD2F', border: '#3C3836', suggestion: '#FABD2F', bg: '#1D2021', bgSubtle: '#282828' } },
@@ -117,6 +118,80 @@ const MOCK_DETECTED = [
   },
 ]
 
+// ── Mock agent event bus + streaming demo session ───────────────────────────
+// Lets the browser preview exercise the REAL ChatArea/Virtuoso streaming path
+// (scroll-follow, footer growth, tool-block expansion) without Electron.
+type AgentListener = (payload: any) => void
+const agentBus: Record<string, Set<AgentListener>> = {}
+const onAgentEvent = (channel: string) => (cb: AgentListener) => {
+  ;(agentBus[channel] ??= new Set()).add(cb)
+  return () => { agentBus[channel]?.delete(cb) }
+}
+const emitAgent = (channel: string, payload: any) => {
+  agentBus[channel]?.forEach((cb) => { try { cb(payload) } catch { /* listener error */ } })
+}
+
+const demoNow = Date.now()
+const DEMO_META = {
+  id: 'demo',
+  title: 'Streaming demo',
+  cwd: '/Users/you/project',
+  provider: 'lmstudio',
+  model: 'demo-model-7b',
+  created_at: new Date(demoNow - 86_400_000).toISOString(),
+  updated_at: new Date(demoNow).toISOString(),
+  message_count: 8,
+  prompt_tokens: 1200,
+  completion_tokens: 800,
+  estimated_cost: 0,
+  mode: 'code' as const,
+}
+const mockSessions = new Map<string, any>([[DEMO_META.id, DEMO_META]])
+
+const CODE_BLOCK = '```ts\nexport function greet(name: string) {\n  return `hello ${name}`\n}\n```'
+const PARA = 'This is seeded history so the conversation is taller than the viewport — the scroller needs real overflow before follow/snap behavior can be exercised meaningfully. '
+const DEMO_HISTORY: any[] = [
+  { role: 'user', content: 'walk me through this repo' },
+  { role: 'assistant', content: PARA.repeat(4) },
+  { role: 'user', content: 'now show me a code sample' },
+  { role: 'assistant', content: `Sure — here is one:\n\n${CODE_BLOCK}\n\n${PARA.repeat(2)}` },
+  { role: 'user', content: 'longer please' },
+  { role: 'assistant', content: `${PARA.repeat(3)}\n\n${CODE_BLOCK}\n\n${PARA.repeat(3)}` },
+  { role: 'user', content: 'one more' },
+  { role: 'assistant', content: PARA.repeat(5) },
+]
+
+// Scripted stream: thinking → text bursts (variable size) → tool call that
+// expands from running→done with a tall result → more text → second tool →
+// closing text → done. Mirrors the height-churn profile of a real agent run.
+let demoTimer: ReturnType<typeof setInterval> | null = null
+function startDemoStream(sessionId: string) {
+  if (demoTimer) return
+  let tick = 0
+  let fullText = ''
+  const text = (delta: string) => { fullText += delta; emitAgent('text', { sessionId, delta }) }
+  const WORDS = 'streaming tokens into the live footer to exercise scroll-follow under realistic conditions — '
+  demoTimer = setInterval(() => {
+    tick++
+    if (tick === 1) emitAgent('iteration', { sessionId, iteration: 1 })
+    else if (tick <= 8) emitAgent('thinking', { sessionId, delta: 'considering the layout problem… '.repeat(tick % 3 ? 1 : 2) })
+    else if (tick === 9) text('Alright — let me look at the files.\n\n')
+    else if (tick === 14) emitAgent('toolCall', { sessionId, call: { id: 't1', name: 'read_file', args: { path: 'src/App.tsx' }, status: 'running' } })
+    else if (tick === 20) emitAgent('toolCall', { sessionId, call: { id: 't1', name: 'read_file', args: { path: 'src/App.tsx' }, status: 'done', result: Array.from({ length: 12 }, (_, i) => `line ${i + 1} of the file content`).join('\n') } })
+    else if (tick <= 34) text(tick % 5 === 0 ? `\n\nParagraph break at tick ${tick}.\n\n` : WORDS.slice(0, 20 + (tick * 7) % 40))
+    else if (tick === 35) emitAgent('toolCall', { sessionId, call: { id: 't2', name: 'edit_file', args: { path: 'src/components/Hero.tsx' }, status: 'running' } })
+    else if (tick === 42) emitAgent('toolCall', { sessionId, call: { id: 't2', name: 'edit_file', args: { path: 'src/components/Hero.tsx' }, status: 'done', result: 'Applied 3 edits', diff: Array.from({ length: 10 }, (_, i) => (i % 2 ? `+ new line ${i}` : `- old line ${i}`)).join('\n') } })
+    else if (tick <= 66) text(tick % 6 === 0 ? `\n\nMore content (tick ${tick}).\n\n` : WORDS.slice(0, 16 + (tick * 11) % 48))
+    else {
+      stopDemoStream(sessionId, fullText)
+    }
+  }, 110)
+}
+function stopDemoStream(sessionId: string, fullText: string) {
+  if (demoTimer) { clearInterval(demoTimer); demoTimer = null }
+  emitAgent('done', { sessionId, text: fullText, usage: { promptTokens: 900, completionTokens: 320 }, stats: null })
+}
+
 export function installBrowserMock(): void {
   if (typeof window === 'undefined') return
   if ((window as any).electron) return
@@ -141,33 +216,84 @@ export function installBrowserMock(): void {
     },
 
     session: {
-      create: () => ok({ session: null }),
-      list: () => ok({ sessions: [] }),
-      get: () => ok({ session: null, messages: [] }),
-      delete: () => ok(),
-      updateTitle: () => ok(),
-      updateModel: () => ok(),
+      create: (opts: { cwd: string; provider: string; model: string; title?: string; mode?: 'code' | 'chat' }) => {
+        const id = 'mock_' + Math.random().toString(36).slice(2, 8)
+        const meta = { ...DEMO_META, id, title: opts.title ?? null, cwd: opts.cwd, provider: opts.provider, model: opts.model, mode: opts.mode ?? 'code', message_count: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
+        mockSessions.set(id, meta)
+        return ok({ session: meta })
+      },
+      list: () => ok({ sessions: [...mockSessions.values()] }),
+      get: (id: string) => ok({ session: mockSessions.get(id) ?? null, messages: id === DEMO_META.id ? DEMO_HISTORY : [] }),
+      delete: (id: string) => { mockSessions.delete(id); return ok() },
+      updateTitle: (id: string, title: string) => { const m = mockSessions.get(id); if (m) m.title = title; return ok() },
+      updateModel: (id: string, provider: string, model: string) => { const m = mockSessions.get(id); if (m) { m.provider = provider; m.model = model } return ok() },
+      updateMode: (id: string, mode: 'code' | 'chat') => { const m = mockSessions.get(id); if (m) m.mode = mode; return ok() },
       setCwd: () => ok(),
+    },
+    cookbook: {
+      profile: () => ok({ profile: { platform: 'browser', arch: 'x64', totalRamGb: 16, vramBudgetGb: 8, unifiedMemory: false }, recommendations: [] }),
+      ollama: () => ok({ installed: false, running: false, models: [] }),
+      pull: () => ok({ code: 0 }),
+      cancelPull: () => ok(),
+      onPullProgress: () => () => {},
+    },
+    compare: {
+      run: (opts: { entries?: Array<{ provider: string; model: string }> }) =>
+        ok({ results: (opts?.entries ?? []).map((e) => ({ provider: e.provider, model: e.model, ok: true, text: `(mock) ${e.model} would answer here.`, latencyMs: 820, promptTokens: 24, completionTokens: 48 })) }),
+    },
+    research: {
+      run: (opts: { query?: string }) =>
+        ok({ report: `# Research: ${opts?.query ?? ''}\n\nA synthesized, cited report would appear here in the desktop app.\n\n## Sources\n1. https://example.com` }),
+      onProgress: () => () => {},
+    },
+    notes: {
+      get: () => ok({ notes: [], tasks: [] }),
+      addNote: () => ok({ note: null }),
+      deleteNote: () => ok(),
+      addTask: () => ok({ task: null }),
+      toggleTask: () => ok(),
+      deleteTask: () => ok(),
+    },
+    documents: {
+      list: () => ok({ documents: [] }),
+      save: (doc: { id?: string; title: string; content: string }) => ok({ doc: { id: doc.id || 'mock', title: doc.title, content: doc.content, updatedAt: Date.now() } }),
+      delete: () => ok(),
+      assist: (opts: { content?: string }) => ok({ content: opts?.content ?? '' }),
+    },
+    email: {
+      getAccount: () => ok({ account: null }),
+      saveAccount: () => ok(),
+      list: () => ok({ messages: [] }),
+      get: () => ok({ message: null }),
+      send: () => ok(),
+    },
+    calendar: {
+      getAccount: () => ok({ account: null }),
+      saveAccount: () => ok(),
+      events: () => ok({ events: [] }),
     },
 
     agent: {
-      send: () => ok(),
-      abort: () => ok(),
+      send: (opts: { sessionId?: string }) => {
+        if (opts?.sessionId) startDemoStream(opts.sessionId)
+        return ok()
+      },
+      abort: (sessionId?: string) => { stopDemoStream(sessionId ?? DEMO_META.id, '(aborted)'); return ok() },
       approvalResponse: () => ok(),
       askUserResponse: () => ok(),
       onStarted: noop,
-      onText: noop,
-      onThinking: noop,
-      onIteration: noop,
-      onToolCall: noop,
+      onText: onAgentEvent('text'),
+      onThinking: onAgentEvent('thinking'),
+      onIteration: onAgentEvent('iteration'),
+      onToolCall: onAgentEvent('toolCall'),
       onTasks: noop,
       onApprovalRequest: noop,
       onAskUser: noop,
       onPlanExit: noop,
-      onUsage: noop,
-      onStats: noop,
-      onDone: noop,
-      onError: noop,
+      onUsage: onAgentEvent('usage'),
+      onStats: onAgentEvent('stats'),
+      onDone: onAgentEvent('done'),
+      onError: onAgentEvent('error'),
     },
 
     mcp: { approvalResponse: () => {}, onStatus: noop, onApprovalRequest: noop },

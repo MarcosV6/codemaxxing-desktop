@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useAppStore } from '../../store/appStore'
+import { useResizablePanel, ResizeHandle } from '../Shared/Resizable'
 import {
   PanelRightClose,
   ChevronRight,
@@ -707,6 +708,7 @@ export function FilesPanel() {
   const setFilesPanelOpen = useAppStore((s) => s.setFilesPanelOpen)
   const activeSession = useAppStore((s) => s.activeSession)
   const cwd = activeSession?.cwd ?? ''
+  const filesResize = useResizablePanel({ storageKey: 'files', defaultWidth: 420, min: 300, max: 680, dock: 'right' })
 
   const [root, setRoot] = useState<Entry[] | null>(null)
   const [loadingRoot, setLoadingRoot] = useState(false)
@@ -764,13 +766,14 @@ export function FilesPanel() {
 
   return (
     <aside
-      className="flex flex-col shrink-0 h-full"
+      className="relative flex flex-col shrink-0 h-full"
       style={{
-        width: 420,
+        width: filesResize.width,
         backgroundColor: 'var(--theme-bg-subtle)',
         borderLeft: '1px solid var(--theme-border)',
       }}
     >
+      <ResizeHandle handleProps={filesResize.handleProps} label="files panel" />
       {/* Header */}
       <div
         className="h-12 flex items-center justify-between px-3 shrink-0"

@@ -326,6 +326,7 @@ export function ChatArea() {
   const isRunning = useAppStore((s) => s.isRunning)
   const sendMessage = useAppStore((s) => s.sendMessage)
   const abortCurrent = useAppStore((s) => s.abortCurrent)
+  const setActiveSessionMode = useAppStore((s) => s.setActiveSessionMode)
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<ImageAttachment[]>([])
   const [dragOver, setDragOver] = useState(false)
@@ -342,17 +343,22 @@ export function ChatArea() {
   // User intent. False = pin to bottom on every layout change. True = user
   // has scrolled up and we should leave them alone until they come back down.
   //
-  // Updated in real time by a `scroll` event listener on the scroller (see
-  // handleScrollerRef): every scroll event re-classifies based on the
-  // CURRENT distance to bottom. This makes the flag self-healing — the
-  // user wheels up → away. They wheel back → not-away. They keyboard-scroll
-  // → same logic. Programmatic scrollTop = scrollHeight also fires scroll
-  // events with distance = 0, which keeps the flag correctly false.
+  // CRITICAL ASYMMETRY (this is where the old "sometimes stops following"
+  // bug lived): the flag is SET only from real user input — wheel-up, a
+  // scrollbar/touch drag — never from `scroll` events. Virtuoso fires
+  // programmatic scrolls when it re-measures and anchors rows; classifying
+  // those as user intent disengaged auto-follow mid-stream with no way back
+  // (the follow scheduler bails when the flag is true, so nothing ever
+  // scrolled us down again). `scroll` events may only CLEAR the flag when
+  // the viewport reaches the bottom; worst case of that rule is we keep
+  // following, which is the desired default.
   const userScrolledAwayRef = useRef(false)
-  // Pixel slop below which we treat the user as "at the bottom." Generous
-  // enough to absorb sub-pixel rounding and not flicker between true/false
-  // when scrollHeight grows by half a line.
-  const NEAR_BOTTOM_PX = 16
+  // True while a pointer is held down on the scroller (scrollbar drag or
+  // touch pan) — the one case where a `scroll` event IS user input.
+  const pointerDownRef = useRef(false)
+  // Distance-to-bottom under which scrolling re-engages auto-follow. Generous
+  // so trackpad inertia that lands "almost at bottom" still re-sticks.
+  const NEAR_BOTTOM_PX = 48
 
   // rAF-coalesced two-frame scroll-to-bottom. Two frames because Virtuoso
   // measures variable-height rows over multiple frames (first frame renders
@@ -544,38 +550,23 @@ export function ChatArea() {
     [activeSession?.messages],
   )
 
-  // Stable Virtuoso prop identities — without these, every parent render
-  // (e.g. typing in the input box) hands Virtuoso fresh function/object refs
-  // and triggers a reconcile of the whole list. Most of the props are static
-  // anyway; capturing them in refs/useCallback keeps Virtuoso completely
-  // still during streams.
+  // Wire the intent listeners + content observer on the actual scroller:
   //
-  // Note: we no longer wire `atBottomStateChange` to anything — it fires
-  // false-positives (atBottom=false when content grows) that disengage the
-  // auto-follow exactly when we want to stay engaged. The intent flag is
-  // driven by real wheel/touch events instead, attached in handleScrollerRef.
-  const handleAtBottomStateChange = useCallback((_at: boolean) => {
-    // intentionally empty — see comment above
-  }, [])
-
-  // Wire two observers on the actual scroller element so we react to layout
-  // reality, not just store events:
-  //
-  //   1. `scroll` event → updates userScrolledAwayRef based on the current
-  //      distance to bottom. Fires for user scrolls AND our own programmatic
-  //      writes; both are correct outcomes (user scrolls away → away; we
-  //      scrolled to bottom → not-away). This catches every input modality
-  //      uniformly: wheel, trackpad, touch, keyboard arrows, page-down, etc.
-  //
-  //   2. ResizeObserver on the inner content element → schedules a follow
-  //      on every layout change. Fires for token streaming growth, tool-
-  //      call block expansion, image loads, animations resolving, message
-  //      list reconciliation — anything that changes scrollHeight. The
-  //      store-subscriber path is kept as a redundant trigger but this is
-  //      the primary mechanism, because it sees the actual change rather
-  //      than its upstream cause.
-  //
-  // Both teardown cleanly via the returned unsubscribe.
+  //   1. `wheel` (deltaY < 0) → user is scrolling up → disengage follow
+  //      immediately. Wheel-down doesn't need handling: if it reaches the
+  //      bottom, the scroll handler below re-engages.
+  //   2. `pointerdown`/`pointerup` → tracks scrollbar drags and touch pans;
+  //      while the pointer is down, `scroll` events count as user input and
+  //      classify by distance (drag up → away, drag to bottom → re-engage).
+  //   3. `scroll` → with no pointer down, only ever CLEARS the away flag
+  //      (distance ≤ NEAR_BOTTOM_PX). Programmatic writes and Virtuoso's
+  //      internal anchoring adjustments land here; they must never be able
+  //      to disengage follow (that was the stuck-scroll bug).
+  //   4. ResizeObserver on the content element → schedules a follow on every
+  //      layout change: token growth, tool-call expansion, image loads,
+  //      message promotion from the live Footer into the list. This is the
+  //      primary follow driver; the store subscription above is a redundant
+  //      belt-and-suspenders trigger.
   const detachIntentListenerRef = useRef<(() => void) | null>(null)
   const handleScrollerRef = useCallback((el: HTMLElement | Window | null) => {
     if (detachIntentListenerRef.current) {
@@ -586,11 +577,28 @@ export function ChatArea() {
     scrollerRef.current = next
     if (!next) return
 
-    const updateAwayFlag = () => {
-      const distance = next.scrollHeight - next.scrollTop - next.clientHeight
-      userScrolledAwayRef.current = distance > NEAR_BOTTOM_PX
+    const distanceToBottom = () => next.scrollHeight - next.scrollTop - next.clientHeight
+
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) userScrolledAwayRef.current = true
     }
-    next.addEventListener('scroll', updateAwayFlag, { passive: true })
+    const onPointerDown = () => { pointerDownRef.current = true }
+    const onPointerUp = () => { pointerDownRef.current = false }
+    const onScroll = () => {
+      const distance = distanceToBottom()
+      if (distance <= NEAR_BOTTOM_PX) {
+        // Reached the bottom by any means — re-engage following.
+        userScrolledAwayRef.current = false
+      } else if (pointerDownRef.current) {
+        // Scrollbar drag / touch pan away from the bottom — user intent.
+        userScrolledAwayRef.current = true
+      }
+      // Otherwise: programmatic or anchor-correction scroll. Leave intent alone.
+    }
+    next.addEventListener('wheel', onWheel, { passive: true })
+    next.addEventListener('pointerdown', onPointerDown, { passive: true })
+    window.addEventListener('pointerup', onPointerUp, { passive: true })
+    next.addEventListener('scroll', onScroll, { passive: true })
 
     // Observe the inner content element's size. Virtuoso renders a single
     // child as the scroll content; that's what we observe.
@@ -607,7 +615,10 @@ export function ChatArea() {
     }
 
     detachIntentListenerRef.current = () => {
-      next.removeEventListener('scroll', updateAwayFlag)
+      next.removeEventListener('wheel', onWheel)
+      next.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('pointerup', onPointerUp)
+      next.removeEventListener('scroll', onScroll)
       if (ro) ro.disconnect()
     }
   }, [scheduleFollow])
@@ -641,10 +652,6 @@ export function ChatArea() {
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
-      style={{
-        backgroundImage:
-          'radial-gradient(ellipse 900px 520px at 50% -120px, color-mix(in srgb, var(--theme-primary) 6%, transparent), transparent 70%)',
-      }}
     >
       {dragOver && (
         <div
@@ -685,13 +692,15 @@ export function ChatArea() {
             // Land at the most recent message on first paint. Virtuoso clamps
             // -1 to "nothing scrolled", so empty-but-mounted is fine too.
             initialTopMostItemIndex={Math.max(0, messages.length - 1)}
-            // 'auto' = follow the tail when the user is currently at-bottom;
-            // hold position when they've scrolled up to read history. This
-            // covers the case where a streamed message graduates from the
-            // Footer into messages[]. Mid-stream Footer growth is handled by
-            // the imperative scrollerRef.scrollTop = scrollHeight loop above.
-            followOutput={'auto'}
-            atBottomStateChange={handleAtBottomStateChange}
+            // Deliberately OFF. Virtuoso's follower aligns to the last list
+            // row, but our live stream renders in the Footer BELOW that row —
+            // the two targets differ by the footer height, so with both
+            // active each scroll corrected the other (visible up/down jitter
+            // while streaming). The imperative scheduleFollow loop is the
+            // single scroll authority; it targets true scrollHeight and the
+            // ResizeObserver fires on every relevant layout change, including
+            // a message graduating from the Footer into messages[].
+            followOutput={false}
             // Overscan by ~1 viewport so animate-segment-in animations on
             // newly-promoted messages aren't visibly clipped by the recycler.
             increaseViewportBy={viewportPad}
@@ -723,6 +732,9 @@ export function ChatArea() {
             cwd={activeSession?.cwd ?? null}
             attachments={attachments}
             onAttachmentsChange={setAttachments}
+            mode={activeSession?.mode === 'chat' ? 'chat' : 'code'}
+            onToggleMode={() => { void setActiveSessionMode(activeSession?.mode === 'chat' ? 'code' : 'chat') }}
+            modelLabel={activeSession?.model ?? null}
           />
           {isRunning && (
             <div className="flex justify-center pt-2">

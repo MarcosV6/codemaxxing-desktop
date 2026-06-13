@@ -111,6 +111,11 @@ export function updateSessionModel(sessionId: string, provider: string, model: s
     .run(provider, model, sessionId)
 }
 
+export function updateSessionMode(sessionId: string, mode: 'code' | 'chat'): void {
+  getDb().prepare(`UPDATE sessions SET mode = ?, updated_at = datetime('now') WHERE id = ?`)
+    .run(mode, sessionId)
+}
+
 export function updateSessionCwd(sessionId: string, cwd: string): void {
   getDb().prepare(`UPDATE sessions SET cwd = ?, updated_at = datetime('now') WHERE id = ?`)
     .run(cwd, sessionId)

@@ -55,6 +55,44 @@
    page background. On light themes the existing rule still works
    correctly (--theme-bg is white), so no extra override needed there. */
 
+/* ── Ambient theme backdrops ─────────────────────────────────────────────
+   Layered background-images on the app shell, built ENTIRELY from theme
+   variables so every palette gets a matching mood with zero per-theme art.
+   Which layer-set applies is chosen by applyThemeToDom via data-backdrop:
+     aurora    (dark default)  soft primary/secondary glows + edge vignette
+     soft      (light default) whisper-faint glows only
+     grid      (synthwave/cyberpunk) glows + a fine line grid
+     scanlines (hacker) CRT-style horizontal lines + phosphor glow
+     none      (mono, high-contrast) flat — decoration off on purpose
+   All decorative layers sit at 3-9% opacity: ambiance, never competition
+   with text. Static gradients only — no animation, no paint cost while
+   idle, no GPU-hungry blur layers. */
+:root[data-backdrop="aurora"] .app-shell {
+  background-image:
+    radial-gradient(ellipse 80% 60% at 85% -10%, color-mix(in srgb, var(--theme-primary) 8%, transparent), transparent 60%),
+    radial-gradient(ellipse 70% 55% at -10% 110%, color-mix(in srgb, var(--theme-secondary) 6%, transparent), transparent 60%),
+    radial-gradient(ellipse 130% 110% at 50% 50%, transparent 55%, color-mix(in srgb, var(--theme-bg-subtle) 55%, transparent) 100%);
+}
+:root[data-backdrop="soft"] .app-shell {
+  background-image:
+    radial-gradient(ellipse 75% 55% at 80% -10%, color-mix(in srgb, var(--theme-primary) 5%, transparent), transparent 60%),
+    radial-gradient(ellipse 65% 50% at 0% 110%, color-mix(in srgb, var(--theme-secondary) 4%, transparent), transparent 60%);
+}
+:root[data-backdrop="grid"] .app-shell {
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--theme-primary) 4%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--theme-primary) 4%, transparent) 1px, transparent 1px),
+    radial-gradient(ellipse 85% 65% at 50% -15%, color-mix(in srgb, var(--theme-primary) 9%, transparent), transparent 65%),
+    radial-gradient(ellipse 70% 55% at 90% 115%, color-mix(in srgb, var(--theme-secondary) 7%, transparent), transparent 60%);
+  background-size: 42px 42px, 42px 42px, auto, auto;
+}
+:root[data-backdrop="scanlines"] .app-shell {
+  background-image:
+    repeating-linear-gradient(0deg, color-mix(in srgb, var(--theme-primary) 5%, transparent) 0 1px, transparent 1px 3px),
+    radial-gradient(ellipse 90% 70% at 50% -20%, color-mix(in srgb, var(--theme-primary) 7%, transparent), transparent 65%);
+}
+/* data-backdrop="none" → flat var(--theme-bg), no extra layers. */
+
 @layer base {
   * {
     -webkit-font-smoothing: antialiased;

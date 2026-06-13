@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useAppStore } from '../../store/appStore'
+import { useResizablePanel, ResizeHandle } from '../Shared/Resizable'
 import {
   PanelRightClose,
   Globe,
@@ -19,16 +20,18 @@ export function PreviewPanel() {
   const setPreviewOpen = useAppStore((s) => s.setPreviewOpen)
   const activeSession = useAppStore((s) => s.activeSession)
   const [tab, setTab] = useState<Tab>('web')
+  const previewResize = useResizablePanel({ storageKey: 'preview', defaultWidth: 520, min: 320, max: 920, dock: 'right' })
 
   return (
     <aside
-      className="flex flex-col shrink-0 h-full"
+      className="relative flex flex-col shrink-0 h-full"
       style={{
-        width: 520,
+        width: previewResize.width,
         backgroundColor: 'var(--theme-bg-subtle)',
         borderLeft: '1px solid var(--theme-border)',
       }}
     >
+      <ResizeHandle handleProps={previewResize.handleProps} label="preview panel" />
       {/* Header */}
       <div
         className="h-12 flex items-center justify-between px-3 shrink-0"

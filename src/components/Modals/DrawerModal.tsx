@@ -1,9 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState, useCallback } from 'react'
 import { useAppStore } from '../../store/appStore'
 import {
   X, BookmarkCheck, Bot, Clock, Plus, Trash2, Loader2, CheckCircle2,
-  AlertCircle, PlayCircle,
+  AlertCircle, PlayCircle, BookOpen, Cpu, HardDrive, Download,
+  StickyNote, ListTodo, Circle,
 } from 'lucide-react'
+import type { HardwareProfile, Recommendation, FitClass, PullProgress } from '../../types'
 
 export function DrawerModal() {
   const activeDrawer = useAppStore((s) => s.activeDrawer)
@@ -22,6 +24,8 @@ export function DrawerModal() {
     checkpoints: { title: 'Checkpoints', icon: <BookmarkCheck size={14} /> },
     'bg-agents': { title: 'Background agents', icon: <Bot size={14} /> },
     cron: { title: 'Scheduled tasks', icon: <Clock size={14} /> },
+    cookbook: { title: 'Cookbook', icon: <BookOpen size={14} /> },
+    notes: { title: 'Notes & Tasks', icon: <StickyNote size={14} /> },
   } as const
   const meta = titleMap[activeDrawer]
 
@@ -53,6 +57,244 @@ export function DrawerModal() {
           {activeDrawer === 'checkpoints' && <CheckpointsPane />}
           {activeDrawer === 'bg-agents' && <BgAgentsPane />}
           {activeDrawer === 'cron' && <CronPane />}
+          {activeDrawer === 'cookbook' && <CookbookPane />}
+          {activeDrawer === 'notes' && <NotesPane />}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Cookbook (local model manager) ──────────────────────────────────────────
+interface CookbookData {
+  profile: HardwareProfile | null
+  recommendations: Recommendation[]
+  ollama: { installed: boolean; running: boolean; models: Array<{ name: string; size: number }> }
+}
+
+const fmtGb = (gb: number) => (Number.isInteger(gb) ? `${gb} GB` : `${gb.toFixed(1)} GB`)
+
+function FitBadge({ fit }: { fit: FitClass }) {
+  const map = {
+    comfortable: { label: 'Fits well', color: 'var(--theme-success)' },
+    tight: { label: 'Tight', color: 'var(--theme-warning)' },
+    'too-big': { label: 'Heavy', color: 'var(--theme-error)' },
+  } as const
+  const m = map[fit]
+  return (
+    <span
+      className="text-[9.5px] px-1.5 py-0.5 rounded-full font-medium"
+      style={{ color: m.color, backgroundColor: `color-mix(in srgb, ${m.color} 14%, transparent)` }}
+    >
+      {m.label}
+    </span>
+  )
+}
+
+function CookbookPane() {
+  const [data, setData] = useState<CookbookData | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [progress, setProgress] = useState<Record<string, PullProgress>>({})
+
+  const reload = useCallback(async () => {
+    const api = window.electron.cookbook
+    const [p, o] = await Promise.all([api.profile(), api.ollama()])
+    setData({
+      profile: p.ok ? p.profile ?? null : null,
+      recommendations: p.ok ? p.recommendations ?? [] : [],
+      ollama: { installed: !!o.installed, running: !!o.running, models: o.models ?? [] },
+    })
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { void reload() }, [reload])
+
+  useEffect(() => {
+    const unsub = window.electron.cookbook.onPullProgress((pp) => {
+      setProgress((prev) => ({ ...prev, [pp.id]: pp }))
+      if (pp.done) void reload()
+    })
+    return unsub
+  }, [reload])
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 text-[12.5px] opacity-60">
+        <Loader2 size={13} className="animate-spin" /> Scanning your hardware…
+      </div>
+    )
+  }
+
+  const profile = data?.profile
+  const ollama = data?.ollama
+  const installed = new Set((ollama?.models ?? []).map((m) => m.name))
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl p-3.5" style={{ backgroundColor: 'var(--theme-bg-subtle)', border: '1px solid var(--theme-border)' }}>
+        <div className="flex items-center gap-2 mb-2">
+          <Cpu size={14} style={{ color: 'var(--theme-primary)' }} />
+          <span className="text-[12.5px] font-medium truncate">{profile?.chip || `${profile?.platform} · ${profile?.arch}`}</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px]" style={{ color: 'var(--theme-muted)' }}>
+          <span className="flex items-center gap-1"><HardDrive size={11} /> {profile?.totalRamGb ?? '?'} GB RAM</span>
+          <span>{profile?.unifiedMemory ? 'Unified memory' : 'Discrete / unknown GPU'}</span>
+          <span>~{profile?.vramBudgetGb ?? '?'} GB model budget</span>
+        </div>
+      </div>
+
+      {!ollama?.installed ? (
+        <div className="rounded-lg p-3 text-[12px]" style={{ backgroundColor: 'color-mix(in srgb, var(--theme-warning) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--theme-warning) 30%, transparent)' }}>
+          <div className="font-medium mb-1" style={{ color: 'var(--theme-warning)' }}>Ollama not detected</div>
+          <span style={{ color: 'var(--theme-text)' }}>Install Ollama to download &amp; serve local models — grab it from <span className="font-mono">ollama.com</span>, then reopen this panel.</span>
+        </div>
+      ) : !ollama.running ? (
+        <div className="text-[11.5px]" style={{ color: 'var(--theme-muted)' }}>
+          Ollama installed but idle — <span className="font-mono">ollama serve</span> starts automatically when you download a model.
+        </div>
+      ) : (
+        <div className="text-[11.5px] flex items-center gap-1.5" style={{ color: 'var(--theme-success)' }}>
+          <CheckCircle2 size={12} /> Ollama running · {ollama.models.length} model{ollama.models.length === 1 ? '' : 's'} installed
+        </div>
+      )}
+
+      <div>
+        <div className="text-[11px] uppercase tracking-wider opacity-50 mb-2" style={{ color: 'var(--theme-muted)' }}>
+          Recommended for your machine
+        </div>
+        {(data?.recommendations ?? []).length === 0 && (
+          <div className="text-[12px] opacity-50" style={{ color: 'var(--theme-muted)' }}>
+            Couldn't read your hardware profile — no recommendations to show.
+          </div>
+        )}
+        <div className="space-y-2">
+          {(data?.recommendations ?? []).map(({ model, fit }) => {
+            const pp = progress[model.id]
+            const pulling = !!pp && !pp.done
+            const done = installed.has(model.id) || (!!pp?.done && !!pp.ok)
+            return (
+              <div key={model.id} className="rounded-xl p-3" style={{ backgroundColor: 'var(--theme-bg-subtle)', border: '1px solid var(--theme-border)' }}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[12.5px] font-medium">{model.label}</span>
+                      {model.coder && (
+                        <span className="text-[9.5px] px-1.5 py-0.5 rounded-full" style={{ color: 'var(--theme-primary)', backgroundColor: 'color-mix(in srgb, var(--theme-primary) 14%, transparent)' }}>coder</span>
+                      )}
+                      <FitBadge fit={fit} />
+                    </div>
+                    <div className="text-[11px] mt-0.5 opacity-70" style={{ color: 'var(--theme-muted)' }}>{model.blurb}</div>
+                    <div className="text-[10.5px] mt-1 font-mono opacity-60" style={{ color: 'var(--theme-muted)' }}>
+                      {fmtGb(model.sizeGb)} · {model.quant} · {Math.round(model.contextWindow / 1000)}k ctx
+                    </div>
+                  </div>
+                  <div className="shrink-0">
+                    {done ? (
+                      <span className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--theme-success)' }}><CheckCircle2 size={13} /> Installed</span>
+                    ) : (
+                      <button
+                        onClick={() => { setProgress((prev) => ({ ...prev, [model.id]: { id: model.id, status: 'Starting…', percent: 0 } })); void window.electron.cookbook.pull(model.id) }}
+                        disabled={pulling || !ollama?.installed}
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11.5px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        style={{ backgroundColor: 'color-mix(in srgb, var(--theme-primary) 16%, transparent)', color: 'var(--theme-primary)' }}
+                        title={ollama?.installed ? `ollama pull ${model.id}` : 'Install Ollama first'}
+                      >
+                        {pulling ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+                        {pulling ? `${pp?.percent ?? 0}%` : 'Download'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {pulling && (
+                  <div className="mt-2">
+                    <div className="h-1 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--theme-border)' }}>
+                      <div className="h-full transition-all" style={{ width: `${pp?.percent ?? 0}%`, backgroundColor: 'var(--theme-primary)' }} />
+                    </div>
+                    {pp?.status && <div className="text-[10px] mt-1 font-mono truncate opacity-60" style={{ color: 'var(--theme-muted)' }}>{pp.status}</div>}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Notes & Tasks ──────────────────────────────────────────────────────────
+interface NoteRow { id: string; text: string; createdAt: number }
+interface TaskRow { id: string; text: string; done: boolean; createdAt: number }
+
+function NotesPane() {
+  const [notes, setNotes] = useState<NoteRow[]>([])
+  const [tasks, setTasks] = useState<TaskRow[]>([])
+  const [noteText, setNoteText] = useState('')
+  const [taskText, setTaskText] = useState('')
+
+  const reload = useCallback(async () => {
+    const r = await window.electron.notes.get()
+    if (r.ok) { setNotes(r.notes || []); setTasks(r.tasks || []) }
+  }, [])
+  useEffect(() => { void reload() }, [reload])
+
+  const addNote = async () => { const t = noteText.trim(); if (!t) return; setNoteText(''); await window.electron.notes.addNote(t); void reload() }
+  const addTask = async () => { const t = taskText.trim(); if (!t) return; setTaskText(''); await window.electron.notes.addTask(t); void reload() }
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <div className="text-[11px] uppercase tracking-wider opacity-50 mb-2 flex items-center gap-1.5" style={{ color: 'var(--theme-muted)' }}>
+          <ListTodo size={12} /> Tasks
+        </div>
+        <div className="flex items-center gap-2 mb-2">
+          <input
+            value={taskText}
+            onChange={(e) => setTaskText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') void addTask() }}
+            placeholder="Add a task…"
+            className="flex-1 bg-transparent outline-none text-[12.5px] rounded-lg px-2.5 py-2"
+            style={{ color: 'var(--theme-text)', backgroundColor: 'var(--theme-bg-subtle)', border: '1px solid var(--theme-border)' }}
+          />
+          <button onClick={addTask} className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: 'color-mix(in srgb, var(--theme-primary) 16%, transparent)', color: 'var(--theme-primary)' }}><Plus size={14} /></button>
+        </div>
+        <div className="space-y-1">
+          {tasks.length === 0 && <div className="text-[12px] opacity-50" style={{ color: 'var(--theme-muted)' }}>No tasks yet.</div>}
+          {tasks.map((t) => (
+            <div key={t.id} className="group flex items-center gap-2 px-2 py-1.5 rounded-lg" style={{ backgroundColor: 'var(--theme-bg-subtle)' }}>
+              <button onClick={async () => { await window.electron.notes.toggleTask(t.id); void reload() }} className="shrink-0">
+                {t.done ? <CheckCircle2 size={15} style={{ color: 'var(--theme-success)' }} /> : <Circle size={15} style={{ color: 'var(--theme-muted)' }} />}
+              </button>
+              <span className={`flex-1 text-[12.5px] ${t.done ? 'line-through opacity-50' : ''}`} style={{ color: 'var(--theme-text)' }}>{t.text}</span>
+              <button onClick={async () => { await window.electron.notes.deleteTask(t.id); void reload() }} className="opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity shrink-0" title="Delete"><Trash2 size={12} /></button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <div className="text-[11px] uppercase tracking-wider opacity-50 mb-2 flex items-center gap-1.5" style={{ color: 'var(--theme-muted)' }}>
+          <StickyNote size={12} /> Notes
+        </div>
+        <div className="flex items-center gap-2 mb-2">
+          <input
+            value={noteText}
+            onChange={(e) => setNoteText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') void addNote() }}
+            placeholder="Jot a note…"
+            className="flex-1 bg-transparent outline-none text-[12.5px] rounded-lg px-2.5 py-2"
+            style={{ color: 'var(--theme-text)', backgroundColor: 'var(--theme-bg-subtle)', border: '1px solid var(--theme-border)' }}
+          />
+          <button onClick={addNote} className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: 'color-mix(in srgb, var(--theme-primary) 16%, transparent)', color: 'var(--theme-primary)' }}><Plus size={14} /></button>
+        </div>
+        <div className="space-y-1.5">
+          {notes.length === 0 && <div className="text-[12px] opacity-50" style={{ color: 'var(--theme-muted)' }}>No notes yet.</div>}
+          {notes.map((n) => (
+            <div key={n.id} className="group flex items-start gap-2 px-2.5 py-2 rounded-lg" style={{ backgroundColor: 'var(--theme-bg-subtle)', border: '1px solid var(--theme-border)' }}>
+              <span className="flex-1 text-[12.5px] whitespace-pre-wrap" style={{ color: 'var(--theme-text)' }}>{n.text}</span>
+              <button onClick={async () => { await window.electron.notes.deleteNote(n.id); void reload() }} className="opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity shrink-0 mt-0.5" title="Delete"><Trash2 size={12} /></button>
+            </div>
+          ))}
         </div>
       </div>
     </div>

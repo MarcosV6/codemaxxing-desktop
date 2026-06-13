@@ -39,6 +39,8 @@ contextBridge.exposeInMainWorld('electron', {
     updateTitle: (id: string, title: string) => ipcRenderer.invoke('session:updateTitle', id, title),
     updateModel: (id: string, provider: string, model: string) =>
       ipcRenderer.invoke('session:updateModel', id, provider, model),
+    updateMode: (id: string, mode: 'code' | 'chat') =>
+      ipcRenderer.invoke('session:updateMode', id, mode),
     setCwd: (id: string, cwd: string) => ipcRenderer.invoke('session:setCwd', id, cwd),
   },
 
@@ -227,6 +229,64 @@ contextBridge.exposeInMainWorld('electron', {
   ollama: {
     isRunning: () => ipcRenderer.invoke('ollama:isRunning'),
     listModels: () => ipcRenderer.invoke('ollama:listModels'),
+  },
+
+  // ── Cookbook (local model manager) ──
+  cookbook: {
+    profile: () => ipcRenderer.invoke('cookbook:profile'),
+    ollama: () => ipcRenderer.invoke('cookbook:ollama'),
+    pull: (id: string) => ipcRenderer.invoke('cookbook:pull', id),
+    cancelPull: (id: string) => ipcRenderer.invoke('cookbook:cancelPull', id),
+    onPullProgress: (cb: (p: { id: string; status: string; percent?: number; done?: boolean; ok?: boolean }) => void) =>
+      on('cookbook:pullProgress', cb),
+  },
+
+  // ── Compare (side-by-side model eval) ──
+  compare: {
+    run: (opts: { prompt: string; cwd?: string; entries: Array<{ provider: string; model: string }> }) =>
+      ipcRenderer.invoke('compare:run', opts),
+  },
+
+  // ── Deep Research ──
+  research: {
+    run: (opts: { sessionId?: string; provider?: string; model?: string; cwd?: string; query: string }) =>
+      ipcRenderer.invoke('research:run', opts),
+    onProgress: (cb: (e: { kind: 'text' | 'tool'; delta?: string; call?: any }) => void) =>
+      on('research:progress', cb),
+  },
+
+  // ── Notes & Tasks ──
+  notes: {
+    get: () => ipcRenderer.invoke('notes:get'),
+    addNote: (text: string) => ipcRenderer.invoke('notes:addNote', text),
+    deleteNote: (id: string) => ipcRenderer.invoke('notes:deleteNote', id),
+    addTask: (text: string) => ipcRenderer.invoke('notes:addTask', text),
+    toggleTask: (id: string) => ipcRenderer.invoke('notes:toggleTask', id),
+    deleteTask: (id: string) => ipcRenderer.invoke('notes:deleteTask', id),
+  },
+
+  // ── Documents ──
+  documents: {
+    list: () => ipcRenderer.invoke('documents:list'),
+    save: (doc: { id?: string; title: string; content: string }) => ipcRenderer.invoke('documents:save', doc),
+    delete: (id: string) => ipcRenderer.invoke('documents:delete', id),
+    assist: (opts: { sessionId?: string; content: string; instruction: string }) => ipcRenderer.invoke('documents:assist', opts),
+  },
+
+  // ── Email ──
+  email: {
+    getAccount: () => ipcRenderer.invoke('email:getAccount'),
+    saveAccount: (a: { email: string; password?: string; imapHost: string; imapPort: number; smtpHost: string; smtpPort: number }) => ipcRenderer.invoke('email:saveAccount', a),
+    list: (opts?: { limit?: number }) => ipcRenderer.invoke('email:list', opts),
+    get: (uid: number) => ipcRenderer.invoke('email:get', uid),
+    send: (opts: { to: string; subject: string; text: string }) => ipcRenderer.invoke('email:send', opts),
+  },
+
+  // ── Calendar ──
+  calendar: {
+    getAccount: () => ipcRenderer.invoke('calendar:getAccount'),
+    saveAccount: (a: { url: string; username: string; password?: string }) => ipcRenderer.invoke('calendar:saveAccount', a),
+    events: (opts?: { start?: number; end?: number }) => ipcRenderer.invoke('calendar:events', opts),
   },
 
   // ── Config ──

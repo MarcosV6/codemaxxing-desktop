@@ -3,13 +3,19 @@ import { ChatArea } from '../Chat/ChatArea'
 import { StatusBar } from '../Shared/StatusBar'
 import { PreviewPanel } from '../Preview/PreviewPanel'
 import { useAppStore, type ModelInfo } from '../../store/appStore'
-import { Plus, MessageSquare, MessageCircle, PanelLeftClose, PanelLeft, PanelRight, Settings, Trash2, Folder, BookmarkCheck, Bot, Clock, ChevronDown, FolderTree, Loader2, Search } from 'lucide-react'
+import { Plus, MessageSquare, MessageCircle, PanelLeftClose, PanelLeft, PanelRight, Settings, Trash2, Folder, BookmarkCheck, Bot, Clock, BookOpen, GitCompare, StickyNote, FileText, Mail, CalendarDays, ChevronDown, FolderTree, Loader2, Search } from 'lucide-react'
 import { ApprovalModal, MCPApprovalModal } from '../Modals/ApprovalModal'
 import { SettingsModal } from '../Modals/SettingsModal'
 import { NewSessionModal } from '../Modals/NewSessionModal'
 import { DrawerModal } from '../Modals/DrawerModal'
+import { CompareModal } from '../Modals/CompareModal'
+import { ResearchModal } from '../Modals/ResearchModal'
+import { DocumentsModal } from '../Modals/DocumentsModal'
+import { EmailModal } from '../Modals/EmailModal'
+import { CalendarModal } from '../Modals/CalendarModal'
 import { CommandPalette } from '../Modals/CommandPalette'
 import { FilesPanel } from '../Files/FilesPanel'
+import { useResizablePanel, ResizeHandle } from '../Shared/Resizable'
 
 function formatRelative(input: string | number | undefined): string {
   if (!input) return ''
@@ -35,6 +41,11 @@ export function Layout() {
   const switchSession = useAppStore((s) => s.switchSession)
   const deleteSession = useAppStore((s) => s.deleteSession)
   const openSettings = useAppStore((s) => s.openSettings)
+  const openCompare = useAppStore((s) => s.openCompare)
+  const openResearch = useAppStore((s) => s.openResearch)
+  const openDocuments = useAppStore((s) => s.openDocuments)
+  const openEmail = useAppStore((s) => s.openEmail)
+  const openCalendar = useAppStore((s) => s.openCalendar)
   const updateSessionCwd = useAppStore((s) => s.updateSessionCwd)
   const updateSessionModel = useAppStore((s) => s.updateSessionModel)
   const renameSession = useAppStore((s) => s.renameSession)
@@ -49,6 +60,8 @@ export function Layout() {
   const loadModels = useAppStore((s) => s.loadModels)
 
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  // Layout is per-device UI state — persisted via localStorage, not config IPC.
+  const sidebarResize = useResizablePanel({ storageKey: 'sidebar', defaultWidth: 220, min: 170, max: 420, dock: 'left' })
   const [newSessionOpen, setNewSessionOpen] = useState(false)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
@@ -178,19 +191,21 @@ export function Layout() {
 
   return (
     <div
-      className="h-screen w-screen flex flex-col overflow-hidden"
+      className="app-shell h-screen w-screen flex flex-col overflow-hidden"
       style={{ backgroundColor: 'var(--theme-bg)', color: 'var(--theme-text)' }}
     >
       <div className="flex-1 flex overflow-hidden">
         {/* Sidebar */}
         {sidebarOpen && (
           <aside
-            className="w-[220px] flex flex-col shrink-0"
+            className="relative flex flex-col shrink-0"
             style={{
+              width: sidebarResize.width,
               backgroundColor: 'var(--theme-bg-subtle)',
               borderRight: '1px solid var(--theme-hairline)',
             }}
           >
+            <ResizeHandle handleProps={sidebarResize.handleProps} label="sidebar" />
             {/* Top: app identity — left space reserved for macOS traffic lights via drag region */}
             <div
               className="h-12 flex items-center justify-between pl-[92px] pr-3"
@@ -317,39 +332,37 @@ export function Layout() {
               )}
             </div>
 
-            {/* Bottom: actions */}
+            {/* Bottom: compact tool rail — icon-only with tooltips, one flat group */}
             <div
-              className="p-2 space-y-0.5"
+              className="p-2"
               style={{ borderTop: '1px solid var(--theme-hairline)' }}
             >
-              <button
-                onClick={() => setDrawer('checkpoints')}
-                className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12.5px] hover:bg-white/5 transition-colors opacity-75 hover:opacity-100 focus-ring"
-              >
-                <BookmarkCheck size={13} />
-                <span>Checkpoints</span>
-              </button>
-              <button
-                onClick={() => setDrawer('bg-agents')}
-                className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12.5px] hover:bg-white/5 transition-colors opacity-75 hover:opacity-100 focus-ring"
-              >
-                <Bot size={13} />
-                <span>Background agents</span>
-              </button>
-              <button
-                onClick={() => setDrawer('cron')}
-                className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12.5px] hover:bg-white/5 transition-colors opacity-75 hover:opacity-100 focus-ring"
-              >
-                <Clock size={13} />
-                <span>Scheduled tasks</span>
-              </button>
-              <button
-                onClick={openSettings}
-                className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12.5px] hover:bg-white/5 transition-colors opacity-75 hover:opacity-100 focus-ring"
-              >
-                <Settings size={13} />
-                <span>Settings</span>
-              </button>
+              <div className="flex flex-wrap gap-1">
+                {[
+                  { icon: BookOpen, label: 'Cookbook', onClick: () => setDrawer('cookbook') },
+                  { icon: GitCompare, label: 'Compare', onClick: openCompare },
+                  { icon: Search, label: 'Deep Research', onClick: openResearch },
+                  { icon: StickyNote, label: 'Notes & Tasks', onClick: () => setDrawer('notes') },
+                  { icon: FileText, label: 'Documents', onClick: openDocuments },
+                  { icon: Mail, label: 'Email', onClick: openEmail },
+                  { icon: CalendarDays, label: 'Calendar', onClick: openCalendar },
+                  { icon: BookmarkCheck, label: 'Checkpoints', onClick: () => setDrawer('checkpoints') },
+                  { icon: Bot, label: 'Background agents', onClick: () => setDrawer('bg-agents') },
+                  { icon: Clock, label: 'Scheduled tasks', onClick: () => setDrawer('cron') },
+                  { icon: Settings, label: 'Settings', onClick: openSettings },
+                ].map(({ icon: Icon, label, onClick }) => (
+                  <button
+                    key={label}
+                    onClick={onClick}
+                    title={label}
+                    aria-label={label}
+                    className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors opacity-70 hover:opacity-100 hover:bg-white/5 focus-ring"
+                    style={{ color: 'var(--theme-muted)' }}
+                  >
+                    <Icon size={15} />
+                  </button>
+                ))}
+              </div>
             </div>
           </aside>
         )}
@@ -632,6 +645,11 @@ export function Layout() {
       <MCPApprovalModal />
       <SettingsModal />
       <DrawerModal />
+      <CompareModal />
+      <ResearchModal />
+      <DocumentsModal />
+      <EmailModal />
+      <CalendarModal />
       <CommandPalette />
       <NewSessionModal open={newSessionOpen} onClose={() => setNewSessionOpen(false)} />
     </div>
@@ -641,16 +659,24 @@ export function Layout() {
 function EmptyState({ onNewSession }: { onNewSession: () => void }) {
   return (
     <div className="h-full flex items-center justify-center">
-      <div className="text-center max-w-sm px-6">
+      <div className="text-center max-w-sm px-6 animate-fade-in">
         <div
-          className="w-12 h-12 rounded-xl mx-auto mb-5 flex items-center justify-center"
-          style={{ backgroundColor: 'var(--theme-bg-raised)' }}
+          className="w-14 h-14 rounded-2xl mx-auto mb-5 flex items-center justify-center font-mono text-[20px] font-bold select-none"
+          style={{
+            backgroundColor: 'color-mix(in srgb, var(--theme-primary) 12%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--theme-primary) 30%, transparent)',
+            color: 'var(--theme-primary)',
+            boxShadow: '0 8px 32px -8px color-mix(in srgb, var(--theme-primary) 35%, transparent)',
+          }}
         >
-          <MessageSquare size={20} style={{ color: 'var(--theme-primary)' }} />
+          {'>_'}
         </div>
-        <h2 className="text-[20px] font-medium mb-2 tracking-tight">How can I help you code?</h2>
-        <p className="text-[14px] mb-6 leading-relaxed" style={{ color: 'var(--theme-muted)' }}>
-          Start a new session — pick a project directory and a model to begin.
+        <h2 className="text-[26px] font-semibold mb-1 tracking-tight">
+          codemaxxing
+          <span className="animate-pulse" style={{ color: 'var(--theme-primary)' }}>_</span>
+        </h2>
+        <p className="text-[13.5px] mb-7 leading-relaxed" style={{ color: 'var(--theme-muted)' }}>
+          Your agentic coding workspace — local models, cloud frontier, one app.
         </p>
         <button
           onClick={onNewSession}
@@ -664,6 +690,16 @@ function EmptyState({ onNewSession }: { onNewSession: () => void }) {
           <Plus size={14} />
           New session
         </button>
+        <div
+          className="flex items-center justify-center gap-4 mt-7 text-[10.5px] font-mono opacity-40"
+          style={{ color: 'var(--theme-muted)' }}
+        >
+          <span><kbd>⌘N</kbd> new session</span>
+          <span>·</span>
+          <span><kbd>/</kbd> commands</span>
+          <span>·</span>
+          <span>16 themes</span>
+        </div>
       </div>
     </div>
   )

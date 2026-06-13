@@ -4,7 +4,7 @@ import { join } from 'path'
 import { createServer, type IncomingMessage, type ServerResponse } from 'http'
 import { randomBytes, createHash } from 'crypto'
 import { execSync, exec, execFile } from 'child_process'
-import { shell } from 'electron'
+import { shell, safeStorage } from 'electron'
 
 const CONFIG_DIR = join(homedir(), '.codemaxxing-mac')
 const AUTH_PATH = join(CONFIG_DIR, 'auth.json')
@@ -117,22 +117,72 @@ function ensureDir() {
   if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 })
 }
 
+/** True when the OS provides an encryption backend (Keychain on macOS, DPAPI on
+ *  Windows, libsecret on Linux). When false (e.g. headless Linux), we fall back
+ *  to 0600 plaintext rather than refusing to store credentials at all. */
+function canEncrypt(): boolean {
+  try { return safeStorage.isEncryptionAvailable() } catch { return false }
+}
+
+/** Encrypt a single secret string to a tagged token for at-rest storage. Used
+ *  for secondary secrets (e.g. email/CalDAV passwords) outside the main store. */
+export function encryptSecret(plain: string): string {
+  if (!plain) return ''
+  if (!canEncrypt()) return 'plain:' + plain
+  try { return 'enc:' + safeStorage.encryptString(plain).toString('base64') } catch { return 'plain:' + plain }
+}
+
+/** Inverse of encryptSecret; transparently handles legacy unprefixed plaintext. */
+export function decryptSecret(stored: string): string {
+  if (!stored) return ''
+  if (stored.startsWith('enc:')) {
+    try { return safeStorage.decryptString(Buffer.from(stored.slice(4), 'base64')) } catch { return '' }
+  }
+  if (stored.startsWith('plain:')) return stored.slice(6)
+  return stored
+}
+
 function read(): AuthFile {
   ensureDir()
   if (!existsSync(AUTH_PATH)) return { version: 1, credentials: [] }
   try {
-    const data = JSON.parse(readFileSync(AUTH_PATH, 'utf-8'))
-    if (data && typeof data === 'object' && Array.isArray(data.credentials)) {
-      return { version: 1, credentials: data.credentials }
+    const parsed = JSON.parse(readFileSync(AUTH_PATH, 'utf-8'))
+    // v2: the whole credential blob is encrypted with safeStorage.
+    if (parsed && typeof parsed.enc === 'string') {
+      const json = safeStorage.decryptString(Buffer.from(parsed.enc, 'base64'))
+      const data = JSON.parse(json)
+      if (data && Array.isArray(data.credentials)) return { version: 1, credentials: data.credentials }
+      return { version: 1, credentials: [] }
     }
-  } catch { /* fall through */ }
+    // v1: legacy plaintext — return it, and migrate to encrypted in place.
+    if (parsed && Array.isArray(parsed.credentials)) {
+      const creds = parsed.credentials as AuthCredential[]
+      if (canEncrypt()) {
+        try {
+          // One-time safety net: with ad-hoc signing, a re-signed build can be
+          // denied Keychain access (user clicks "Deny" on the prompt), which
+          // would make the encrypted store unreadable. Keep the pre-migration
+          // plaintext as .legacy (0600) so keys are recoverable; users can
+          // delete it once the encrypted store is confirmed working.
+          const backup = AUTH_PATH + '.legacy'
+          if (!existsSync(backup)) writeFileSync(backup, JSON.stringify(parsed, null, 2), { mode: 0o600 })
+          write({ version: 1, credentials: creds })
+        } catch { /* migration is best-effort */ }
+      }
+      return { version: 1, credentials: creds }
+    }
+  } catch { /* unreadable / decrypt failed → treat as empty */ }
   return { version: 1, credentials: [] }
 }
 
 function write(data: AuthFile) {
   ensureDir()
+  const plaintext = JSON.stringify({ version: 1, credentials: data.credentials })
+  const fileContent = canEncrypt()
+    ? JSON.stringify({ version: 2, enc: safeStorage.encryptString(plaintext).toString('base64') }, null, 2)
+    : JSON.stringify({ version: 1, credentials: data.credentials }, null, 2)
   const tmp = AUTH_PATH + '.tmp-' + process.pid + '-' + Date.now()
-  writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 })
+  writeFileSync(tmp, fileContent, { mode: 0o600 })
   try { chmodSync(tmp, 0o600) } catch { /* best-effort */ }
   renameSync(tmp, AUTH_PATH)
   try { chmodSync(AUTH_PATH, 0o600) } catch { /* best-effort */ }

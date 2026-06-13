@@ -1,10 +1,10 @@
 import React, { useRef, useEffect, useMemo, useState, useCallback } from 'react'
 import {
-  ArrowUp,
+  ArrowUp, Cpu,
   GitCompare, GitBranch, History, GitCommit, Upload, Undo2,
   DollarSign, Archive, Bookmark, BookOpen, Sparkles, Brain,
   Database, Bot, Clock, Settings, HelpCircle, FileCog,
-  FileText, Folder, AtSign, Paperclip, X, ImageIcon as LucideImageIcon,
+  FileText, Folder, AtSign, Paperclip, X, StickyNote, Mail, CalendarDays, ImageIcon as LucideImageIcon,
 } from 'lucide-react'
 import type { ImageAttachment } from '../../types'
 import {
@@ -29,6 +29,12 @@ interface InputAreaProps {
    *  outside this component can also append to it. */
   attachments?: ImageAttachment[]
   onAttachmentsChange?: (next: ImageAttachment[]) => void
+  /** Active session mode — drives the Agent|Chat segmented toggle. */
+  mode?: 'code' | 'chat'
+  /** Flip the active session between Agent (code) and Chat mode. */
+  onToggleMode?: () => void
+  /** Current model id, shown as a read-only chip in the composer footer. */
+  modelLabel?: string | null
 }
 
 interface SlashCommand {
@@ -55,6 +61,13 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'memory',      description: 'Show memory stats or recall',                     args: '[query]',                          icon: Database },
   { name: 'bg',          description: 'Open background agents drawer',                                                             icon: Bot },
   { name: 'cron',        description: 'Open scheduled tasks drawer',                                                               icon: Clock },
+  { name: 'cookbook',    description: 'Browse & download local models for your hardware',                                          icon: BookOpen },
+  { name: 'compare',     description: 'Run one prompt across multiple models, side-by-side',                                       icon: GitCompare },
+  { name: 'research',    description: 'Deep web research → a cited report',                                                        icon: Sparkles },
+  { name: 'notes',       description: 'Quick notes & tasks',                                                                       icon: StickyNote },
+  { name: 'docs',        description: 'AI-assisted documents editor',                                                              icon: FileText },
+  { name: 'email',       description: 'IMAP inbox — read & send mail',                                                             icon: Mail },
+  { name: 'calendar',    description: 'CalDAV calendar — upcoming events',                                                         icon: CalendarDays },
   { name: 'settings',    description: 'Open settings',                                                                             icon: Settings },
   { name: 'help',        description: 'List all slash commands',                                                                   icon: HelpCircle },
 ]
@@ -115,6 +128,9 @@ export function InputArea({
   cwd,
   attachments,
   onAttachmentsChange,
+  mode,
+  onToggleMode,
+  modelLabel,
 }: InputAreaProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -540,34 +556,74 @@ export function InputArea({
           }}
         />
         <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1.5 min-w-0">
             <button
               type="button"
               onClick={handlePickFiles}
               disabled={disabled || isLoading}
-              className="w-7 h-7 rounded-full flex items-center justify-center transition-colors hover:bg-white/[0.06] disabled:opacity-40 disabled:cursor-not-allowed"
+              className="w-7 h-7 rounded-full flex items-center justify-center transition-colors hover:bg-white/[0.06] disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
               style={{ color: 'var(--theme-muted)' }}
               title="Attach image"
             >
               <Paperclip size={13} strokeWidth={2} />
             </button>
-            <span className="text-[11px] font-mono tracking-tight pl-1" style={{ color: 'var(--theme-muted)', opacity: 0.55 }}>
-              <kbd className="opacity-80">⏎</kbd> send · <kbd className="opacity-80">⇧⏎</kbd> newline · <kbd className="opacity-80">/</kbd> cmd · <kbd className="opacity-80">@</kbd> file
-            </span>
+            {modelLabel && (
+              <span
+                className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-mono max-w-[220px]"
+                style={{
+                  backgroundColor: 'var(--theme-bg-subtle)',
+                  border: '1px solid var(--theme-hairline)',
+                  color: 'var(--theme-muted)',
+                }}
+                title={`Current model · ${modelLabel}`}
+              >
+                <Cpu size={11} strokeWidth={2} className="shrink-0" style={{ color: 'var(--theme-primary)' }} />
+                <span className="truncate">{modelLabel}</span>
+              </span>
+            )}
           </div>
-          <button
-            onClick={handleSend}
-            disabled={!canSend}
-            className="w-7 h-7 rounded-full flex items-center justify-center transition-all disabled:opacity-40 disabled:cursor-not-allowed active:scale-95"
-            style={{
-              backgroundColor: canSend ? 'var(--theme-primary)' : 'var(--theme-bg-subtle)',
-              color: canSend ? 'var(--theme-bg)' : 'var(--theme-muted)',
-              boxShadow: canSend ? '0 2px 8px color-mix(in srgb, var(--theme-primary) 35%, transparent)' : 'none',
-            }}
-            title="Send (⏎)"
-          >
-            <ArrowUp size={14} strokeWidth={2.5} />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {onToggleMode && mode && (
+              <div
+                className="flex items-center rounded-full p-0.5 text-[11px] font-medium select-none"
+                style={{ backgroundColor: 'var(--theme-bg-subtle)', border: '1px solid var(--theme-hairline)' }}
+                title="Agent runs tools & edits files · Chat is conversation-only"
+              >
+                {(['code', 'chat'] as const).map((m) => {
+                  const active = mode === m
+                  const label = m === 'code' ? 'Agent' : 'Chat'
+                  return (
+                    <button
+                      key={m}
+                      type="button"
+                      disabled={disabled || isLoading}
+                      onClick={() => { if (mode !== m) onToggleMode() }}
+                      className="px-2.5 py-1 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      style={{
+                        backgroundColor: active ? 'color-mix(in srgb, var(--theme-primary) 18%, transparent)' : 'transparent',
+                        color: active ? 'var(--theme-primary)' : 'var(--theme-muted)',
+                      }}
+                    >
+                      {label}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+            <button
+              onClick={handleSend}
+              disabled={!canSend}
+              className="w-7 h-7 rounded-full flex items-center justify-center transition-all disabled:opacity-40 disabled:cursor-not-allowed active:scale-95"
+              style={{
+                backgroundColor: canSend ? 'var(--theme-primary)' : 'var(--theme-bg-subtle)',
+                color: canSend ? 'var(--theme-bg)' : 'var(--theme-muted)',
+                boxShadow: canSend ? '0 2px 8px color-mix(in srgb, var(--theme-primary) 35%, transparent)' : 'none',
+              }}
+              title="Send (⏎)"
+            >
+              <ArrowUp size={14} strokeWidth={2.5} />
+            </button>
+          </div>
         </div>
       </div>
     </div>

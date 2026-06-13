@@ -1,3 +1,5 @@
+import type { HardwareProfile, Recommendation, PullProgress, CompareResult } from './index'
+
 export type ApprovalDecision = 'yes' | 'no' | 'always'
 export type ApprovalMode = 'suggest' | 'auto-edit' | 'full-auto'
 export type ReasoningEffort = 'off' | 'low' | 'medium' | 'high' | 'max'
@@ -130,6 +132,7 @@ export interface ElectronAPI {
     delete: (id: string) => Promise<{ ok: boolean }>
     updateTitle: (id: string, title: string) => Promise<{ ok: boolean }>
     updateModel: (id: string, provider: string, model: string) => Promise<{ ok: boolean }>
+    updateMode: (id: string, mode: 'code' | 'chat') => Promise<{ ok: boolean }>
     setCwd: (id: string, cwd: string) => Promise<{ ok: boolean; error?: string }>
   }
 
@@ -289,6 +292,60 @@ export interface ElectronAPI {
   ollama: {
     isRunning: () => Promise<boolean>
     listModels: () => Promise<{ ok: boolean; models?: Array<{ name: string; size: number }>; error?: string }>
+  }
+
+  // Cookbook — local model manager (hardware probe + ollama lifecycle)
+  cookbook: {
+    profile: () => Promise<{ ok: boolean; profile?: HardwareProfile; recommendations?: Recommendation[]; error?: string }>
+    ollama: () => Promise<{ ok: boolean; installed?: boolean; running?: boolean; models?: Array<{ name: string; size: number }>; error?: string }>
+    pull: (id: string) => Promise<{ ok: boolean; code?: number; error?: string }>
+    cancelPull: (id: string) => Promise<{ ok: boolean }>
+    onPullProgress: (cb: (p: PullProgress) => void) => () => void
+  }
+
+  // Compare — run one prompt across multiple models
+  compare: {
+    run: (opts: { prompt: string; cwd?: string; entries: Array<{ provider: string; model: string }> }) => Promise<{ ok: boolean; results?: CompareResult[]; error?: string }>
+  }
+
+  // Deep Research — plan → web search → read → synthesize a cited report
+  research: {
+    run: (opts: { sessionId?: string; provider?: string; model?: string; cwd?: string; query: string }) => Promise<{ ok: boolean; report?: string; promptTokens?: number; completionTokens?: number; error?: string }>
+    onProgress: (cb: (e: { kind: 'text' | 'tool'; delta?: string; call?: ToolCallEvent }) => void) => () => void
+  }
+
+  // Notes & Tasks — JSON-backed quick capture
+  notes: {
+    get: () => Promise<{ ok: boolean; notes: Array<{ id: string; text: string; createdAt: number }>; tasks: Array<{ id: string; text: string; done: boolean; createdAt: number }> }>
+    addNote: (text: string) => Promise<{ ok: boolean; note?: { id: string; text: string; createdAt: number }; error?: string }>
+    deleteNote: (id: string) => Promise<{ ok: boolean }>
+    addTask: (text: string) => Promise<{ ok: boolean; task?: { id: string; text: string; done: boolean; createdAt: number }; error?: string }>
+    toggleTask: (id: string) => Promise<{ ok: boolean }>
+    deleteTask: (id: string) => Promise<{ ok: boolean }>
+  }
+
+  // Documents — JSON-backed, AI-assisted editor
+  documents: {
+    list: () => Promise<{ ok: boolean; documents: Array<{ id: string; title: string; content: string; updatedAt: number }> }>
+    save: (doc: { id?: string; title: string; content: string }) => Promise<{ ok: boolean; doc?: { id: string; title: string; content: string; updatedAt: number }; error?: string }>
+    delete: (id: string) => Promise<{ ok: boolean }>
+    assist: (opts: { sessionId?: string; content: string; instruction: string }) => Promise<{ ok: boolean; content?: string; error?: string }>
+  }
+
+  // Email — IMAP fetch + SMTP send
+  email: {
+    getAccount: () => Promise<{ ok: boolean; account: { email: string; imapHost: string; imapPort: number; smtpHost: string; smtpPort: number; passwordSet: boolean } | null }>
+    saveAccount: (a: { email: string; password?: string; imapHost: string; imapPort: number; smtpHost: string; smtpPort: number }) => Promise<{ ok: boolean }>
+    list: (opts?: { limit?: number }) => Promise<{ ok: boolean; messages?: Array<{ uid: number; from: string; fromName: string; subject: string; date: number; seen: boolean }>; error?: string }>
+    get: (uid: number) => Promise<{ ok: boolean; message?: { uid: number; from: string; to: string; subject: string; date: number; text: string }; error?: string }>
+    send: (opts: { to: string; subject: string; text: string }) => Promise<{ ok: boolean; error?: string }>
+  }
+
+  // Calendar — CalDAV
+  calendar: {
+    getAccount: () => Promise<{ ok: boolean; account: { url: string; username: string; passwordSet: boolean } | null }>
+    saveAccount: (a: { url: string; username: string; password?: string }) => Promise<{ ok: boolean }>
+    events: (opts?: { start?: number; end?: number }) => Promise<{ ok: boolean; events?: Array<{ summary: string; start: number; end: number; location: string; calendar: string }>; error?: string }>
   }
 
   // Config

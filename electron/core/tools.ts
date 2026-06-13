@@ -252,6 +252,35 @@ export const FILE_TOOLS: ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'open_preview',
+      description:
+        "Open the app's Preview panel to a URL so the USER can see your running work (e.g. a dev server at http://localhost:3000). Use after starting a dev server or making a visible change. This only shows it to the user — use screenshot_preview to see it yourself.",
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'URL to open, e.g. http://localhost:3000' },
+        },
+        required: ['url'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'screenshot_preview',
+      description:
+        "Capture a screenshot of a running web app and SEE it yourself — the image is returned for you to analyze. Use this to visually verify UI you build or change BEFORE telling the user it's done: build → screenshot → check it looks right → fix if not. Renders the URL at 1280×800 and also opens the Preview panel for the user.",
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'URL to capture (e.g. http://localhost:3000). Omit to reuse the last opened preview URL.' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'glob',
       description:
         "Find files matching a glob pattern. Use this to locate files by name or extension across the project (e.g. '**/*.tsx', 'src/**/test.*', '*.json').",
@@ -548,6 +577,11 @@ export interface ToolExecContext {
   onAskUser?: (question: string, options?: string[]) => Promise<string>
   // Exit-plan-mode bridge (optional UI signal)
   onPlanExit?: (plan: string) => void
+  // Preview bridges — let the agent show its work to the user (open the
+  // Preview panel) and SEE its own work (offscreen screenshot returned as an
+  // image the model can analyze). Undefined outside a normal coding run.
+  openPreview?: (url: string) => void
+  capturePreview?: (url?: string) => Promise<{ ok: boolean; mime?: string; base64?: string; error?: string }>
 }
 
 export async function executeTool(
@@ -748,6 +782,24 @@ export async function executeTool(
       } catch (e: any) {
         return `Error viewing image: ${e instanceof Error ? e.message : String(e)}`
       }
+    }
+
+    case 'open_preview': {
+      const url = String(args.url ?? '').trim()
+      if (!url) return "Error: open_preview requires a 'url' (e.g. http://localhost:3000)."
+      if (!ctx.openPreview) return 'Preview is not available in this environment.'
+      ctx.openPreview(url)
+      return `Opened the Preview panel at ${url} — the user can see it now. Call screenshot_preview to view it yourself.`
+    }
+
+    case 'screenshot_preview': {
+      if (!ctx.capturePreview) return 'Preview screenshot is not available in this environment.'
+      const url = args.url ? String(args.url).trim() : undefined
+      const res = await ctx.capturePreview(url)
+      if (!res.ok || !res.base64) {
+        return `Could not capture the preview: ${res.error ?? 'no preview URL — call open_preview first or pass a url'}`
+      }
+      return JSON.stringify({ type: 'image', mime: res.mime ?? 'image/png', base64: res.base64, source: 'preview' })
     }
 
     case 'glob': {

@@ -255,6 +255,11 @@ contextBridge.exposeInMainWorld('electron', {
       on('research:progress', cb),
   },
 
+  // ── Preview (agent opens a URL; screenshot capture is main-side) ──
+  preview: {
+    onOpen: (cb: (url: string) => void) => on('preview:open', cb),
+  },
+
   // ── Notes & Tasks ──
   notes: {
     get: () => ipcRenderer.invoke('notes:get'),

@@ -21,6 +21,10 @@ export function PreviewPanel() {
   const activeSession = useAppStore((s) => s.activeSession)
   const [tab, setTab] = useState<Tab>('web')
   const previewResize = useResizablePanel({ storageKey: 'preview', defaultWidth: 520, min: 320, max: 920, dock: 'right' })
+  const previewUrl = useAppStore((s) => s.previewUrl)
+  // When the agent opens a URL (open_preview / screenshot_preview), jump to the
+  // Web tab so the user immediately sees what it's looking at.
+  useEffect(() => { if (previewUrl) setTab('web') }, [previewUrl])
 
   return (
     <aside
@@ -109,6 +113,10 @@ function WebTab() {
     setUrl(u)
     setLoadedUrl(u)
   }, [])
+
+  // Auto-load a URL the agent surfaced via open_preview / screenshot_preview.
+  const previewUrl = useAppStore((s) => s.previewUrl)
+  useEffect(() => { if (previewUrl) load(previewUrl) }, [previewUrl, load])
 
   const refresh = () => setKey((k) => k + 1)
 

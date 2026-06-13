@@ -272,6 +272,17 @@ export function installBrowserMock(): void {
       saveAccount: () => ok(),
       events: () => ok({ events: [] }),
     },
+    preview: {
+      // Browser-only: register the callback and expose window.__firePreviewOpen(url)
+      // so the agent→renderer open path can be exercised in the dev preview.
+      onOpen: (cb: (url: string) => void) => {
+        const w = window as unknown as { __previewOpenCbs?: Array<(u: string) => void>; __firePreviewOpen?: (u: string) => void }
+        const arr = (w.__previewOpenCbs ??= [])
+        arr.push(cb)
+        w.__firePreviewOpen = (u: string) => arr.forEach((f) => f(u))
+        return () => { const i = arr.indexOf(cb); if (i >= 0) arr.splice(i, 1) }
+      },
+    },
 
     agent: {
       send: (opts: { sessionId?: string }) => {

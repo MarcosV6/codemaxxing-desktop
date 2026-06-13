@@ -314,6 +314,11 @@ export interface ElectronAPI {
     onProgress: (cb: (e: { kind: 'text' | 'tool'; delta?: string; call?: ToolCallEvent }) => void) => () => void
   }
 
+  // Preview — agent surfaces a URL in the Preview panel (capture is main-side)
+  preview: {
+    onOpen: (cb: (url: string) => void) => () => void
+  }
+
   // Notes & Tasks — JSON-backed quick capture
   notes: {
     get: () => Promise<{ ok: boolean; notes: Array<{ id: string; text: string; createdAt: number }>; tasks: Array<{ id: string; text: string; done: boolean; createdAt: number }> }>

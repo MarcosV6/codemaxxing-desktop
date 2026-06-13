@@ -5,10 +5,18 @@ import { Layout } from './components/Layout/Layout'
 export function App() {
   const init = useAppStore((s) => s.init)
   const initialized = useAppStore((s) => s.initialized)
+  const openPreview = useAppStore((s) => s.openPreview)
 
   useEffect(() => {
     void init()
   }, [init])
+
+  // Agent → renderer: open_preview / screenshot_preview surface a URL in the
+  // Preview panel so the user sees what the agent is looking at.
+  useEffect(() => {
+    const api = (window as { electron?: { preview?: { onOpen?: (cb: (url: string) => void) => () => void } } }).electron?.preview
+    return api?.onOpen?.((url) => openPreview(url))
+  }, [openPreview])
 
   if (!initialized) {
     return (

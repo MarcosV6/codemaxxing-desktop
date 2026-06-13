@@ -169,6 +169,7 @@ interface AppState {
   emailOpen: boolean
   calendarOpen: boolean
   previewOpen: boolean
+  previewUrl: string | null
   filesPanelOpen: boolean
   activeDrawer: DrawerKind
   commandPaletteOpen: boolean
@@ -253,6 +254,7 @@ interface AppState {
   closeCalendar: () => void
   togglePreview: () => void
   setPreviewOpen: (open: boolean) => void
+  openPreview: (url: string) => void
   toggleFilesPanel: () => void
   setFilesPanelOpen: (open: boolean) => void
   setDrawer: (drawer: DrawerKind) => void
@@ -537,6 +539,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   emailOpen: false,
   calendarOpen: false,
   previewOpen: false,
+  previewUrl: null,
   filesPanelOpen: false,
   activeDrawer: null,
   commandPaletteOpen: false,
@@ -1538,6 +1541,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   closeCalendar: () => set({ calendarOpen: false }),
   togglePreview: () => set((s) => ({ previewOpen: !s.previewOpen })),
   setPreviewOpen: (open: boolean) => set({ previewOpen: open }),
+  openPreview: (url: string) => set({ previewOpen: true, previewUrl: url }),
   toggleFilesPanel: () => set((s) => ({ filesPanelOpen: !s.filesPanelOpen })),
   setFilesPanelOpen: (open: boolean) => set({ filesPanelOpen: open }),
   setDrawer: (drawer) => set({ activeDrawer: drawer }),

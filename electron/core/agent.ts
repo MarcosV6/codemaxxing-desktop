@@ -69,6 +69,9 @@ export interface AgentEvents {
   onIteration?: (n: number) => void
   onUsage?: (u: { promptTokens: number; completionTokens: number }) => void
   onStats?: (s: AgentStats) => void
+  // Preview bridges (wired in main; let the agent show + see its running work)
+  onOpenPreview?: (url: string) => void
+  onCapturePreview?: (url?: string) => Promise<{ ok: boolean; mime?: string; base64?: string; error?: string }>
 }
 
 export type SessionMode = 'code' | 'chat'
@@ -559,6 +562,8 @@ export class CodingAgent {
       onTaskChange: (t: Task[]) => this.events.onTaskChange?.(t),
       onAskUser: this.events.onAskUser,
       onPlanExit: this.events.onPlanExit,
+      openPreview: this.events.onOpenPreview,
+      capturePreview: this.events.onCapturePreview,
     }
   }
 

@@ -712,6 +712,36 @@ export const agentBus = new EventEmitter()
 // moment more than zero clients are connected. 200 covers reasonable real-
 // world usage (renderer + a few paired devices + curl/debug consumers).
 agentBus.setMaxListeners(200)
+
+// Offscreen capture for the agent's screenshot_preview tool — renders a URL in
+// a hidden 1280×800 window and grabs the painted pixels (works cross-origin
+// because it's a pixel capture, not DOM access), so the coding agent can SEE
+// the UI it builds. Module-scope: no run/session coupling.
+let lastPreviewUrl: string | null = null
+async function captureUrlOffscreen(url: string): Promise<{ ok: boolean; mime?: string; base64?: string; error?: string }> {
+  let win: BrowserWindow | null = null
+  try {
+    win = new BrowserWindow({
+      show: false,
+      width: 1280,
+      height: 800,
+      webPreferences: { offscreen: true, sandbox: true, contextIsolation: true },
+    })
+    await Promise.race([
+      win.loadURL(url),
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`Timed out loading ${url} — is the dev server running?`)), 15_000)),
+    ])
+    await new Promise((r) => setTimeout(r, 800)) // let the page / SPA settle
+    let img = await win.webContents.capturePage()
+    if (img.getSize().width > 1280) img = img.resize({ width: 1280 })
+    return { ok: true, mime: 'image/png', base64: img.toPNG().toString('base64') }
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) }
+  } finally {
+    try { win?.destroy() } catch { /* already gone */ }
+  }
+}
+
 function emit(channel: string, ...args: any[]) {
   mainWindow?.webContents.send(channel, ...args)
   agentBus.emit(channel, ...args)
@@ -1143,6 +1173,17 @@ function setupIPC(): void {
             if (abort.signal.aborted) onAbort()
             else abort.signal.addEventListener('abort', onAbort, { once: true })
           })
+        },
+        onOpenPreview: (url: string) => {
+          lastPreviewUrl = url
+          emit('preview:open', url)
+        },
+        onCapturePreview: async (url?: string) => {
+          const target = (url || lastPreviewUrl || '').trim()
+          if (!target) return { ok: false, error: 'No preview URL — call open_preview first or pass a url.' }
+          lastPreviewUrl = target
+          emit('preview:open', target) // show the user the same page the agent is capturing
+          return await captureUrlOffscreen(target)
         },
         onPlanExit: (plan) => emit('agent:planExit', { sessionId: opts.sessionId, plan }),
         onUsage: (u) => emit('agent:usage', { sessionId: opts.sessionId, usage: u }),

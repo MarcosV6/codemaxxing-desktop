@@ -46,10 +46,11 @@ function CodeBlockInner({ children, languageClass = '', rawText }: CodeBlockProp
   return (
     <div className="relative group my-3">
       <div
-        className="rounded-lg overflow-hidden"
+        className="rounded-xl overflow-hidden"
         style={{
           backgroundColor: 'var(--theme-bg-subtle)',
           border: '1px solid var(--theme-hairline)',
+          boxShadow: 'var(--shadow-1), inset 0 1px 0 0 var(--sheen)',
         }}
       >
         <div
@@ -60,7 +61,10 @@ function CodeBlockInner({ children, languageClass = '', rawText }: CodeBlockProp
             backgroundColor: 'color-mix(in srgb, var(--theme-bg-raised) 60%, transparent)',
           }}
         >
-          <span className="opacity-70">{lang || 'plain'}</span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--theme-primary)' }} />
+            <span className="opacity-70">{lang || 'plain'}</span>
+          </span>
           <button
             onClick={onCopy}
             className="flex items-center gap-1 px-1.5 py-0.5 rounded opacity-60 hover:opacity-100 hover:bg-white/5 transition-all focus-ring"

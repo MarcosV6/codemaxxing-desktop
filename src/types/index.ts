@@ -43,6 +43,9 @@ export interface ChatMessage {
   segments?: MessageSegment[]
   /** Images attached to this user message. Persisted with the session. */
   images?: ImageAttachment[]
+  /** Per-message metadata stamped at completion — model that produced it,
+   *  throughput, and output token count. Shown in the assistant footer. */
+  meta?: { model?: string; tokensPerSecond?: number | null; completionTokens?: number }
   /** For error messages, classifies the failure mode so the UI can show
    *  actionable recovery (e.g. context_overflow → "Compact session" button).
    *  Optional and additive; existing errors that don't classify still

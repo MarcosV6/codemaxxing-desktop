@@ -269,8 +269,15 @@ const ChatFooter = React.memo(function ChatFooter() {
   return (
     <div className="max-w-[820px] mx-auto px-6 pb-8">
       {(hasLiveContent || isRunning) && (
-        <div className="mb-5 animate-fade-in">
-          <div className="space-y-2">
+        <div className="mb-6 animate-fade-in flex gap-3">
+          <div className="shrink-0 mt-0.5">
+            <div
+              className="w-[22px] h-[22px] rounded-md flex items-center justify-center font-mono text-[10px] font-bold select-none"
+              style={{ backgroundColor: 'color-mix(in srgb, var(--theme-primary) 16%, transparent)', color: 'var(--theme-primary)', boxShadow: 'inset 0 1px 0 0 var(--sheen)' }}
+              aria-hidden
+            >{'>_'}</div>
+          </div>
+          <div className="min-w-0 flex-1 space-y-2">
             {currentSegments.map((seg, i) => {
               const isTail = i === currentSegments.length - 1
               const stagger = Math.min(i, 5) * 50

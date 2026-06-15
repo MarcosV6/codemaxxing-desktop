@@ -104,8 +104,8 @@ export const MarkdownText = React.memo(function MarkdownText({ text }: { text: s
   )
 })
 
-/** Small toolbar revealed on hover over an assistant message. */
-function MessageActions({ rawText }: { rawText: string }) {
+/** Footer under an assistant message: model · tok/s · time, with copy on hover. */
+function MessageFooter({ rawText, meta, timestamp }: { rawText: string; meta?: ChatMessage['meta']; timestamp?: number }) {
   const [copied, setCopied] = useState(false)
   const onCopy = useCallback(async () => {
     try {
@@ -115,17 +115,42 @@ function MessageActions({ rawText }: { rawText: string }) {
       setTimeout(() => setCopied(false), 1400)
     } catch {/* noop */}
   }, [rawText])
+  const tps = meta?.tokensPerSecond
+  const time = timestamp ? new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
   return (
-    <div className="opacity-0 group-hover/msg:opacity-100 transition-opacity flex items-center gap-1 mt-1">
+    <div className="flex items-center gap-2 mt-2 text-[10.5px] font-mono leading-none" style={{ color: 'var(--theme-muted)' }}>
+      {meta?.model && <span className="opacity-70 truncate max-w-[220px]">{meta.model}</span>}
+      {typeof tps === 'number' && tps > 0 && (<><span className="opacity-25">·</span><span className="opacity-70">{tps.toFixed(1)} tok/s</span></>)}
+      {time && (<><span className="opacity-25">·</span><span className="opacity-50">{time}</span></>)}
       <button
         onClick={onCopy}
-        className="flex items-center gap-1 px-1.5 py-1 rounded text-[10.5px] hover:bg-white/[0.04] focus-ring"
+        className="ml-1 flex items-center gap-1 px-1.5 py-0.5 rounded opacity-0 group-hover/msg:opacity-100 transition-opacity hover:bg-white/[0.06] focus-ring"
         style={{ color: 'var(--theme-muted)' }}
         title={copied ? 'Copied!' : 'Copy message'}
       >
         {copied ? <Check size={11} /> : <Copy size={11} />}
         <span>{copied ? 'Copied' : 'Copy'}</span>
       </button>
+    </div>
+  )
+}
+
+/** Assistant message frame: a left role-marker gutter + content column with a
+ *  metadata footer. Gives each turn clear authorship and visual rhythm. */
+function AssistantShell({ children, plain, meta, timestamp }: { children: React.ReactNode; plain: string; meta?: ChatMessage['meta']; timestamp?: number }) {
+  return (
+    <div className="mb-6 animate-fade-in group/msg flex gap-3">
+      <div className="shrink-0 mt-0.5">
+        <div
+          className="w-[22px] h-[22px] rounded-md flex items-center justify-center font-mono text-[10px] font-bold select-none"
+          style={{ backgroundColor: 'color-mix(in srgb, var(--theme-primary) 16%, transparent)', color: 'var(--theme-primary)', boxShadow: 'inset 0 1px 0 0 var(--sheen)' }}
+          aria-hidden
+        >{'>_'}</div>
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="space-y-2">{children}</div>
+        {plain && <MessageFooter rawText={plain} meta={meta} timestamp={timestamp} />}
+      </div>
     </div>
   )
 }
@@ -223,14 +248,17 @@ function MessageBubbleInner({ message }: MessageBubbleProps) {
     const hasImages = !!message.images && message.images.length > 0
     const hasText = !!message.content
     return (
-      <div className="mb-5 animate-fade-in flex flex-col items-end">
+      <div className="mb-6 animate-fade-in flex flex-col items-end">
         {hasImages && <UserImageGrid images={message.images!} />}
         {hasText && (
           <div
-            className="max-w-[85%] rounded-2xl px-4 py-2.5 text-[14px] leading-[1.55] whitespace-pre-wrap"
+            className="max-w-[85%] rounded-2xl rounded-br-md px-4 py-2.5 text-[14px] leading-[1.55] whitespace-pre-wrap"
             style={{
               backgroundColor: 'var(--theme-bubble)',
+              backgroundImage: 'linear-gradient(180deg, color-mix(in srgb, var(--theme-text) 5%, transparent), transparent 60%)',
               color: 'var(--theme-text)',
+              border: '1px solid var(--theme-hairline)',
+              boxShadow: 'var(--shadow-1), inset 0 1px 0 0 var(--sheen)',
             }}
           >
             {message.content}
@@ -246,30 +274,23 @@ function MessageBubbleInner({ message }: MessageBubbleProps) {
     // temporal interleaving of text and tool calls that actually happened.
     if (message.segments && message.segments.length > 0) {
       return (
-        <div className="mb-5 animate-fade-in group/msg">
-          <div className="space-y-2">
-            {message.segments.map((seg) => {
-              if (seg.kind === 'thinking') return <ThinkingBlock key={seg.id} text={seg.content} />
-              if (seg.kind === 'tool') return <ToolCallBlock key={seg.id} call={seg.call} />
-              return <MarkdownText key={seg.id} text={seg.content} />
-            })}
-          </div>
-          {plain && <MessageActions rawText={plain} />}
-        </div>
+        <AssistantShell plain={plain} meta={message.meta} timestamp={message.timestamp}>
+          {message.segments.map((seg) => {
+            if (seg.kind === 'thinking') return <ThinkingBlock key={seg.id} text={seg.content} />
+            if (seg.kind === 'tool') return <ToolCallBlock key={seg.id} call={seg.call} />
+            return <MarkdownText key={seg.id} text={seg.content} />
+          })}
+        </AssistantShell>
       )
     }
 
     // Legacy fallback: messages persisted before the segment refactor.
-    const hasText = !!message.content
     const hasTools = !!message.toolCalls?.length
     return (
-      <div className="mb-5 animate-fade-in group/msg">
-        <div className="space-y-2">
-          {hasTools && message.toolCalls!.map((tc) => <ToolCallBlock key={tc.id} call={tc} />)}
-          {hasText && <MarkdownText text={message.content} />}
-        </div>
-        {hasText && <MessageActions rawText={message.content} />}
-      </div>
+      <AssistantShell plain={message.content} meta={message.meta} timestamp={message.timestamp}>
+        {hasTools && message.toolCalls!.map((tc) => <ToolCallBlock key={tc.id} call={tc} />)}
+        {!!message.content && <MarkdownText text={message.content} />}
+      </AssistantShell>
     )
   }
 

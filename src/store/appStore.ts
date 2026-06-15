@@ -704,6 +704,11 @@ export const useAppStore = create<AppState>((set, get) => ({
             timestamp: Date.now(),
             toolCalls: s.currentToolCalls.length > 0 ? s.currentToolCalls : undefined,
             segments: s.currentSegments.length > 0 ? s.currentSegments : undefined,
+            meta: {
+              model: s.activeSession.model,
+              tokensPerSecond: stats?.tokensPerSecond ?? s.currentStats?.tokensPerSecond ?? null,
+              completionTokens: usage.completionTokens,
+            },
           }
           const updatedSession: Session = {
             ...s.activeSession,

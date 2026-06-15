@@ -189,7 +189,7 @@ function startDemoStream(sessionId: string) {
 }
 function stopDemoStream(sessionId: string, fullText: string) {
   if (demoTimer) { clearInterval(demoTimer); demoTimer = null }
-  emitAgent('done', { sessionId, text: fullText, usage: { promptTokens: 900, completionTokens: 320 }, stats: null })
+  emitAgent('done', { sessionId, text: fullText, usage: { promptTokens: 900, completionTokens: 320, cost: 0 }, stats: { tokensPerSecond: 48.6, contextWindow: 32000, isLocal: true } })
 }
 
 export function installBrowserMock(): void {

@@ -462,8 +462,7 @@ export function InputArea({
         className="input-shell relative rounded-2xl transition-all duration-150"
         style={{
           backgroundColor: 'var(--theme-bg-raised)',
-          border: '1px solid transparent',
-          boxShadow: '0 1px 0 0 var(--theme-hairline) inset',
+          border: '1px solid var(--theme-hairline)',
         }}
       >
         {(hasAttachments || attachBusy) && (

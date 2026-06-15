@@ -660,16 +660,22 @@ function EmptyState({ onNewSession }: { onNewSession: () => void }) {
   return (
     <div className="h-full flex items-center justify-center">
       <div className="text-center max-w-sm px-6 animate-fade-in">
-        <div
-          className="w-14 h-14 rounded-2xl mx-auto mb-5 flex items-center justify-center font-mono text-[20px] font-bold select-none"
-          style={{
-            backgroundColor: 'color-mix(in srgb, var(--theme-primary) 12%, transparent)',
-            border: '1px solid color-mix(in srgb, var(--theme-primary) 30%, transparent)',
-            color: 'var(--theme-primary)',
-            boxShadow: '0 8px 32px -8px color-mix(in srgb, var(--theme-primary) 35%, transparent)',
-          }}
-        >
-          {'>_'}
+        <div className="relative mx-auto mb-6 w-14 h-14">
+          <div
+            className="absolute -inset-7 rounded-full pointer-events-none animate-pulse"
+            style={{ background: 'radial-gradient(circle, color-mix(in srgb, var(--theme-primary) 22%, transparent), transparent 70%)', animationDuration: '4s' }}
+          />
+          <div
+            className="relative w-14 h-14 rounded-2xl flex items-center justify-center font-mono text-[20px] font-bold select-none"
+            style={{
+              backgroundColor: 'color-mix(in srgb, var(--theme-primary) 14%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--theme-primary) 32%, transparent)',
+              color: 'var(--theme-primary)',
+              boxShadow: '0 8px 32px -8px color-mix(in srgb, var(--theme-primary) 42%, transparent), inset 0 1px 0 0 var(--sheen)',
+            }}
+          >
+            {'>_'}
+          </div>
         </div>
         <h2 className="text-[26px] font-semibold mb-1 tracking-tight">
           codemaxxing

@@ -26,6 +26,18 @@
      don't turn every box into a loud outline. */
   --theme-hairline: color-mix(in srgb, var(--theme-border) 35%, transparent);
   --theme-hairline-strong: color-mix(in srgb, var(--theme-border) 55%, transparent);
+
+  /* Elevation system — mode-agnostic dark drop shadows (read on light too)
+     plus a polarity-aware top sheen for raised surfaces. Used via .elev /
+     .elev-pop / .sheen so depth is consistent across all 17 palettes. */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.22), 0 6px 18px -10px rgba(0, 0, 0, 0.45);
+  --shadow-2: 0 2px 8px rgba(0, 0, 0, 0.28), 0 18px 44px -18px rgba(0, 0, 0, 0.58);
+  --sheen: color-mix(in srgb, var(--theme-text) 8%, transparent);
+}
+:root[data-theme-mode="light"] {
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.06), 0 8px 24px -14px rgba(0, 0, 0, 0.18);
+  --shadow-2: 0 2px 8px rgba(0, 0, 0, 0.08), 0 20px 48px -20px rgba(0, 0, 0, 0.22);
+  --sheen: rgba(255, 255, 255, 0.9);
 }
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -55,41 +67,56 @@
    page background. On light themes the existing rule still works
    correctly (--theme-bg is white), so no extra override needed there. */
 
-/* ── Ambient theme backdrops ─────────────────────────────────────────────
-   Layered background-images on the app shell, built ENTIRELY from theme
-   variables so every palette gets a matching mood with zero per-theme art.
-   Which layer-set applies is chosen by applyThemeToDom via data-backdrop:
-     aurora    (dark default)  soft primary/secondary glows + edge vignette
-     soft      (light default) whisper-faint glows only
-     grid      (synthwave/cyberpunk) glows + a fine line grid
-     scanlines (hacker) CRT-style horizontal lines + phosphor glow
+/* ── Atmosphere: theme-driven backdrops + film grain ─────────────────────
+   The shell paints a layered, theme-colored glow as its own background (so it
+   sits behind all content), chosen by applyThemeToDom via data-backdrop:
+     aurora    (dark default)  primary/secondary glows + center vignette
+     soft      (light default) gentler glows tuned for white backgrounds
+     grid      (synthwave/cyberpunk) glows + a fine neon line grid
+     scanlines (hacker) CRT lines + phosphor glow
      none      (mono, high-contrast) flat — decoration off on purpose
-   All decorative layers sit at 3-9% opacity: ambiance, never competition
-   with text. Static gradients only — no animation, no paint cost while
-   idle, no GPU-hungry blur layers. */
+   Boosted from the original near-invisible opacities to actually read while
+   staying ambient (text never fights them). Static gradients only — zero
+   idle paint cost. A faint fractal-noise grain (::before, z-index -1) sits
+   just above the glow for premium texture across every palette. */
+.app-shell { position: relative; isolation: isolate; }
+.app-shell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 160px 160px;
+  opacity: 0.04;
+  mix-blend-mode: soft-light;
+}
+:root[data-theme-mode="light"] .app-shell::before { opacity: 0.06; mix-blend-mode: multiply; }
+
 :root[data-backdrop="aurora"] .app-shell {
   background-image:
-    radial-gradient(ellipse 80% 60% at 85% -10%, color-mix(in srgb, var(--theme-primary) 8%, transparent), transparent 60%),
-    radial-gradient(ellipse 70% 55% at -10% 110%, color-mix(in srgb, var(--theme-secondary) 6%, transparent), transparent 60%),
-    radial-gradient(ellipse 130% 110% at 50% 50%, transparent 55%, color-mix(in srgb, var(--theme-bg-subtle) 55%, transparent) 100%);
+    radial-gradient(ellipse 90% 60% at 88% -12%, color-mix(in srgb, var(--theme-primary) 20%, transparent), transparent 56%),
+    radial-gradient(ellipse 85% 60% at -12% 112%, color-mix(in srgb, var(--theme-secondary) 15%, transparent), transparent 58%),
+    radial-gradient(ellipse 60% 45% at 60% 8%, color-mix(in srgb, var(--theme-primary) 7%, transparent), transparent 60%),
+    radial-gradient(ellipse 140% 120% at 50% 45%, transparent 50%, color-mix(in srgb, var(--theme-bg-subtle) 65%, transparent) 100%);
 }
 :root[data-backdrop="soft"] .app-shell {
   background-image:
-    radial-gradient(ellipse 75% 55% at 80% -10%, color-mix(in srgb, var(--theme-primary) 5%, transparent), transparent 60%),
-    radial-gradient(ellipse 65% 50% at 0% 110%, color-mix(in srgb, var(--theme-secondary) 4%, transparent), transparent 60%);
+    radial-gradient(ellipse 80% 55% at 85% -12%, color-mix(in srgb, var(--theme-primary) 12%, transparent), transparent 58%),
+    radial-gradient(ellipse 70% 52% at -8% 112%, color-mix(in srgb, var(--theme-secondary) 9%, transparent), transparent 58%);
 }
 :root[data-backdrop="grid"] .app-shell {
   background-image:
-    linear-gradient(color-mix(in srgb, var(--theme-primary) 4%, transparent) 1px, transparent 1px),
-    linear-gradient(90deg, color-mix(in srgb, var(--theme-primary) 4%, transparent) 1px, transparent 1px),
-    radial-gradient(ellipse 85% 65% at 50% -15%, color-mix(in srgb, var(--theme-primary) 9%, transparent), transparent 65%),
-    radial-gradient(ellipse 70% 55% at 90% 115%, color-mix(in srgb, var(--theme-secondary) 7%, transparent), transparent 60%);
-  background-size: 42px 42px, 42px 42px, auto, auto;
+    linear-gradient(color-mix(in srgb, var(--theme-primary) 7%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--theme-primary) 7%, transparent) 1px, transparent 1px),
+    radial-gradient(ellipse 90% 65% at 50% -15%, color-mix(in srgb, var(--theme-primary) 22%, transparent), transparent 62%),
+    radial-gradient(ellipse 75% 60% at 90% 115%, color-mix(in srgb, var(--theme-secondary) 16%, transparent), transparent 60%);
+  background-size: 44px 44px, 44px 44px, auto, auto;
 }
 :root[data-backdrop="scanlines"] .app-shell {
   background-image:
-    repeating-linear-gradient(0deg, color-mix(in srgb, var(--theme-primary) 5%, transparent) 0 1px, transparent 1px 3px),
-    radial-gradient(ellipse 90% 70% at 50% -20%, color-mix(in srgb, var(--theme-primary) 7%, transparent), transparent 65%);
+    repeating-linear-gradient(0deg, color-mix(in srgb, var(--theme-primary) 7%, transparent) 0 1px, transparent 1px 3px),
+    radial-gradient(ellipse 95% 70% at 50% -18%, color-mix(in srgb, var(--theme-primary) 16%, transparent), transparent 62%);
 }
 /* data-backdrop="none" → flat var(--theme-bg), no extra layers. */
 
@@ -150,10 +177,26 @@
   /* Soft primary-tinted ring on the input shell when its textarea is focused.
      Replaces the old `focus-within:shadow-lg` + global outline stack that
      caused a double-box around the composer. */
+  /* Elevation utilities — consistent depth for panels, cards, composer, modals. */
+  .elev { box-shadow: var(--shadow-1); }
+  .elev-pop { box-shadow: var(--shadow-2); }
+  .surface {
+    background-image: linear-gradient(180deg, color-mix(in srgb, var(--theme-text) 3%, transparent), transparent 40%);
+    box-shadow: inset 0 1px 0 0 var(--sheen), var(--shadow-1);
+  }
+
+  /* Composer shell: resting elevation (top sheen + real lift) that strengthens
+     on focus into a primary-tinted ring. The component leaves box-shadow to
+     these rules (no inline shadow) so the class wins. */
+  .input-shell {
+    background-image: linear-gradient(180deg, color-mix(in srgb, var(--theme-text) 5%, transparent), transparent 46%);
+    box-shadow: inset 0 1px 0 0 var(--sheen), var(--shadow-2);
+  }
   .input-shell:focus-within {
-    border-color: color-mix(in srgb, var(--theme-primary) 30%, transparent);
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--theme-primary) 8%, transparent),
-                0 8px 24px -12px rgba(0, 0, 0, 0.4);
+    border-color: color-mix(in srgb, var(--theme-primary) 38%, transparent);
+    box-shadow: inset 0 1px 0 0 var(--sheen),
+                0 0 0 4px color-mix(in srgb, var(--theme-primary) 12%, transparent),
+                0 14px 34px -14px rgba(0, 0, 0, 0.5);
   }
 
   /* Soft box-shadow ring for bare buttons that have no other focus affordance.

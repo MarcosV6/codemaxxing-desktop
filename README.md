@@ -10,15 +10,33 @@ Native desktop app for [codemaxxing](https://github.com/MarcosV6/codemaxxing) �
 
 > _Looking for the terminal version? It lives at [MarcosV6/codemaxxing](https://github.com/MarcosV6/codemaxxing) — same brain, different surface._
 
+<p align="center">
+  <img src="docs/screenshots/hero.png" alt="codemaxxing desktop — an agentic coding workspace" width="820">
+</p>
+
 ## Why this exists
 
 Claude Desktop is locked to Anthropic. Codex Desktop is locked to OpenAI. Every other "AI assistant" app either ships you to one provider, or hides the agent loop behind a chat-only UX. The terminal `codemaxxing` solves the lock-in part — but a lot of people want a real GUI: drag-and-drop attachments, a sidebar of sessions, themes, command palette, dock notifications. So here's that.
 
 - **Any LLM.** Anthropic, OpenAI, OpenRouter, Qwen, GitHub Copilot, LM Studio, Ollama — and any custom OpenAI-compatible endpoint.
 - **Real agent loop.** Files, shell, git, web search, MCP servers. Plan mode. Approval modes (`suggest` / `auto-edit` / `full-auto`). Reasoning effort tiers.
-- **Local-first by default.** Sessions, memory (FTS5 search), checkpoints, and skills all live in a SQLite DB on your machine.
+- **Local-first by default.** Sessions, memory (FTS5 search), checkpoints, and skills all live in a SQLite DB on your machine. API keys are encrypted at rest via the OS keychain.
+- **A real workspace, not just chat.** Cookbook (find + run local models), Compare (judge models side-by-side), Deep Research (cited reports), plus Documents, Notes, Email, and Calendar — all theme-aware.
 - **Talk to it from anywhere.** A built-in HTTP+SSE remote API server with per-device pairing means a future phone client (or any tool) can drive the agent over your LAN or a tunnel.
 - **24/7-friendly.** Optional background mode — close the window, the agent keeps running. Tray icon, launch-at-login, never miss an approval.
+
+## Look & feel
+
+17 built-in themes, each with its own ambient backdrop + film grain. Distinctive typography (Geist + JetBrains Mono), real depth, and a floating composer with an inline Agent/Chat toggle.
+
+<p align="center">
+  <img src="docs/screenshots/chat-ember.png" alt="Chat — Ember theme, with role markers and per-message model/throughput" width="820">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/chat-synthwave.png" alt="Synthwave theme" width="405">
+  <img src="docs/screenshots/cookbook.png" alt="Cookbook — scan your hardware, recommend and run local models" width="405">
+</p>
 
 ## Install
 
@@ -94,6 +112,8 @@ The first thing to try: drop a file into the chat area. It becomes an `@mention`
 | | |
 |---|---|
 | **Agent loop** | files, shell, git, web search, MCP, plan mode, subagents |
+| **Workspaces** | Cookbook · Compare · Deep Research · Notes & Tasks · Documents · Email · Calendar — all theme-aware |
+| **Agent has eyes** | opens a live Preview and screenshots its own running UI to verify visually before saying "done" |
 | **Approval modes** | `suggest` (ask each tool) · `auto-edit` (auto file writes) · `full-auto` (sandboxed dirs only) |
 | **Reasoning** | per-session effort: off / low / medium / high / max — for models that support extended thinking |
 | **Sessions** | persistent SQLite, cross-session search, fork-and-compact, checkpoints |
@@ -102,8 +122,9 @@ The first thing to try: drop a file into the chat area. It becomes an `@mention`
 | **Hooks** | `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `SessionEnd` |
 | **Background agents** | headless tasks that run while you do something else |
 | **Cron** | scheduled tasks with full agent powers (`/cron`) |
-| **Themes** | 16 built-in, theme-aware everywhere |
-| **Slash commands** | `/diff` `/status` `/log` `/commit` `/push` `/undo` `/cost` `/compact` `/checkpoint` `/checkpoints` `/skills` `/think` `/memory` `/bg` `/cron` `/settings` `/help` |
+| **Resizable layout** | drag-resize + persisted sidebar and side panels |
+| **Themes** | 17 built-in, each with its own ambient backdrop + film grain |
+| **Slash commands** | `/diff` `/status` `/log` `/commit` `/push` `/undo` `/cost` `/compact` `/checkpoint` `/checkpoints` `/skills` `/think` `/memory` `/bg` `/cron` `/cookbook` `/compare` `/research` `/notes` `/docs` `/email` `/calendar` `/settings` `/help` |
 | **Remote API** | HTTP+SSE server with per-device pairing — any client can drive the agent. See [docs/REMOTE_API.md](docs/REMOTE_API.md) |
 | **24/7 mode** | keep agent alive when window is closed, launch at login, menubar/tray icon |
 

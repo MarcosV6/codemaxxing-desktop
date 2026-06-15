@@ -202,7 +202,9 @@ export function Layout() {
             style={{
               width: sidebarResize.width,
               backgroundColor: 'var(--theme-bg-subtle)',
+              backgroundImage: 'linear-gradient(180deg, color-mix(in srgb, var(--theme-text) 3%, transparent), transparent 26%)',
               borderRight: '1px solid var(--theme-hairline)',
+              boxShadow: 'inset -1px 0 0 0 var(--sheen)',
             }}
           >
             <ResizeHandle handleProps={sidebarResize.handleProps} label="sidebar" />
@@ -270,8 +272,11 @@ export function Layout() {
                     >
                       {active && (
                         <span
-                          className="absolute left-0 top-1.5 bottom-1.5 w-[2px] rounded-r-full"
-                          style={{ backgroundColor: 'var(--theme-primary)' }}
+                          className="absolute left-0 top-1 bottom-1 w-[3px] rounded-r-full"
+                          style={{
+                            backgroundColor: 'var(--theme-primary)',
+                            boxShadow: '0 0 10px 0 color-mix(in srgb, var(--theme-primary) 55%, transparent)',
+                          }}
                         />
                       )}
                       {(s as { mode?: 'code' | 'chat' }).mode === 'chat' && !isRenaming && (

@@ -2,6 +2,17 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Bundled fonts (offline, self-hosted — no runtime CDN) ───────────────────
+   JetBrains Mono = identity / code / labels (terminal-luxe character).
+   Geist = clean UI + body sans. Vite fingerprints these from src/assets/fonts
+   so they work in dev and in the packaged file:// build. */
+@font-face { font-family: 'Geist'; src: url('../assets/fonts/geist-400.woff2') format('woff2'); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Geist'; src: url('../assets/fonts/geist-500.woff2') format('woff2'); font-weight: 500; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Geist'; src: url('../assets/fonts/geist-600.woff2') format('woff2'); font-weight: 600; font-style: normal; font-display: swap; }
+@font-face { font-family: 'JetBrains Mono'; src: url('../assets/fonts/jbmono-400.woff2') format('woff2'); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: 'JetBrains Mono'; src: url('../assets/fonts/jbmono-500.woff2') format('woff2'); font-weight: 500; font-style: normal; font-display: swap; }
+@font-face { font-family: 'JetBrains Mono'; src: url('../assets/fonts/jbmono-700.woff2') format('woff2'); font-weight: 700; font-style: normal; font-display: swap; }
+
 /* Theme defaults — warmer, Claude-inspired dark palette (overridden by runtime theme) */
 :root {
   --theme-primary: #C78F5C;       /* warm tan accent */
@@ -93,6 +104,26 @@
 }
 :root[data-theme-mode="light"] .app-shell::before { opacity: 0.06; mix-blend-mode: multiply; }
 
+/* Slow ambient drift on one accent glow — compositor-only (transform), gentle,
+   behind content, and fully off for the flat themes + reduced-motion users. */
+.app-shell::after {
+  content: '';
+  position: absolute;
+  inset: -20%;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(ellipse 42% 38% at 50% 50%, color-mix(in srgb, var(--theme-primary) 13%, transparent), transparent 70%);
+  animation: auroraDrift 30s ease-in-out infinite alternate;
+}
+:root[data-backdrop="none"] .app-shell::after { display: none; }
+@keyframes auroraDrift {
+  0%   { transform: translate(-12%, -8%) scale(1); }
+  100% { transform: translate(14%, 10%) scale(1.18); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-shell::after { animation: none; }
+}
+
 :root[data-backdrop="aurora"] .app-shell {
   background-image:
     radial-gradient(ellipse 90% 60% at 88% -12%, color-mix(in srgb, var(--theme-primary) 20%, transparent), transparent 56%),
@@ -133,13 +164,14 @@
   body {
     background-color: var(--theme-bg);
     color: var(--theme-text);
-    font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+    font-family: 'Geist', ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
     font-size: 14px;
     line-height: 1.55;
   }
 
   code, pre, .font-mono {
-    font-family: 'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;
+    font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+    font-feature-settings: 'liga' 0; /* keep code literal — no ligature surprises */
   }
 
   ::-webkit-scrollbar {
@@ -184,6 +216,11 @@
     background-image: linear-gradient(180deg, color-mix(in srgb, var(--theme-text) 3%, transparent), transparent 40%);
     box-shadow: inset 0 1px 0 0 var(--sheen), var(--shadow-1);
   }
+
+  /* Hover-lift for cards / interactive tiles. Compositor-only. */
+  .lift { transition: transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.16s ease; }
+  .lift:hover { transform: translateY(-2px); box-shadow: var(--shadow-2); }
+  @media (prefers-reduced-motion: reduce) { .lift:hover { transform: none; } }
 
   /* Composer shell: resting elevation (top sheen + real lift) that strengthens
      on focus into a primary-tinted ring. The component leaves box-shadow to

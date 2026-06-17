@@ -291,10 +291,11 @@ function createWindow(): void {
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
-      // Defense-in-depth: we never load remote untrusted content (only our
-      // own dist), but force-disable webview tag and remote module to keep
-      // attack surface minimal.
-      webviewTag: false,
+      // The app shell itself loads only our own dist. webview is enabled for
+      // the built-in browser, which runs in an isolated `persist:cmx-browser`
+      // partition with no node integration; agent-driven navigation is gated
+      // to http(s) (see the browser_* tools).
+      webviewTag: true,
     },
   })
   mainWindow.on('ready-to-show', () => {

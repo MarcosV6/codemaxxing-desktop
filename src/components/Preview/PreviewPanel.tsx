@@ -10,9 +10,13 @@ import {
   Play,
   Square,
   Trash2,
+  Compass,
+  ChevronLeft,
+  ChevronRight,
+  X,
 } from 'lucide-react'
 
-type Tab = 'web' | 'run'
+type Tab = 'web' | 'run' | 'browser'
 
 const COMMON_PORTS = [3000, 5173, 8080, 8000, 4000, 4200, 5000, 8888]
 
@@ -50,6 +54,7 @@ export function PreviewPanel() {
         >
           <TabButton active={tab === 'web'} onClick={() => setTab('web')} icon={<Globe size={12} />} label="Web" />
           <TabButton active={tab === 'run'} onClick={() => setTab('run')} icon={<Terminal size={12} />} label="Run" />
+          <TabButton active={tab === 'browser'} onClick={() => setTab('browser')} icon={<Compass size={12} />} label="Browser" />
         </div>
         <button
           onClick={() => setPreviewOpen(false)}
@@ -65,8 +70,10 @@ export function PreviewPanel() {
       <div className="flex-1 overflow-hidden flex flex-col">
         {tab === 'web' ? (
           <WebTab />
-        ) : (
+        ) : tab === 'run' ? (
           <RunTab cwd={activeSession?.cwd ?? null} />
+        ) : (
+          <BrowserTab />
         )}
       </div>
     </aside>
@@ -216,6 +223,80 @@ interface LogLine {
   id: string
   kind: 'stdout' | 'stderr' | 'meta'
   text: string
+}
+
+// ─── Browser tab: a real embedded Chromium browser (<webview>) ───────────────
+// Isolated `persist:cmx-browser` partition (own cookies, no node integration).
+// The same webview is what the agent drives via the browser_* tools (Commit 2).
+function BrowserTab() {
+  const [url, setUrl] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [canBack, setCanBack] = useState(false)
+  const [canFwd, setCanFwd] = useState(false)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const webviewRef = useRef<any>(null)
+
+  const navigate = useCallback((raw: string) => {
+    let u = raw.trim()
+    if (!u) return
+    // bare domain → https; anything else → DuckDuckGo search
+    if (!/^https?:\/\//i.test(u)) {
+      u = /^[\w-]+(\.[\w-]+)+(\/|$|:)/.test(u) ? 'https://' + u : 'https://duckduckgo.com/?q=' + encodeURIComponent(u)
+    }
+    const wv = webviewRef.current
+    if (wv) { try { wv.loadURL(u) } catch { wv.src = u } }
+    setUrl(u)
+  }, [])
+
+  useEffect(() => {
+    const wv = webviewRef.current
+    if (!wv) return
+    const onStart = () => setLoading(true)
+    const onStop = () => {
+      setLoading(false)
+      try { setCanBack(wv.canGoBack()); setCanFwd(wv.canGoForward()) } catch { /* not ready */ }
+    }
+    const onNav = (e: { url?: string }) => { if (e?.url) setUrl(e.url) }
+    wv.addEventListener('did-start-loading', onStart)
+    wv.addEventListener('did-stop-loading', onStop)
+    wv.addEventListener('did-navigate', onNav)
+    wv.addEventListener('did-navigate-in-page', onNav)
+    return () => {
+      wv.removeEventListener('did-start-loading', onStart)
+      wv.removeEventListener('did-stop-loading', onStop)
+      wv.removeEventListener('did-navigate', onNav)
+      wv.removeEventListener('did-navigate-in-page', onNav)
+    }
+  }, [])
+
+  return (
+    <>
+      <div className="flex items-center gap-1 px-2.5 py-2 shrink-0" style={{ borderBottom: '1px solid var(--theme-border)' }}>
+        <button onClick={() => webviewRef.current?.goBack()} disabled={!canBack} className="w-7 h-7 rounded-md flex items-center justify-center hover:bg-white/5 disabled:opacity-30 transition-colors" style={{ color: 'var(--theme-muted)' }} title="Back"><ChevronLeft size={15} /></button>
+        <button onClick={() => webviewRef.current?.goForward()} disabled={!canFwd} className="w-7 h-7 rounded-md flex items-center justify-center hover:bg-white/5 disabled:opacity-30 transition-colors" style={{ color: 'var(--theme-muted)' }} title="Forward"><ChevronRight size={15} /></button>
+        <button onClick={() => (loading ? webviewRef.current?.stop() : webviewRef.current?.reload())} className="w-7 h-7 rounded-md flex items-center justify-center hover:bg-white/5 transition-colors" style={{ color: 'var(--theme-muted)' }} title={loading ? 'Stop' : 'Reload'}>{loading ? <X size={14} /> : <RotateCw size={13} />}</button>
+        <input
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') navigate(url) }}
+          placeholder="Search or enter address"
+          className="flex-1 rounded-md px-2.5 py-1.5 text-[12px] outline-none"
+          style={{ backgroundColor: 'var(--theme-bg)', color: 'var(--theme-text)', border: '1px solid var(--theme-border)' }}
+        />
+      </div>
+      <div className="flex-1 relative" style={{ backgroundColor: '#ffffff' }}>
+        {loading && <div className="absolute top-0 left-0 right-0 h-0.5 z-10 animate-pulse" style={{ backgroundColor: 'var(--theme-primary)' }} />}
+        {React.createElement('webview', {
+          ref: webviewRef,
+          src: 'about:blank',
+          partition: 'persist:cmx-browser',
+          allowpopups: 'true',
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          style: { width: '100%', height: '100%', border: 'none', display: 'flex' } as any,
+        })}
+      </div>
+    </>
+  )
 }
 
 function RunTab({ cwd }: { cwd: string | null }) {

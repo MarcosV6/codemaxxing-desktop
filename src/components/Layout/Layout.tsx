@@ -390,7 +390,7 @@ export function Layout() {
         )}
 
         {/* Chat pane */}
-        <div className="flex-1 flex flex-col overflow-hidden relative">
+        <div className="flex-1 flex flex-col overflow-hidden relative min-w-[360px]">
           {/* Top bar */}
           <header
             className={`h-12 flex items-center justify-between pr-3 shrink-0 ${sidebarOpen ? 'pl-4' : 'pl-[84px]'}`}

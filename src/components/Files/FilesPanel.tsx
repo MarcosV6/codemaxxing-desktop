@@ -766,9 +766,10 @@ export function FilesPanel() {
 
   return (
     <aside
-      className="relative flex flex-col shrink-0 h-full"
+      className="relative flex flex-col h-full"
       style={{
         width: filesResize.width,
+        minWidth: 240,
         backgroundColor: 'var(--theme-bg-subtle)',
         borderLeft: '1px solid var(--theme-border)',
       }}

@@ -14,8 +14,8 @@ export function BrowserChatDock({ onNewSession }: { onNewSession: () => void }) 
 
   return (
     <aside
-      className="relative flex flex-col shrink-0 h-full"
-      style={{ width: dock.width, backgroundColor: 'var(--theme-bg-subtle)', borderLeft: '1px solid var(--theme-border)' }}
+      className="relative flex flex-col h-full"
+      style={{ width: dock.width, minWidth: 300, backgroundColor: 'var(--theme-bg-subtle)', borderLeft: '1px solid var(--theme-border)' }}
     >
       <ResizeHandle handleProps={dock.handleProps} label="chat dock" />
       <div className="h-10 flex items-center gap-2 px-3 shrink-0" style={{ borderBottom: '1px solid var(--theme-hairline)' }}>

@@ -33,9 +33,10 @@ export function PreviewPanel() {
 
   return (
     <aside
-      className="relative flex flex-col shrink-0 h-full"
+      className="relative flex flex-col h-full"
       style={{
         width: previewResize.width,
+        minWidth: 300,
         backgroundColor: 'var(--theme-bg-subtle)',
         borderLeft: '1px solid var(--theme-border)',
       }}

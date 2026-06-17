@@ -72,6 +72,8 @@ export interface AgentEvents {
   // Preview bridges (wired in main; let the agent show + see its running work)
   onOpenPreview?: (url: string) => void
   onCapturePreview?: (url?: string) => Promise<{ ok: boolean; mime?: string; base64?: string; error?: string }>
+  // Built-in browser bridge — agent drives the same webview the user sees.
+  onBrowserCommand?: (cmd: { action: 'navigate' | 'read' | 'screenshot' | 'click'; url?: string; selector?: string; text?: string }) => Promise<{ ok: boolean; error?: string; title?: string; url?: string; text?: string; base64?: string }>
 }
 
 export type SessionMode = 'code' | 'chat'
@@ -564,6 +566,7 @@ export class CodingAgent {
       onPlanExit: this.events.onPlanExit,
       openPreview: this.events.onOpenPreview,
       capturePreview: this.events.onCapturePreview,
+      browserCommand: this.events.onBrowserCommand,
     }
   }
 

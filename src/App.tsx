@@ -6,6 +6,7 @@ export function App() {
   const init = useAppStore((s) => s.init)
   const initialized = useAppStore((s) => s.initialized)
   const openPreview = useAppStore((s) => s.openPreview)
+  const openBrowserPanel = useAppStore((s) => s.openBrowserPanel)
 
   useEffect(() => {
     void init()
@@ -17,6 +18,14 @@ export function App() {
     const api = (window as { electron?: { preview?: { onOpen?: (cb: (url: string) => void) => () => void } } }).electron?.preview
     return api?.onOpen?.((url) => openPreview(url))
   }, [openPreview])
+
+  // Agent → renderer: a browser_* tool fired — open/focus the Browser tab so
+  // the user watches the agent drive it. The webview itself is driven inside
+  // BrowserTab (which subscribes to browser.onCommand once mounted).
+  useEffect(() => {
+    const api = (window as { electron?: { browser?: { onOpen?: (cb: () => void) => () => void } } }).electron?.browser
+    return api?.onOpen?.(() => openBrowserPanel())
+  }, [openBrowserPanel])
 
   if (!initialized) {
     return (

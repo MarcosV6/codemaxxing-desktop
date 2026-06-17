@@ -260,6 +260,21 @@ contextBridge.exposeInMainWorld('electron', {
     onOpen: (cb: (url: string) => void) => on('preview:open', cb),
   },
 
+  // ── Built-in browser (agent drives the same <webview> the user sees) ──
+  browser: {
+    // main → renderer: the agent issued a command; drive the webview + reply.
+    onCommand: (
+      cb: (cmd: { id: string; action: 'navigate' | 'read' | 'screenshot' | 'click'; url?: string; selector?: string; text?: string }) => void,
+    ) => on('browser:command', cb),
+    // main → renderer: open/focus the Browser tab (idempotent).
+    onOpen: (cb: () => void) => on('browser:open', cb),
+    // renderer → main: result for a command, plus readiness lifecycle.
+    sendResult: (id: string, result: { ok: boolean; error?: string; title?: string; url?: string; text?: string; base64?: string }) =>
+      ipcRenderer.send('browser:result', id, result),
+    ready: () => ipcRenderer.send('browser:ready'),
+    closed: () => ipcRenderer.send('browser:closed'),
+  },
+
   // ── Notes & Tasks ──
   notes: {
     get: () => ipcRenderer.invoke('notes:get'),

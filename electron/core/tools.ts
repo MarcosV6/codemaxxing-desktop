@@ -281,6 +281,38 @@ export const FILE_TOOLS: ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'browser_navigate',
+      description: "Open a URL in the app's built-in browser (visible to the user). Use to research live docs, open a web app, or set up a page to read/screenshot/click. http(s) only.",
+      parameters: { type: 'object', properties: { url: { type: 'string', description: 'http(s) URL to open' } }, required: ['url'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_read',
+      description: 'Read the visible text of the page currently open in the built-in browser. Call browser_navigate first.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_screenshot',
+      description: 'Screenshot the page open in the built-in browser and SEE it — returned as an image you can analyze.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_click',
+      description: 'Click an element in the built-in browser by CSS selector or visible text (link/button), then read or screenshot the result.',
+      parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector to click' }, text: { type: 'string', description: 'Visible text of a link/button (used if selector omitted)' } } },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'glob',
       description:
         "Find files matching a glob pattern. Use this to locate files by name or extension across the project (e.g. '**/*.tsx', 'src/**/test.*', '*.json').",
@@ -582,6 +614,9 @@ export interface ToolExecContext {
   // image the model can analyze). Undefined outside a normal coding run.
   openPreview?: (url: string) => void
   capturePreview?: (url?: string) => Promise<{ ok: boolean; mime?: string; base64?: string; error?: string }>
+  // Drive the built-in browser (same webview the user sees). Round-trips to the
+  // renderer; resolves with the action's result (page text, screenshot, etc.).
+  browserCommand?: (cmd: { action: 'navigate' | 'read' | 'screenshot' | 'click'; url?: string; selector?: string; text?: string }) => Promise<{ ok: boolean; error?: string; title?: string; url?: string; text?: string; base64?: string }>
 }
 
 export async function executeTool(
@@ -800,6 +835,40 @@ export async function executeTool(
         return `Could not capture the preview: ${res.error ?? 'no preview URL — call open_preview first or pass a url'}`
       }
       return JSON.stringify({ type: 'image', mime: res.mime ?? 'image/png', base64: res.base64, source: 'preview' })
+    }
+
+    case 'browser_navigate': {
+      if (!ctx.browserCommand) return 'The built-in browser is not available in this environment.'
+      const url = String(args.url ?? '').trim()
+      // Gate to http(s): no file://, javascript:, data:, etc.
+      if (!/^https?:\/\//i.test(url)) return "Error: browser_navigate needs an http(s) URL (got '" + url + "')."
+      const r = await ctx.browserCommand({ action: 'navigate', url })
+      if (!r.ok) return `Could not open ${url}: ${r.error ?? 'unknown error'}`
+      return `Opened in the browser — ${r.title || '(untitled)'}\n${r.url || url}\n\nUse browser_read to read it, browser_screenshot to see it, or browser_click to interact.`
+    }
+
+    case 'browser_read': {
+      if (!ctx.browserCommand) return 'The built-in browser is not available in this environment.'
+      const r = await ctx.browserCommand({ action: 'read' })
+      if (!r.ok) return `Could not read the page: ${r.error ?? 'unknown error'} (call browser_navigate first).`
+      return `# ${r.title || r.url || 'Page'}\n${r.url || ''}\n\n${r.text || '(no readable text on this page)'}`
+    }
+
+    case 'browser_screenshot': {
+      if (!ctx.browserCommand) return 'The built-in browser is not available in this environment.'
+      const r = await ctx.browserCommand({ action: 'screenshot' })
+      if (!r.ok || !r.base64) return `Could not screenshot the page: ${r.error ?? 'unknown error'} (call browser_navigate first).`
+      return JSON.stringify({ type: 'image', mime: 'image/png', base64: r.base64, source: 'browser' })
+    }
+
+    case 'browser_click': {
+      if (!ctx.browserCommand) return 'The built-in browser is not available in this environment.'
+      const selector = args.selector ? String(args.selector) : undefined
+      const text = args.text ? String(args.text) : undefined
+      if (!selector && !text) return "Error: browser_click needs a 'selector' or 'text'."
+      const r = await ctx.browserCommand({ action: 'click', selector, text })
+      if (!r.ok) return `Could not click: ${r.error ?? 'no matching element'}.`
+      return 'Clicked. Use browser_read or browser_screenshot to see what changed.'
     }
 
     case 'glob': {

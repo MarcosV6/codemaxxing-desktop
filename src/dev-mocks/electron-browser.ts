@@ -284,6 +284,19 @@ export function installBrowserMock(): void {
       },
     },
 
+    // No <webview> in a plain browser — these are inert mocks so the UI boots.
+    browser: {
+      onCommand: () => () => {},
+      onOpen: (cb: () => void) => {
+        const w = window as unknown as { __fireBrowserOpen?: () => void }
+        w.__fireBrowserOpen = () => cb()
+        return () => {}
+      },
+      sendResult: () => {},
+      ready: () => {},
+      closed: () => {},
+    },
+
     agent: {
       send: (opts: { sessionId?: string }) => {
         if (opts?.sessionId) startDemoStream(opts.sessionId)

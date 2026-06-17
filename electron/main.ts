@@ -753,6 +753,55 @@ function emit(channel: string, ...args: any[]) {
   }
 }
 
+// ─── Built-in browser bridge ─────────────────────────────────────────────────
+// The agent drives the SAME <webview> the user sees (Preview → Browser tab).
+// Each browser_* tool round-trips here: make sure the Browser tab is open, wait
+// for the renderer to report ready, send the command, resolve with what the
+// renderer posts back. Mirrors the onAskUser pending-map round-trip.
+type BrowserResult = { ok: boolean; error?: string; title?: string; url?: string; text?: string; base64?: string }
+const pendingBrowserCmds = new Map<string, (r: BrowserResult) => void>()
+let browserReady = false
+let browserReadyWaiters: Array<() => void> = []
+
+ipcMain.on('browser:ready', () => {
+  browserReady = true
+  const waiters = browserReadyWaiters
+  browserReadyWaiters = []
+  waiters.forEach((fn) => fn())
+})
+ipcMain.on('browser:closed', () => { browserReady = false })
+ipcMain.on('browser:result', (_e, id: string, result: BrowserResult) => {
+  const resolve = pendingBrowserCmds.get(id)
+  if (resolve) { pendingBrowserCmds.delete(id); resolve(result) }
+})
+
+function waitForBrowserReady(timeoutMs = 4000): Promise<void> {
+  if (browserReady) return Promise.resolve()
+  return new Promise((resolve) => {
+    const done = () => { clearTimeout(timer); resolve() }
+    const timer = setTimeout(() => {
+      browserReadyWaiters = browserReadyWaiters.filter((fn) => fn !== done)
+      resolve() // proceed anyway; the command will time out if truly unavailable
+    }, timeoutMs)
+    browserReadyWaiters.push(done)
+  })
+}
+
+async function browserCommand(
+  cmd: { action: 'navigate' | 'read' | 'screenshot' | 'click'; url?: string; selector?: string; text?: string },
+): Promise<BrowserResult> {
+  emit('browser:open') // open the Preview panel + select Browser tab (idempotent)
+  await waitForBrowserReady()
+  const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  return await new Promise<BrowserResult>((resolve) => {
+    const timeout = setTimeout(() => {
+      if (pendingBrowserCmds.delete(id)) resolve({ ok: false, error: 'Browser command timed out (is the Browser tab reachable?).' })
+    }, cmd.action === 'navigate' ? 30_000 : 20_000)
+    pendingBrowserCmds.set(id, (r) => { clearTimeout(timeout); resolve(r) })
+    emit('browser:command', { id, ...cmd })
+  })
+}
+
 /** Make sure the desktop window is visible and focused. Called when an
  *  agent event needs immediate user attention (approval, ask-user). Cheap
  *  to call when the window is already up — `show()` + `focus()` are no-ops
@@ -1186,6 +1235,7 @@ function setupIPC(): void {
           emit('preview:open', target) // show the user the same page the agent is capturing
           return await captureUrlOffscreen(target)
         },
+        onBrowserCommand: browserCommand,
         onPlanExit: (plan) => emit('agent:planExit', { sessionId: opts.sessionId, plan }),
         onUsage: (u) => emit('agent:usage', { sessionId: opts.sessionId, usage: u }),
         onStats: (s) => emit('agent:stats', { sessionId: opts.sessionId, stats: s }),

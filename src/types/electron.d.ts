@@ -319,6 +319,17 @@ export interface ElectronAPI {
     onOpen: (cb: (url: string) => void) => () => void
   }
 
+  // Built-in browser — agent drives the same <webview> the user sees
+  browser: {
+    onCommand: (
+      cb: (cmd: { id: string; action: 'navigate' | 'read' | 'screenshot' | 'click'; url?: string; selector?: string; text?: string }) => void,
+    ) => () => void
+    onOpen: (cb: () => void) => () => void
+    sendResult: (id: string, result: { ok: boolean; error?: string; title?: string; url?: string; text?: string; base64?: string }) => void
+    ready: () => void
+    closed: () => void
+  }
+
   // Notes & Tasks — JSON-backed quick capture
   notes: {
     get: () => Promise<{ ok: boolean; notes: Array<{ id: string; text: string; createdAt: number }>; tasks: Array<{ id: string; text: string; done: boolean; createdAt: number }> }>

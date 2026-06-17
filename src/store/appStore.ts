@@ -170,6 +170,7 @@ interface AppState {
   calendarOpen: boolean
   previewOpen: boolean
   previewUrl: string | null
+  previewTab: 'web' | 'run' | 'browser' | null
   filesPanelOpen: boolean
   activeDrawer: DrawerKind
   commandPaletteOpen: boolean
@@ -255,6 +256,8 @@ interface AppState {
   togglePreview: () => void
   setPreviewOpen: (open: boolean) => void
   openPreview: (url: string) => void
+  setPreviewTab: (tab: 'web' | 'run' | 'browser' | null) => void
+  openBrowserPanel: () => void
   toggleFilesPanel: () => void
   setFilesPanelOpen: (open: boolean) => void
   setDrawer: (drawer: DrawerKind) => void
@@ -540,6 +543,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   calendarOpen: false,
   previewOpen: false,
   previewUrl: null,
+  previewTab: null,
   filesPanelOpen: false,
   activeDrawer: null,
   commandPaletteOpen: false,
@@ -1547,6 +1551,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   togglePreview: () => set((s) => ({ previewOpen: !s.previewOpen })),
   setPreviewOpen: (open: boolean) => set({ previewOpen: open }),
   openPreview: (url: string) => set({ previewOpen: true, previewUrl: url }),
+  setPreviewTab: (tab) => set({ previewTab: tab }),
+  openBrowserPanel: () => set({ previewOpen: true, previewTab: 'browser' }),
   toggleFilesPanel: () => set((s) => ({ filesPanelOpen: !s.filesPanelOpen })),
   setFilesPanelOpen: (open: boolean) => set({ filesPanelOpen: open }),
   setDrawer: (drawer) => set({ activeDrawer: drawer }),

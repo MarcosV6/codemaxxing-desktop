@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App'
+import { ErrorBoundary } from './components/Shared/ErrorBoundary'
 import './styles/globals.css'
 import { useAppStore } from './store/appStore'
 
@@ -16,6 +17,8 @@ void useAppStore.getState().init()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 )

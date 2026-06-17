@@ -33,6 +33,7 @@ import type { ChatCompletionMessageParam } from 'openai/resources/chat/completio
 
 import { CodingAgent, type ApprovalResult, type ApprovalMode, type ReasoningEffort } from './core/agent.js'
 import { buildSystemPrompt, buildChatModePrompt } from './core/prompt.js'
+import { diffBitmaps } from './core/pixelmatch.js'
 import * as sessions from './core/sessions.js'
 import * as auth from './core/auth.js'
 import { loginAnthropicOAuth } from './core/anthropicOAuth.js'
@@ -743,6 +744,32 @@ async function captureUrlOffscreen(url: string): Promise<{ ok: boolean; mime?: s
   }
 }
 
+// Visual pixel-match (agent "eyes"): capture the running UI and diff it against
+// a target design image on disk. nativeImage gives raw BGRA bitmaps with no
+// extra deps; the pure diff lives in core/pixelmatch.
+async function pixelMatch(opts: { url?: string; targetPath: string }): Promise<{ ok: boolean; matchPercent?: number; diffPercent?: number; regions?: Array<{ name: string; diffPercent: number }>; error?: string }> {
+  const target = (opts.targetPath || '').trim()
+  if (!target) return { ok: false, error: 'No target image path.' }
+  const url = (opts.url || lastPreviewUrl || '').trim()
+  if (!url) return { ok: false, error: 'No URL to capture — open a preview first or pass a url.' }
+  lastPreviewUrl = url
+  emit('preview:open', url) // show the user the page being matched
+  const shot = await captureUrlOffscreen(url)
+  if (!shot.ok || !shot.base64) return { ok: false, error: shot.error || 'Could not capture the page.' }
+  try {
+    const current = nativeImage.createFromBuffer(Buffer.from(shot.base64, 'base64'))
+    const size = current.getSize()
+    if (!size.width || !size.height) return { ok: false, error: 'Captured image was empty.' }
+    let targetImg = nativeImage.createFromPath(target)
+    if (targetImg.isEmpty()) return { ok: false, error: `Could not read target image at ${target}` }
+    targetImg = targetImg.resize({ width: size.width, height: size.height })
+    const res = diffBitmaps(current.toBitmap(), targetImg.toBitmap(), size.width, size.height)
+    return { ok: true, matchPercent: res.matchPercent, diffPercent: res.diffPercent, regions: res.regions }
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) }
+  }
+}
+
 function emit(channel: string, ...args: any[]) {
   mainWindow?.webContents.send(channel, ...args)
   agentBus.emit(channel, ...args)
@@ -1236,6 +1263,7 @@ function setupIPC(): void {
           return await captureUrlOffscreen(target)
         },
         onBrowserCommand: browserCommand,
+        onPixelMatch: pixelMatch,
         onPlanExit: (plan) => emit('agent:planExit', { sessionId: opts.sessionId, plan }),
         onUsage: (u) => emit('agent:usage', { sessionId: opts.sessionId, usage: u }),
         onStats: (s) => emit('agent:stats', { sessionId: opts.sessionId, stats: s }),

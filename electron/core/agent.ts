@@ -74,6 +74,8 @@ export interface AgentEvents {
   onCapturePreview?: (url?: string) => Promise<{ ok: boolean; mime?: string; base64?: string; error?: string }>
   // Built-in browser bridge — agent drives the same webview the user sees.
   onBrowserCommand?: (cmd: { action: 'navigate' | 'read' | 'screenshot' | 'click'; url?: string; selector?: string; text?: string }) => Promise<{ ok: boolean; error?: string; title?: string; url?: string; text?: string; base64?: string }>
+  // Visual pixel-match — diff the running UI against a target design image.
+  onPixelMatch?: (opts: { url?: string; targetPath: string }) => Promise<{ ok: boolean; matchPercent?: number; diffPercent?: number; regions?: Array<{ name: string; diffPercent: number }>; error?: string }>
 }
 
 export type SessionMode = 'code' | 'chat'
@@ -567,6 +569,7 @@ export class CodingAgent {
       openPreview: this.events.onOpenPreview,
       capturePreview: this.events.onCapturePreview,
       browserCommand: this.events.onBrowserCommand,
+      pixelMatch: this.events.onPixelMatch,
     }
   }
 

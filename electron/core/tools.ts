@@ -313,6 +313,21 @@ export const FILE_TOOLS: ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'pixel_match',
+      description: 'Compare the running UI to a target design image and find where they differ. Screenshots a URL (or the last preview), diffs it against the target image on disk, and reports an overall match % plus which screen regions diverge most — so you can iterate toward the design.',
+      parameters: {
+        type: 'object',
+        properties: {
+          target: { type: 'string', description: 'Path to the target/design image (PNG/JPG) to match against' },
+          url: { type: 'string', description: 'URL to screenshot (e.g. http://localhost:3000). Omit to reuse the last opened preview.' },
+        },
+        required: ['target'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'glob',
       description:
         "Find files matching a glob pattern. Use this to locate files by name or extension across the project (e.g. '**/*.tsx', 'src/**/test.*', '*.json').",
@@ -617,6 +632,9 @@ export interface ToolExecContext {
   // Drive the built-in browser (same webview the user sees). Round-trips to the
   // renderer; resolves with the action's result (page text, screenshot, etc.).
   browserCommand?: (cmd: { action: 'navigate' | 'read' | 'screenshot' | 'click'; url?: string; selector?: string; text?: string }) => Promise<{ ok: boolean; error?: string; title?: string; url?: string; text?: string; base64?: string }>
+  // Visual pixel-match: screenshot a URL and diff it against a target design
+  // image on disk; reports overall match + per-region (3×3) differences.
+  pixelMatch?: (opts: { url?: string; targetPath: string }) => Promise<{ ok: boolean; matchPercent?: number; diffPercent?: number; regions?: Array<{ name: string; diffPercent: number }>; error?: string }>
 }
 
 export async function executeTool(
@@ -869,6 +887,18 @@ export async function executeTool(
       const r = await ctx.browserCommand({ action: 'click', selector, text })
       if (!r.ok) return `Could not click: ${r.error ?? 'no matching element'}.`
       return 'Clicked. Use browser_read or browser_screenshot to see what changed.'
+    }
+
+    case 'pixel_match': {
+      if (!ctx.pixelMatch) return 'Pixel-match is not available in this environment.'
+      const target = String(args.target ?? '').trim()
+      if (!target) return "Error: pixel_match needs a 'target' image path."
+      const url = args.url ? String(args.url).trim() : undefined
+      const r = await ctx.pixelMatch({ url, targetPath: target })
+      if (!r.ok) return `Could not pixel-match: ${r.error ?? 'unknown error'}`
+      const worst = (r.regions ?? []).filter((x) => x.diffPercent > 2).sort((a, b) => b.diffPercent - a.diffPercent).slice(0, 3)
+      const where = worst.length ? worst.map((w) => `${w.name} (${w.diffPercent.toFixed(0)}% off)`).join(', ') : 'negligible / evenly distributed'
+      return `Visual match vs ${target}: ${(r.matchPercent ?? 0).toFixed(1)}% (${(r.diffPercent ?? 0).toFixed(1)}% of pixels differ).\nBiggest differences: ${where}.\nAdjust those regions, then call pixel_match again to re-check.`
     }
 
     case 'glob': {

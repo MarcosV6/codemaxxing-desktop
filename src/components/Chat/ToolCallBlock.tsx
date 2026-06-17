@@ -146,6 +146,17 @@ function ToolCallBlockInner({ call }: { call: ToolCallRecord }) {
   const hasBody = !!(call.result || call.diff)
   const { Icon, accent, label } = toolKind(call.name)
   const running = call.status === 'running'
+  // Scannable change size for diffs (edit/write) — "+12 −3" on the row.
+  const diffStat = call.diff
+    ? call.diff.split('\n').reduce(
+        (acc, l) => {
+          if (l.startsWith('+') && !l.startsWith('+++')) acc.add++
+          else if (l.startsWith('-') && !l.startsWith('---')) acc.del++
+          return acc
+        },
+        { add: 0, del: 0 },
+      )
+    : null
 
   return (
     <div
@@ -176,6 +187,12 @@ function ToolCallBlockInner({ call }: { call: ToolCallRecord }) {
         {preview && (
           <span className="truncate flex-1 font-mono text-[11.5px]" style={{ color: 'var(--theme-text)', opacity: 0.8 }}>
             {preview}
+          </span>
+        )}
+        {diffStat && (diffStat.add > 0 || diffStat.del > 0) && (
+          <span className="shrink-0 font-mono text-[10.5px] flex items-center gap-1.5">
+            {diffStat.add > 0 && <span style={{ color: 'var(--theme-success)' }}>+{diffStat.add}</span>}
+            {diffStat.del > 0 && <span style={{ color: 'var(--theme-error)' }}>−{diffStat.del}</span>}
           </span>
         )}
         {running && (

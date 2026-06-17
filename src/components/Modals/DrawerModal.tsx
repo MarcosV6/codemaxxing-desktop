@@ -3,7 +3,7 @@ import { useAppStore } from '../../store/appStore'
 import {
   X, BookmarkCheck, Bot, Clock, Plus, Trash2, Loader2, CheckCircle2,
   AlertCircle, PlayCircle, BookOpen, Cpu, HardDrive, Download,
-  StickyNote, ListTodo, Circle,
+  StickyNote, ListTodo, Circle, Gauge, Scissors,
 } from 'lucide-react'
 import type { HardwareProfile, Recommendation, FitClass, PullProgress } from '../../types'
 
@@ -26,6 +26,7 @@ export function DrawerModal() {
     cron: { title: 'Scheduled tasks', icon: <Clock size={14} /> },
     cookbook: { title: 'Cookbook', icon: <BookOpen size={14} /> },
     notes: { title: 'Notes & Tasks', icon: <StickyNote size={14} /> },
+    cockpit: { title: 'Context cockpit', icon: <Gauge size={14} /> },
   } as const
   const meta = titleMap[activeDrawer]
 
@@ -59,6 +60,145 @@ export function DrawerModal() {
           {activeDrawer === 'cron' && <CronPane />}
           {activeDrawer === 'cookbook' && <CookbookPane />}
           {activeDrawer === 'notes' && <NotesPane />}
+          {activeDrawer === 'cockpit' && <CockpitPane />}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Context cockpit (glass-box: see the model's window + the levers) ─────────
+function estimateTokens(m: { content?: string; toolCalls?: Array<{ result?: string | null; diff?: string | null; args?: Record<string, unknown> }> }): number {
+  let chars = (m.content || '').length
+  for (const t of m.toolCalls || []) {
+    chars += (t.result || '').length + (t.diff || '').length + JSON.stringify(t.args || {}).length
+  }
+  return Math.max(1, Math.round(chars / 4))
+}
+
+function CockpitPane() {
+  const activeSession = useAppStore((s) => s.activeSession)
+  const currentStats = useAppStore((s) => s.currentStats)
+  const saveCheckpoint = useAppStore((s) => s.saveCheckpoint)
+  const compactSession = useAppStore((s) => s.compactSession)
+  const setDrawer = useAppStore((s) => s.setDrawer)
+  const [threshold, setThreshold] = useState(0.85)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+
+  // Pull the real auto-compact threshold (falls back to 0.85).
+  useEffect(() => {
+    window.electron.config.get()
+      .then((r) => { const t = (r?.config as any)?.autoCompactThreshold; if (typeof t === 'number') setThreshold(t) })
+      .catch(() => {})
+  }, [])
+
+  const messages = activeSession?.messages ?? []
+  const rows = useMemo(
+    () => messages.map((m) => ({
+      id: m.id,
+      type: m.type,
+      tokens: estimateTokens(m),
+      preview: (m.content || '').replace(/\s+/g, ' ').trim().slice(0, 80),
+    })),
+    [messages],
+  )
+
+  if (!activeSession) {
+    return <div className="text-[12.5px] opacity-50" style={{ color: 'var(--theme-muted)' }}>Open a session to inspect its context window.</div>
+  }
+
+  const windowSize = currentStats?.contextWindow || 128_000
+  const windowAssumed = !currentStats?.contextWindow
+  const convoTokens = rows.reduce((a, r) => a + r.tokens, 0)
+  // Rough fixed overhead for the system prompt + tool schemas (not visible here).
+  const overhead = activeSession.mode === 'chat' ? 600 : 3200
+  const total = convoTokens + overhead
+  const pct = Math.min(100, (total / windowSize) * 100)
+  const thresholdPct = threshold * 100
+  const overThreshold = pct >= thresholdPct
+
+  const color = (t: string) =>
+    t === 'user' ? 'var(--theme-primary)'
+      : t === 'assistant' ? 'var(--theme-secondary)'
+        : t === 'tool' ? 'var(--theme-tool)'
+          : 'var(--theme-error)'
+
+  return (
+    <div className="space-y-5">
+      {/* Budget gauge */}
+      <div>
+        <div className="flex items-baseline justify-between mb-1.5">
+          <span className="text-[11px] uppercase tracking-wider" style={{ color: 'var(--theme-muted)' }}>Context window</span>
+          <span className="text-[11.5px] font-mono" style={{ color: overThreshold ? 'var(--theme-warning)' : 'var(--theme-text)' }}>
+            ~{total.toLocaleString()} / {windowSize.toLocaleString()} ({pct.toFixed(1)}%)
+          </span>
+        </div>
+        <div className="relative h-3 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--theme-bg-subtle)', border: '1px solid var(--theme-border)' }}>
+          <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: overThreshold ? 'var(--theme-warning)' : 'var(--theme-primary)' }} />
+          <div className="absolute top-0 bottom-0" style={{ left: `${thresholdPct}%`, width: 2, backgroundColor: 'var(--theme-error)', opacity: 0.75 }} title={`Auto-compacts at ${thresholdPct.toFixed(0)}%`} />
+        </div>
+        <div className="flex items-center justify-between mt-1 text-[10px]" style={{ color: 'var(--theme-muted)' }}>
+          <span>{messages.length} msgs · ~{overhead.toLocaleString()}t instructions/tools{windowAssumed ? ' · window assumed' : ''}</span>
+          <span style={{ color: 'var(--theme-error)', opacity: 0.8 }}>compacts at {thresholdPct.toFixed(0)}%</span>
+        </div>
+      </div>
+
+      {/* Levers */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={async () => { setBusy('compact'); try { await compactSession(6) } finally { setBusy(null) } }}
+          disabled={busy !== null || messages.length < 4}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all disabled:opacity-40"
+          style={{ border: '1px solid var(--theme-border)', color: 'var(--theme-text)' }}
+          title="Summarize older turns into a fresh session, keeping the last few verbatim"
+        >
+          {busy === 'compact' ? <Loader2 size={13} className="animate-spin" /> : <Scissors size={13} />} Compact now
+        </button>
+        <button
+          onClick={async () => { setBusy('save'); try { await saveCheckpoint(activeSession.id); setSaved(true); setTimeout(() => setSaved(false), 1800) } finally { setBusy(null) } }}
+          disabled={busy !== null}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all disabled:opacity-40"
+          style={{ border: '1px solid var(--theme-border)', color: 'var(--theme-text)' }}
+          title="Snapshot this session so you can time-travel back to it"
+        >
+          {busy === 'save' ? <Loader2 size={13} className="animate-spin" /> : <BookmarkCheck size={13} />} {saved ? 'Saved!' : 'Checkpoint'}
+        </button>
+        <button
+          onClick={() => setDrawer('checkpoints')}
+          className="ml-auto text-[11.5px] underline-offset-2 hover:underline"
+          style={{ color: 'var(--theme-muted)' }}
+        >
+          Time-travel →
+        </button>
+      </div>
+
+      {/* Per-message breakdown */}
+      <div>
+        <div className="text-[11px] uppercase tracking-wider mb-2" style={{ color: 'var(--theme-muted)' }}>What&apos;s in the window</div>
+        {rows.length === 0 ? (
+          <div className="text-[12px] opacity-50" style={{ color: 'var(--theme-muted)' }}>No messages yet.</div>
+        ) : (
+          <div className="space-y-1.5">
+            {rows.map((r) => {
+              const rowPct = Math.min(100, (r.tokens / windowSize) * 100)
+              return (
+                <div key={r.id} className="rounded-lg px-2.5 py-1.5" style={{ backgroundColor: 'var(--theme-bg-subtle)', border: '1px solid var(--theme-border)' }}>
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <span className="text-[10px] uppercase tracking-wider font-mono" style={{ color: color(r.type) }}>{r.type}</span>
+                    <span className="text-[10.5px] font-mono" style={{ color: 'var(--theme-muted)' }}>~{r.tokens.toLocaleString()}t · {rowPct < 0.1 ? '<0.1' : rowPct.toFixed(1)}%</span>
+                  </div>
+                  {r.preview && <div className="text-[11.5px] truncate mb-1" style={{ color: 'var(--theme-text)', opacity: 0.7 }}>{r.preview}</div>}
+                  <div className="h-1 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--theme-bg)' }}>
+                    <div className="h-full rounded-full" style={{ width: `${Math.max(2, rowPct)}%`, backgroundColor: color(r.type), opacity: 0.6 }} />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+        <div className="mt-2 text-[10px]" style={{ color: 'var(--theme-muted)', opacity: 0.7 }}>
+          Estimates (~chars/4). The system prompt + tool schemas (~{overhead.toLocaleString()}t) aren&apos;t broken out.
         </div>
       </div>
     </div>

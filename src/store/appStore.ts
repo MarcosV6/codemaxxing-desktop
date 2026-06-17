@@ -99,7 +99,7 @@ export interface PendingPlan {
   plan: string
 }
 
-export type DrawerKind = 'checkpoints' | 'bg-agents' | 'cron' | 'cookbook' | 'notes' | null
+export type DrawerKind = 'checkpoints' | 'bg-agents' | 'cron' | 'cookbook' | 'notes' | 'cockpit' | null
 
 interface AppState {
   // ── Lifecycle ──
@@ -1437,6 +1437,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         get().setDrawer('notes')
         return true
       }
+      case 'context': case 'cockpit': {
+        get().setDrawer('cockpit')
+        return true
+      }
       case 'compare': case 'vs': case 'council': {
         get().openCompare()
         return true
@@ -1494,6 +1498,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             '- `/council` — best-of-N: several models answer, one synthesizes the best',
             '- `/research` — deep web research → a cited report',
             '- `/notes` — quick notes & tasks drawer',
+            '- `/context` — context cockpit: see the model\'s window + compact/checkpoint',
             '- `/docs` — AI-assisted documents editor',
             '- `/email` · `/calendar` — inbox & schedule (configure in-panel)',
           ].join('\n'),

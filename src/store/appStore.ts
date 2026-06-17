@@ -1437,7 +1437,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         get().setDrawer('notes')
         return true
       }
-      case 'compare': case 'vs': {
+      case 'compare': case 'vs': case 'council': {
         get().openCompare()
         return true
       }
@@ -1491,6 +1491,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             '- `/memory [query]` — stats or search',
             '- `/bg` · `/cron` · `/cookbook` — open drawers · `/settings` — open settings',
             '- `/compare` — run one prompt across multiple models side-by-side',
+            '- `/council` — best-of-N: several models answer, one synthesizes the best',
             '- `/research` — deep web research → a cited report',
             '- `/notes` — quick notes & tasks drawer',
             '- `/docs` — AI-assisted documents editor',

@@ -308,6 +308,12 @@ export interface ElectronAPI {
     run: (opts: { prompt: string; cwd?: string; entries: Array<{ provider: string; model: string }> }) => Promise<{ ok: boolean; results?: CompareResult[]; error?: string }>
   }
 
+  // Council — best-of-N: run on N models, then a chair critiques + synthesizes
+  council: {
+    run: (opts: { prompt: string; cwd?: string; entries: Array<{ provider: string; model: string }>; judge?: { provider: string; model: string } }) => Promise<{ ok: boolean; candidates?: CompareResult[]; verdict?: { provider: string; model: string; text: string }; error?: string }>
+    onProgress: (cb: (p: { stage: string }) => void) => () => void
+  }
+
   // Deep Research — plan → web search → read → synthesize a cited report
   research: {
     run: (opts: { sessionId?: string; provider?: string; model?: string; cwd?: string; query: string }) => Promise<{ ok: boolean; report?: string; promptTokens?: number; completionTokens?: number; error?: string }>

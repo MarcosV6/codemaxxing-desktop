@@ -1616,6 +1616,78 @@ function setupIPC(): void {
     return { ok: true, results }
   })
 
+  // ── Council — best-of-N: run the prompt on several models, then a "chair"
+  // model critiques every candidate and synthesizes one combined best answer.
+  ipcMain.handle('council:run', async (_e, opts: { prompt: string; cwd?: string; entries: Array<{ provider: string; model: string }>; judge?: { provider: string; model: string } }) => {
+    const appConfig = loadAppConfig()
+    const cwd = opts.cwd || homedir()
+    const entries = opts.entries || []
+    if (entries.length < 2) return { ok: false, error: 'Pick at least two models for the council.' }
+    const sendProgress = (stage: string) => mainWindow?.webContents.send('council:progress', { stage })
+
+    const runChat = async (entry: { provider: string; model: string }, systemPrompt: string, input: string) => {
+      const cred = auth.getCredential(entry.provider)
+      const route = providerRoute(entry.provider)
+      if (route.needsKey && !cred) return { ok: false as const, error: `No credentials for ${entry.provider}` }
+      const started = Date.now()
+      try {
+        const agent = new CodingAgent(
+          {
+            provider: route.providerType,
+            model: entry.model,
+            baseUrl: cred?.baseUrl || route.baseUrl,
+            apiKey: cred?.apiKey || 'not-needed',
+            cwd,
+            systemPrompt,
+            messages: [],
+            mode: 'chat',
+            approvalMode: 'full-auto',
+            reasoningEffort: appConfig.reasoningEffort ?? 'off',
+          },
+          {},
+        )
+        const result = await agent.run(input)
+        return { ok: true as const, text: result.text, latencyMs: Date.now() - started, completionTokens: result.totalCompletionTokens, promptTokens: result.totalPromptTokens }
+      } catch (err: any) {
+        return { ok: false as const, error: auth.scrubSecrets(err?.message ?? String(err)), latencyMs: Date.now() - started }
+      }
+    }
+
+    // Phase 1 — gather candidate answers (parallel, safe chat mode).
+    sendProgress(`Consulting ${entries.length} models…`)
+    const candidatePrompt = 'You are one member of a council of AI models answering a question. Give your best, complete, self-contained answer.'
+    const candidates = await Promise.all(
+      entries.map(async (e) => ({ provider: e.provider, model: e.model, ...(await runChat(e, candidatePrompt, opts.prompt)) })),
+    )
+    const good = candidates.filter((c) => c.ok && c.text)
+    if (good.length === 0) return { ok: true, candidates, error: 'No model returned an answer.' }
+
+    // Phase 2 — the chair critiques the candidates and synthesizes a verdict.
+    const chair = opts.judge && entries.some((e) => e.provider === opts.judge!.provider && e.model === opts.judge!.model)
+      ? opts.judge
+      : entries[0]
+    sendProgress(`${chair.model} is weighing the answers…`)
+    const chairPrompt = [
+      'You are the chair of a council of AI models. You are given a user question and several candidate answers from different models.',
+      'First, briefly critique each candidate (one line each: its key strength or flaw).',
+      'Then write the single best FINAL answer that combines their strengths and corrects their errors. Be decisive and complete.',
+      'Format your reply exactly as:',
+      '## Verdict',
+      '<the best combined answer>',
+      '',
+      '## Notes',
+      '- <model>: <one-line critique>',
+    ].join('\n')
+    const chairInput = `User question:\n${opts.prompt}\n\nCandidate answers:\n` +
+      good.map((c, i) => `\n### Candidate ${i + 1} — ${c.model}\n${c.text}`).join('\n')
+    const verdictRes = await runChat(chair, chairPrompt, chairInput)
+    sendProgress('Done')
+    if (!verdictRes.ok || !verdictRes.text) {
+      return { ok: true, candidates, error: `Chair (${chair.model}) couldn't synthesize: ${verdictRes.error ?? 'no output'}` }
+    }
+    return { ok: true, candidates, verdict: { provider: chair.provider, model: chair.model, text: verdictRes.text } }
+  })
+
   // ── Deep Research (plan → web search → read → synthesize) ──
   ipcMain.handle('research:run', async (_e, opts: { sessionId?: string; provider?: string; model?: string; cwd?: string; query: string }) => {
     let provider = opts.provider

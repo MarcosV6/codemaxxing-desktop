@@ -241,6 +241,26 @@ export function installBrowserMock(): void {
       run: (opts: { entries?: Array<{ provider: string; model: string }> }) =>
         ok({ results: (opts?.entries ?? []).map((e) => ({ provider: e.provider, model: e.model, ok: true, text: `(mock) ${e.model} would answer here.`, latencyMs: 820, promptTokens: 24, completionTokens: 48 })) }),
     },
+    council: {
+      run: async (opts: { entries?: Array<{ provider: string; model: string }> }) => {
+        await new Promise((r) => setTimeout(r, 700))
+        const candidates = (opts?.entries ?? []).map((e, i) => ({ provider: e.provider, model: e.model, ok: true, text: `(${e.model}) Candidate ${i + 1}: a concise take on the question, with one detail the others miss.`, latencyMs: 800 + i * 220, promptTokens: 24, completionTokens: 110 + i * 30 }))
+        const chair = opts?.entries?.[0] ?? { provider: 'mock', model: 'mock' }
+        return ok({
+          candidates,
+          verdict: {
+            provider: chair.provider,
+            model: chair.model,
+            text: '## Verdict\nThe synthesized best answer, combining every candidate\'s strengths into one clear, complete response.\n\n## Notes\n' + candidates.map((c) => `- **${c.model}**: solid reasoning, minor gaps.`).join('\n'),
+          },
+        })
+      },
+      onProgress: (cb: (p: { stage: string }) => void) => {
+        setTimeout(() => cb({ stage: 'Consulting models…' }), 60)
+        setTimeout(() => cb({ stage: 'Chair is weighing the answers…' }), 420)
+        return () => {}
+      },
+    },
     research: {
       run: (opts: { query?: string }) =>
         ok({ report: `# Research: ${opts?.query ?? ''}\n\nA synthesized, cited report would appear here in the desktop app.\n\n## Sources\n1. https://example.com` }),

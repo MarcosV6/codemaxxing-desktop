@@ -247,6 +247,13 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('compare:run', opts),
   },
 
+  // ── Council (best-of-N: run on N models, then a chair synthesizes one answer) ──
+  council: {
+    run: (opts: { prompt: string; cwd?: string; entries: Array<{ provider: string; model: string }>; judge?: { provider: string; model: string } }) =>
+      ipcRenderer.invoke('council:run', opts),
+    onProgress: (cb: (p: { stage: string }) => void) => on('council:progress', cb),
+  },
+
   // ── Deep Research ──
   research: {
     run: (opts: { sessionId?: string; provider?: string; model?: string; cwd?: string; query: string }) =>

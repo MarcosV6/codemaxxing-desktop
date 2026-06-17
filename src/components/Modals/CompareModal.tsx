@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useAppStore } from '../../store/appStore'
-import { X, Play, Loader2, Plus, Trash2, Eye, EyeOff, Trophy, Zap } from 'lucide-react'
+import { X, Play, Loader2, Plus, Trash2, Eye, EyeOff, Trophy, Zap, Gavel } from 'lucide-react'
 import type { CompareResult } from '../../types'
+import { MarkdownText } from '../Chat/MessageBubble'
 
 interface Column { provider: string; model: string }
 
@@ -24,12 +25,18 @@ export function CompareModal() {
   const [blind, setBlind] = useState(false)
   const [vote, setVote] = useState<number | 'tie' | null>(null)
   const [modelsByProvider, setModelsByProvider] = useState<Record<string, string[]>>({})
+  // Council layer: the chair's synthesized verdict + a live progress stage.
+  const [verdict, setVerdict] = useState<{ provider: string; model: string; text: string } | null>(null)
+  const [stage, setStage] = useState<string | null>(null)
+  const [chairIdx, setChairIdx] = useState(0)
 
   // Seed two columns the first time the modal opens; reset any prior verdict.
   useEffect(() => {
     if (!open) return
     setResults(null)
     setVote(null)
+    setVerdict(null)
+    setStage(null)
     if (columns.length === 0 && authed.length > 0) {
       const a = authed[0].id
       const b = authed[1]?.id || a
@@ -47,6 +54,12 @@ export function CompareModal() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [open, close])
+
+  // Live progress while the council deliberates ("Consulting…", "weighing…").
+  useEffect(() => {
+    if (!open) return
+    return window.electron.council?.onProgress?.((p) => setStage(p.stage === 'Done' ? null : p.stage))
+  }, [open])
 
   // Lazily fetch the model list for each selected provider (cached).
   useEffect(() => {
@@ -86,6 +99,28 @@ export function CompareModal() {
     }
   }
 
+  // Convene the council: gather candidate answers, then the chair synthesizes
+  // one combined verdict (a single `council:run` call does both phases).
+  const runCouncil = async () => {
+    setRunning(true)
+    setResults(null)
+    setVote(null)
+    setVerdict(null)
+    try {
+      const res = await window.electron.council.run({
+        prompt: prompt.trim(),
+        cwd: activeSession?.cwd ?? undefined,
+        entries: columns,
+        judge: columns[chairIdx] || columns[0],
+      })
+      setResults(res.ok && res.candidates ? res.candidates : [])
+      setVerdict(res.verdict ?? null)
+    } finally {
+      setRunning(false)
+      setStage(null)
+    }
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-6"
@@ -99,7 +134,7 @@ export function CompareModal() {
         <div className="h-12 flex items-center justify-between px-4 shrink-0" style={{ borderBottom: '1px solid var(--theme-border)' }}>
           <div className="flex items-center gap-2">
             <Zap size={14} style={{ color: 'var(--theme-primary)' }} />
-            <span className="text-[13px] font-medium tracking-tight">Compare models</span>
+            <span className="text-[13px] font-medium tracking-tight">Compare &amp; council</span>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -176,19 +211,62 @@ export function CompareModal() {
                 <Plus size={12} /> Add
               </button>
             )}
-            <button
-              onClick={run}
-              disabled={!canRun}
-              className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed active:scale-95"
-              style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-bg)' }}
-            >
-              {running ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />} {running ? 'Running…' : 'Run'}
-            </button>
+            <div className="ml-auto flex items-center gap-2">
+              <div className="flex items-center gap-1 rounded-lg px-2 py-1.5" style={{ border: '1px solid var(--theme-border)', color: 'var(--theme-muted)' }} title="Which model chairs the council (synthesizes the final verdict)">
+                <Gavel size={11} />
+                <span className="text-[10px] uppercase tracking-wider opacity-70">chair</span>
+                <select
+                  value={chairIdx}
+                  onChange={(e) => setChairIdx(Number(e.target.value))}
+                  className="bg-transparent text-[11px] outline-none max-w-[120px]"
+                  style={{ color: 'var(--theme-text)' }}
+                >
+                  {columns.map((c, i) => (
+                    <option key={i} value={i} style={{ color: '#000' }}>{c.model || `Model ${String.fromCharCode(65 + i)}`}</option>
+                  ))}
+                </select>
+              </div>
+              <button
+                onClick={runCouncil}
+                disabled={!canRun}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed active:scale-95"
+                style={{ border: '1px solid var(--theme-primary)', color: 'var(--theme-primary)' }}
+                title="Every model answers, then the chair critiques + synthesizes one best answer"
+              >
+                <Gavel size={13} /> Convene council
+              </button>
+              <button
+                onClick={run}
+                disabled={!canRun}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed active:scale-95"
+                style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-bg)' }}
+                title="Run side-by-side only (no synthesis)"
+              >
+                {running ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />} {running ? 'Running…' : 'Run'}
+              </button>
+            </div>
           </div>
         </div>
 
         {/* results */}
         <div className="flex-1 overflow-y-auto p-4">
+          {running && stage && (
+            <div className="mb-3 flex items-center gap-2 text-[12px]" style={{ color: 'var(--theme-primary)' }}>
+              <Loader2 size={13} className="animate-spin" /> {stage}
+            </div>
+          )}
+          {verdict && (
+            <div className="mb-4 rounded-xl p-4" style={{ border: '1px solid var(--theme-primary)', backgroundColor: 'color-mix(in srgb, var(--theme-primary) 8%, transparent)' }}>
+              <div className="flex items-center gap-2 mb-2">
+                <Gavel size={13} style={{ color: 'var(--theme-primary)' }} />
+                <span className="text-[12px] font-semibold" style={{ color: 'var(--theme-primary)' }}>Council verdict</span>
+                <span className="text-[10.5px] font-mono opacity-60" style={{ color: 'var(--theme-muted)' }}>chair · {verdict.model}</span>
+              </div>
+              <div className="text-[13px] leading-[1.6]" style={{ color: 'var(--theme-text)' }}>
+                <MarkdownText text={verdict.text} />
+              </div>
+            </div>
+          )}
           {!results && !running ? (
             <div className="h-full flex items-center justify-center text-[12.5px] opacity-50" style={{ color: 'var(--theme-muted)' }}>
               Enter a prompt, pick at least two models, and hit Run.

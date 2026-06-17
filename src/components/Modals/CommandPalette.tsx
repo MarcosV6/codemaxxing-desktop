@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '../../store/appStore'
 import {
   Command, MessageSquare, Settings, FileText, Folder, Search, ArrowRight,
-  GitCompare, GitBranch, History, GitCommit, Upload, Undo2,
+  GitCompare, GitBranch, History, GitCommit, Upload, Undo2, Gavel,
   DollarSign, Archive, Bookmark, BookOpen, Sparkles, Brain,
   Database, Bot, Clock, HelpCircle, PanelRight, StickyNote, Mail, CalendarDays,
 } from 'lucide-react'
@@ -185,6 +185,7 @@ export function CommandPalette() {
     const actions: PaletteItem[] = [
       { kind: 'action', id: 'act:cookbook', title: 'Cookbook', subtitle: 'Find & run local models', icon: BookOpen, hint: 'workspace', run: () => { setOpen(false); setDrawer('cookbook') } },
       { kind: 'action', id: 'act:compare', title: 'Compare Models', subtitle: 'Side-by-side, blind voting', icon: GitCompare, hint: 'workspace', run: () => { setOpen(false); openCompare() } },
+      { kind: 'action', id: 'act:council', title: 'Convene Council', subtitle: 'N models answer → one synthesized best', icon: Gavel, hint: 'workspace', run: () => { setOpen(false); openCompare() } },
       { kind: 'action', id: 'act:research', title: 'Deep Research', subtitle: 'Web research → cited report', icon: Search, hint: 'workspace', run: () => { setOpen(false); openResearch() } },
       { kind: 'action', id: 'act:notes', title: 'Notes & Tasks', subtitle: 'Quick capture', icon: StickyNote, hint: 'workspace', run: () => { setOpen(false); setDrawer('notes') } },
       { kind: 'action', id: 'act:documents', title: 'Documents', subtitle: 'AI-assisted editor', icon: FileText, hint: 'workspace', run: () => { setOpen(false); openDocuments() } },

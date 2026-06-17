@@ -14,6 +14,7 @@ import { DocumentsModal } from '../Modals/DocumentsModal'
 import { EmailModal } from '../Modals/EmailModal'
 import { CalendarModal } from '../Modals/CalendarModal'
 import { CommandPalette } from '../Modals/CommandPalette'
+import { OnboardingOverlay } from '../Modals/OnboardingOverlay'
 import { FilesPanel } from '../Files/FilesPanel'
 import { useResizablePanel, ResizeHandle } from '../Shared/Resizable'
 
@@ -657,6 +658,7 @@ export function Layout() {
       <CalendarModal />
       <CommandPalette />
       <NewSessionModal open={newSessionOpen} onClose={() => setNewSessionOpen(false)} />
+      <OnboardingOverlay />
     </div>
   )
 }

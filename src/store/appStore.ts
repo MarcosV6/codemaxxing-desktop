@@ -73,6 +73,8 @@ interface AppConfig {
   // Spend dial — soft per-session USD budget (0/undefined = off). Drives the
   // status-bar spend meter; warns as the session cost approaches the cap.
   costBudget?: number
+  // First-run onboarding completed? Gates the welcome overlay.
+  onboarded?: boolean
 }
 
 interface SessionMeta {
@@ -213,6 +215,9 @@ interface AppState {
   renameSession: (sessionId: string, title: string) => Promise<void>
   setCostBudget: (usd: number) => Promise<void>
   goLocal: () => Promise<void>
+  onboardingOpen: boolean
+  completeOnboarding: () => Promise<void>
+  openOnboarding: () => void
 
   sendMessage: (message: string, images?: ImageAttachment[]) => Promise<void>
   abortCurrent: () => Promise<void>
@@ -496,6 +501,7 @@ function mergeConfig(raw: any): AppConfig {
       typeof raw?.autoCompactThreshold === 'number' ? raw.autoCompactThreshold : 0.85,
     ),
     costBudget: typeof raw?.costBudget === 'number' && raw.costBudget >= 0 ? raw.costBudget : 0,
+    onboarded: !!raw?.onboarded,
   }
 }
 
@@ -511,6 +517,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   initialized: false,
   loading: false,
   appConfig: DEFAULT_CONFIG,
+  onboardingOpen: false,
   providers: [],
   detectedAuth: [],
   authFlowStatus: null,
@@ -583,7 +590,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const activeTheme = themes.find(t => (t as any).key === appConfig.theme) || themes[0] || null
       if (activeTheme) applyThemeToDom(activeTheme)
 
-      set({ themes, activeTheme, appConfig })
+      set({ themes, activeTheme, appConfig, onboardingOpen: !appConfig.onboarded })
 
       sub(window.electron.agent.onText(({ sessionId, delta }) => {
         if (sessionId !== get().activeSessionId) return
@@ -879,6 +886,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     await window.electron.config.save(newConfig)
     set({ appConfig: newConfig })
   },
+
+  completeOnboarding: async () => {
+    const { appConfig } = get()
+    const newConfig: AppConfig = { ...appConfig, onboarded: true }
+    await window.electron.config.save(newConfig)
+    set({ appConfig: newConfig, onboardingOpen: false })
+  },
+  openOnboarding: () => set({ onboardingOpen: true }),
 
   // One-click fully-local: switch the active session to a detected local model
   // (Ollama, then LM Studio). $0, offline. No-op with a hint if none is up.

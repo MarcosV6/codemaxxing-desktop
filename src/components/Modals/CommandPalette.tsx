@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '../../store/appStore'
 import {
   Command, MessageSquare, Settings, FileText, Folder, Search, ArrowRight,
-  GitCompare, GitBranch, History, GitCommit, Upload, Undo2, Gavel, Gauge, HardDrive, Smartphone,
+  GitCompare, GitBranch, History, GitCommit, Upload, Undo2, Gavel, Gauge, HardDrive, Smartphone, Rocket,
   DollarSign, Archive, Bookmark, BookOpen, Sparkles, Brain,
   Database, Bot, Clock, HelpCircle, PanelRight, StickyNote, Mail, CalendarDays,
 } from 'lucide-react'
@@ -70,6 +70,7 @@ export function CommandPalette() {
   const openEmail = useAppStore((s) => s.openEmail)
   const openCalendar = useAppStore((s) => s.openCalendar)
   const goLocal = useAppStore((s) => s.goLocal)
+  const openOnboarding = useAppStore((s) => s.openOnboarding)
 
   const [query, setQuery] = useState('')
   const [selectedIdx, setSelectedIdx] = useState(0)
@@ -190,6 +191,7 @@ export function CommandPalette() {
       { kind: 'action', id: 'act:cockpit', title: 'Context Cockpit', subtitle: "See the model's window + compact/checkpoint", icon: Gauge, hint: 'session', run: () => { setOpen(false); setDrawer('cockpit') } },
       { kind: 'action', id: 'act:local', title: 'Go Fully Local', subtitle: 'Switch this session to a local model · $0', icon: HardDrive, hint: 'session', run: () => { setOpen(false); goLocal() } },
       { kind: 'action', id: 'act:remote', title: 'Remote Access (phone)', subtitle: 'Pair a device → drive this agent from your phone', icon: Smartphone, hint: 'settings', run: () => { setOpen(false); openSettings() } },
+      { kind: 'action', id: 'act:welcome', title: 'Welcome / Setup', subtitle: 'Re-open the first-run walkthrough', icon: Rocket, hint: 'help', run: () => { setOpen(false); openOnboarding() } },
       { kind: 'action', id: 'act:research', title: 'Deep Research', subtitle: 'Web research → cited report', icon: Search, hint: 'workspace', run: () => { setOpen(false); openResearch() } },
       { kind: 'action', id: 'act:notes', title: 'Notes & Tasks', subtitle: 'Quick capture', icon: StickyNote, hint: 'workspace', run: () => { setOpen(false); setDrawer('notes') } },
       { kind: 'action', id: 'act:documents', title: 'Documents', subtitle: 'AI-assisted editor', icon: FileText, hint: 'workspace', run: () => { setOpen(false); openDocuments() } },
@@ -228,7 +230,7 @@ export function CommandPalette() {
     }
 
     return list
-  }, [query, sessionList, activeSession, fileHits, setOpen, switchSession, openSettings, setDrawer, togglePreview, sendMessage, openCompare, openResearch, openDocuments, openEmail, openCalendar, goLocal])
+  }, [query, sessionList, activeSession, fileHits, setOpen, switchSession, openSettings, setDrawer, togglePreview, sendMessage, openCompare, openResearch, openDocuments, openEmail, openCalendar, goLocal, openOnboarding])
 
   useEffect(() => { setSelectedIdx(0) }, [query, items.length])
 

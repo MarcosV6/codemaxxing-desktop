@@ -2,8 +2,10 @@ import React, { useState, useEffect, useRef } from 'react'
 import { ChatArea } from '../Chat/ChatArea'
 import { StatusBar } from '../Shared/StatusBar'
 import { PreviewPanel } from '../Preview/PreviewPanel'
+import { BrowserSurface } from '../Browser/BrowserSurface'
+import { BrowserChatDock } from '../Browser/BrowserChatDock'
 import { useAppStore, type ModelInfo } from '../../store/appStore'
-import { Plus, MessageSquare, MessageCircle, PanelLeftClose, PanelLeft, PanelRight, Settings, Trash2, Folder, BookmarkCheck, Bot, Clock, BookOpen, GitCompare, StickyNote, FileText, Mail, CalendarDays, ChevronDown, FolderTree, Loader2, Search } from 'lucide-react'
+import { Plus, MessageSquare, MessageCircle, PanelLeftClose, PanelLeft, PanelRight, Settings, Trash2, Folder, BookmarkCheck, Bot, Clock, BookOpen, GitCompare, StickyNote, FileText, Mail, CalendarDays, ChevronDown, FolderTree, Loader2, Search, Compass } from 'lucide-react'
 import { ApprovalModal, MCPApprovalModal } from '../Modals/ApprovalModal'
 import { SettingsModal } from '../Modals/SettingsModal'
 import { NewSessionModal } from '../Modals/NewSessionModal'
@@ -53,6 +55,8 @@ export function Layout() {
   const pickDirectory = useAppStore((s) => s.pickDirectory)
   const previewOpen = useAppStore((s) => s.previewOpen)
   const togglePreview = useAppStore((s) => s.togglePreview)
+  const browserView = useAppStore((s) => s.browserView)
+  const toggleBrowserView = useAppStore((s) => s.toggleBrowserView)
   const filesPanelOpen = useAppStore((s) => s.filesPanelOpen)
   const toggleFilesPanel = useAppStore((s) => s.toggleFilesPanel)
   const setDrawer = useAppStore((s) => s.setDrawer)
@@ -235,6 +239,18 @@ export function Layout() {
                 <Plus size={14} />
                 <span>New session</span>
                 <span className="ml-auto text-[10.5px] opacity-40 font-mono">⌘N</span>
+              </button>
+              <button
+                onClick={toggleBrowserView}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] transition-colors hover:bg-white/5 focus-ring mt-0.5"
+                style={{
+                  color: browserView ? 'var(--theme-primary)' : 'var(--theme-text)',
+                  backgroundColor: browserView ? 'color-mix(in srgb, var(--theme-primary) 10%, transparent)' : 'transparent',
+                }}
+                title="Browser — the agent can navigate, read + click it"
+              >
+                <Compass size={14} />
+                <span>Browser</span>
               </button>
             </div>
 
@@ -601,7 +617,7 @@ export function Layout() {
                   )}
                 </>
               )}
-              {!isChatSession && (
+              {!browserView && !isChatSession && (
                 <button
                   onClick={toggleFilesPanel}
                   className="flex items-center gap-1 px-2 py-1 rounded-md hover:bg-white/5 transition-colors focus-ring"
@@ -615,24 +631,40 @@ export function Layout() {
                   <span className="text-[11.5px]">Files</span>
                 </button>
               )}
+              {!browserView && (
+                <button
+                  onClick={togglePreview}
+                  className="flex items-center gap-1 px-2 py-1 rounded-md hover:bg-white/5 transition-colors focus-ring"
+                  style={{
+                    WebkitAppRegion: 'no-drag',
+                    color: previewOpen ? 'var(--theme-primary)' : 'var(--theme-muted)',
+                  } as React.CSSProperties}
+                  title="Toggle preview (⌘P)"
+                >
+                  <PanelRight size={12} />
+                  <span className="text-[11.5px]">Preview</span>
+                </button>
+              )}
               <button
-                onClick={togglePreview}
+                onClick={toggleBrowserView}
                 className="flex items-center gap-1 px-2 py-1 rounded-md hover:bg-white/5 transition-colors focus-ring"
                 style={{
                   WebkitAppRegion: 'no-drag',
-                  color: previewOpen ? 'var(--theme-primary)' : 'var(--theme-muted)',
+                  color: browserView ? 'var(--theme-primary)' : 'var(--theme-muted)',
                 } as React.CSSProperties}
-                title="Toggle preview (⌘P)"
+                title="Browser view — the agent can drive it"
               >
-                <PanelRight size={12} />
-                <span className="text-[11.5px]">Preview</span>
+                <Compass size={12} />
+                <span className="text-[11.5px]">Browser</span>
               </button>
             </div>
           </header>
 
           {/* Body */}
           <div className="flex-1 overflow-hidden">
-            {activeSession ? (
+            {browserView ? (
+              <BrowserSurface />
+            ) : activeSession ? (
               <ChatArea />
             ) : (
               <EmptyState onNewSession={handleNewSession} />
@@ -640,10 +672,17 @@ export function Layout() {
           </div>
         </div>
 
-        {/* Files panel (right, to the left of preview if both open) */}
-        {filesPanelOpen && !isChatSession && <FilesPanel />}
-        {/* Preview panel (right) */}
-        {previewOpen && <PreviewPanel />}
+        {/* Browser view: chat moves to a side dock that drives the browser. */}
+        {browserView ? (
+          <BrowserChatDock onNewSession={handleNewSession} />
+        ) : (
+          <>
+            {/* Files panel (right, to the left of preview if both open) */}
+            {filesPanelOpen && !isChatSession && <FilesPanel />}
+            {/* Preview panel (right) */}
+            {previewOpen && <PreviewPanel />}
+          </>
+        )}
       </div>
 
       <StatusBar />

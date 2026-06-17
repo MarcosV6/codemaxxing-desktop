@@ -175,7 +175,10 @@ interface AppState {
   calendarOpen: boolean
   previewOpen: boolean
   previewUrl: string | null
-  previewTab: 'web' | 'run' | 'browser' | null
+  previewTab: 'web' | 'run' | null
+  // Browser view: the embedded browser becomes the primary surface and the
+  // chat moves to a side dock that drives it (browser_* tools).
+  browserView: boolean
   filesPanelOpen: boolean
   activeDrawer: DrawerKind
   commandPaletteOpen: boolean
@@ -266,8 +269,10 @@ interface AppState {
   togglePreview: () => void
   setPreviewOpen: (open: boolean) => void
   openPreview: (url: string) => void
-  setPreviewTab: (tab: 'web' | 'run' | 'browser' | null) => void
+  setPreviewTab: (tab: 'web' | 'run' | null) => void
   openBrowserPanel: () => void
+  toggleBrowserView: () => void
+  setBrowserView: (open: boolean) => void
   toggleFilesPanel: () => void
   setFilesPanelOpen: (open: boolean) => void
   setDrawer: (drawer: DrawerKind) => void
@@ -557,6 +562,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   previewOpen: false,
   previewUrl: null,
   previewTab: null,
+  browserView: false,
   filesPanelOpen: false,
   activeDrawer: null,
   commandPaletteOpen: false,
@@ -1501,6 +1507,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         get().goLocal()
         return true
       }
+      case 'browser': {
+        get().setBrowserView(true)
+        return true
+      }
       case 'compare': case 'vs': case 'council': {
         get().openCompare()
         return true
@@ -1560,6 +1570,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             '- `/notes` — quick notes & tasks drawer',
             '- `/context` — context cockpit: see the model\'s window + compact/checkpoint',
             '- `/local` — switch this session to a local model ($0, offline)',
+            '- `/browser` — open the built-in browser (the agent can drive it)',
             '- `/docs` — AI-assisted documents editor',
             '- `/email` · `/calendar` — inbox & schedule (configure in-panel)',
           ].join('\n'),
@@ -1619,7 +1630,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   setPreviewOpen: (open: boolean) => set({ previewOpen: open }),
   openPreview: (url: string) => set({ previewOpen: true, previewUrl: url }),
   setPreviewTab: (tab) => set({ previewTab: tab }),
-  openBrowserPanel: () => set({ previewOpen: true, previewTab: 'browser' }),
+  openBrowserPanel: () => set({ browserView: true }),
+  toggleBrowserView: () => set((s) => ({ browserView: !s.browserView })),
+  setBrowserView: (open: boolean) => set({ browserView: open }),
   toggleFilesPanel: () => set((s) => ({ filesPanelOpen: !s.filesPanelOpen })),
   setFilesPanelOpen: (open: boolean) => set({ filesPanelOpen: open }),
   setDrawer: (drawer) => set({ activeDrawer: drawer }),

@@ -4,7 +4,7 @@ import {
   Command, MessageSquare, Settings, FileText, Folder, Search, ArrowRight,
   GitCompare, GitBranch, History, GitCommit, Upload, Undo2,
   DollarSign, Archive, Bookmark, BookOpen, Sparkles, Brain,
-  Database, Bot, Clock, HelpCircle, PanelRight, Plus,
+  Database, Bot, Clock, HelpCircle, PanelRight, StickyNote, Mail, CalendarDays,
 } from 'lucide-react'
 
 type LucideIcon = React.ComponentType<{ size?: number; strokeWidth?: number; className?: string; style?: React.CSSProperties }>
@@ -64,6 +64,11 @@ export function CommandPalette() {
   const setDrawer = useAppStore((s) => s.setDrawer)
   const togglePreview = useAppStore((s) => s.togglePreview)
   const sendMessage = useAppStore((s) => s.sendMessage)
+  const openCompare = useAppStore((s) => s.openCompare)
+  const openResearch = useAppStore((s) => s.openResearch)
+  const openDocuments = useAppStore((s) => s.openDocuments)
+  const openEmail = useAppStore((s) => s.openEmail)
+  const openCalendar = useAppStore((s) => s.openCalendar)
 
   const [query, setQuery] = useState('')
   const [selectedIdx, setSelectedIdx] = useState(0)
@@ -178,6 +183,13 @@ export function CommandPalette() {
 
     // Static actions
     const actions: PaletteItem[] = [
+      { kind: 'action', id: 'act:cookbook', title: 'Cookbook', subtitle: 'Find & run local models', icon: BookOpen, hint: 'workspace', run: () => { setOpen(false); setDrawer('cookbook') } },
+      { kind: 'action', id: 'act:compare', title: 'Compare Models', subtitle: 'Side-by-side, blind voting', icon: GitCompare, hint: 'workspace', run: () => { setOpen(false); openCompare() } },
+      { kind: 'action', id: 'act:research', title: 'Deep Research', subtitle: 'Web research → cited report', icon: Search, hint: 'workspace', run: () => { setOpen(false); openResearch() } },
+      { kind: 'action', id: 'act:notes', title: 'Notes & Tasks', subtitle: 'Quick capture', icon: StickyNote, hint: 'workspace', run: () => { setOpen(false); setDrawer('notes') } },
+      { kind: 'action', id: 'act:documents', title: 'Documents', subtitle: 'AI-assisted editor', icon: FileText, hint: 'workspace', run: () => { setOpen(false); openDocuments() } },
+      { kind: 'action', id: 'act:email', title: 'Email', subtitle: 'IMAP inbox + send', icon: Mail, hint: 'workspace', run: () => { setOpen(false); openEmail() } },
+      { kind: 'action', id: 'act:calendar', title: 'Calendar', subtitle: 'CalDAV agenda', icon: CalendarDays, hint: 'workspace', run: () => { setOpen(false); openCalendar() } },
       {
         kind: 'action', id: 'act:settings', title: 'Open Settings', subtitle: 'General, providers, skills, hooks',
         icon: Settings, hint: 'action',
@@ -211,7 +223,7 @@ export function CommandPalette() {
     }
 
     return list
-  }, [query, sessionList, activeSession, fileHits, setOpen, switchSession, openSettings, setDrawer, togglePreview, sendMessage])
+  }, [query, sessionList, activeSession, fileHits, setOpen, switchSession, openSettings, setDrawer, togglePreview, sendMessage, openCompare, openResearch, openDocuments, openEmail, openCalendar])
 
   useEffect(() => { setSelectedIdx(0) }, [query, items.length])
 

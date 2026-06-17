@@ -15,6 +15,7 @@ export function SettingsModal() {
   const close = useAppStore((s) => s.closeSettings)
   const appConfig = useAppStore((s) => s.appConfig)
   const setAutoApprove = useAppStore((s) => s.setAutoApprove)
+  const setCostBudget = useAppStore((s) => s.setCostBudget)
   const setLastCwd = useAppStore((s) => s.setLastCwd)
   const setTheme = useAppStore((s) => s.setTheme)
   const themes = useAppStore((s) => s.themes)
@@ -97,6 +98,27 @@ export function SettingsModal() {
                       className="w-4 h-4 accent-current"
                     />
                   </label>
+                </section>
+
+                <section className="space-y-2">
+                  <div className="text-[11px] uppercase tracking-wider opacity-60 font-medium">Spend budget</div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[13px] opacity-70">$</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.5}
+                      defaultValue={appConfig.costBudget || 0}
+                      onBlur={(e) => setCostBudget(parseFloat(e.target.value) || 0)}
+                      placeholder="0 = off"
+                      className="w-28 text-[13px] rounded-md px-3 py-2 outline-none"
+                      style={{ backgroundColor: 'var(--theme-bg-subtle)', border: '1px solid var(--theme-border)', color: 'var(--theme-text)' }}
+                    />
+                    <span className="text-[11.5px] opacity-60">per session — the status-bar dial turns amber near it, red over.</span>
+                  </div>
+                  <div className="text-[11.5px] opacity-60">
+                    Want $0? Use <span className="font-mono">/local</span> or ⌘K → “Go Fully Local” to run an on-device model.
+                  </div>
                 </section>
               </div>
             )}

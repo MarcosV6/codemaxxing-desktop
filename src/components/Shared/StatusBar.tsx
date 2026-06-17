@@ -114,6 +114,10 @@ export function StatusBar() {
   if (!activeSession) return null
 
   const sessionCost = activeSession.estimatedCost ?? 0
+  // Spend dial: session cost vs the optional soft budget (0 = off).
+  const budget = appConfig.costBudget ?? 0
+  const budgetFill = budget > 0 ? sessionCost / budget : 0
+  const budgetColor = budgetFill >= 1 ? 'var(--theme-error)' : budgetFill >= 0.8 ? 'var(--theme-warning)' : 'var(--theme-success)'
   const messageCount = activeSession.messages?.length ?? 0
   // Prefer the agent-pushed runtime value when we have it (handles local
   // models where the actual loaded window may differ from the static
@@ -235,7 +239,20 @@ export function StatusBar() {
           </span>
         )}
 
-        {sessionCost > 0 && (
+        {budget > 0 ? (
+          <span
+            className="flex items-center gap-1.5"
+            title={`Session spend ${formatCost(sessionCost)} of ${formatCost(budget)} budget (${Math.round(budgetFill * 100)}%)`}
+          >
+            <Gauge fill={Math.min(1, budgetFill)} threshold={1} showThreshold={false} fillColor={budgetColor} />
+            <span
+              className="text-[10.5px] tabular-nums"
+              style={{ color: budgetFill >= 1 ? 'var(--theme-error)' : 'var(--theme-muted)', opacity: budgetFill >= 1 ? 1 : 0.8 }}
+            >
+              {formatCost(sessionCost)}/{formatCost(budget)}
+            </span>
+          </span>
+        ) : sessionCost > 0 ? (
           <span
             className="px-1.5 py-0.5 rounded text-[10.5px]"
             style={{ backgroundColor: 'var(--theme-bg-raised)', color: 'var(--theme-text)', opacity: 0.85 }}
@@ -243,11 +260,24 @@ export function StatusBar() {
           >
             {formatCost(sessionCost)}
           </span>
-        )}
+        ) : null}
 
         {activeSession.model && (
           <span className="text-[10.5px] opacity-65 whitespace-nowrap truncate max-w-[240px]" title={`${activeSession.provider ?? ''} / ${activeSession.model}`}>
             {prettyModelName(activeSession.model)}
+          </span>
+        )}
+
+        {currentStats?.isLocal && (
+          <span
+            className="px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider whitespace-nowrap"
+            style={{
+              backgroundColor: 'color-mix(in srgb, var(--theme-success) 12%, transparent)',
+              color: 'var(--theme-success)',
+            }}
+            title="Running a local model — $0, offline"
+          >
+            local
           </span>
         )}
 

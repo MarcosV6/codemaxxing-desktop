@@ -70,6 +70,9 @@ interface AppConfig {
   // turn's response). Tunable from Settings → Agent.
   autoCompactEnabled?: boolean
   autoCompactThreshold?: number
+  // Spend dial — soft per-session USD budget (0/undefined = off). Drives the
+  // status-bar spend meter; warns as the session cost approaches the cap.
+  costBudget?: number
 }
 
 interface SessionMeta {
@@ -208,6 +211,8 @@ interface AppState {
   updateSessionModel: (sessionId: string, provider: string, model: string) => Promise<void>
   setActiveSessionMode: (mode: 'code' | 'chat') => Promise<void>
   renameSession: (sessionId: string, title: string) => Promise<void>
+  setCostBudget: (usd: number) => Promise<void>
+  goLocal: () => Promise<void>
 
   sendMessage: (message: string, images?: ImageAttachment[]) => Promise<void>
   abortCurrent: () => Promise<void>
@@ -490,6 +495,7 @@ function mergeConfig(raw: any): AppConfig {
     autoCompactThreshold: clampThreshold(
       typeof raw?.autoCompactThreshold === 'number' ? raw.autoCompactThreshold : 0.85,
     ),
+    costBudget: typeof raw?.costBudget === 'number' && raw.costBudget >= 0 ? raw.costBudget : 0,
   }
 }
 
@@ -864,6 +870,41 @@ export const useAppStore = create<AppState>((set, get) => ({
     const newConfig: AppConfig = { ...appConfig, reasoningEffort: effort }
     await window.electron.config.save(newConfig)
     set({ appConfig: newConfig })
+  },
+
+  setCostBudget: async (usd: number) => {
+    const { appConfig } = get()
+    const v = Number.isFinite(usd) && usd >= 0 ? usd : 0
+    const newConfig: AppConfig = { ...appConfig, costBudget: v }
+    await window.electron.config.save(newConfig)
+    set({ appConfig: newConfig })
+  },
+
+  // One-click fully-local: switch the active session to a detected local model
+  // (Ollama, then LM Studio). $0, offline. No-op with a hint if none is up.
+  goLocal: async () => {
+    const { providers, activeSession } = get()
+    if (!activeSession) return
+    for (const id of ['ollama', 'lmstudio']) {
+      const p = providers.find((pp) => pp.id === id && pp.authed)
+      if (!p) continue
+      try {
+        const res = await window.electron.llm.listModels(id)
+        const model = res.ok && res.models && res.models[0]?.id
+        if (model) { await get().updateSessionModel(activeSession.id, id, model); return }
+      } catch { /* try the next local provider */ }
+    }
+    set((s) => (s.activeSession ? {
+      activeSession: {
+        ...s.activeSession,
+        messages: [...s.activeSession.messages, {
+          id: `sys-${Date.now().toString(36)}`,
+          type: 'assistant' as const,
+          content: '*No local model detected. Start **Ollama** or **LM Studio** (with a model loaded), then try “Go fully local” again.*',
+          timestamp: Date.now(),
+        }],
+      },
+    } : {}))
   },
 
   setActiveSkillIds: async (ids: string[]) => {
@@ -1441,6 +1482,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         get().setDrawer('cockpit')
         return true
       }
+      case 'local': case 'offline': {
+        get().goLocal()
+        return true
+      }
       case 'compare': case 'vs': case 'council': {
         get().openCompare()
         return true
@@ -1499,6 +1544,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             '- `/research` — deep web research → a cited report',
             '- `/notes` — quick notes & tasks drawer',
             '- `/context` — context cockpit: see the model\'s window + compact/checkpoint',
+            '- `/local` — switch this session to a local model ($0, offline)',
             '- `/docs` — AI-assisted documents editor',
             '- `/email` · `/calendar` — inbox & schedule (configure in-panel)',
           ].join('\n'),

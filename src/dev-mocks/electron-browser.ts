@@ -417,6 +417,9 @@ export function installBrowserMock(): void {
             lastCwd: null,
             lastProvider: null,
             lastModel: null,
+            // Seed a small budget so the status-bar spend dial is exercised in
+            // the browser preview (real config persists via config.save).
+            costBudget: 1,
           },
         }),
       save: () => ok(),

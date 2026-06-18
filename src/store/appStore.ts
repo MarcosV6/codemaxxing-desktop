@@ -24,6 +24,17 @@ import type {
 
 export type AuthMethod = 'oauth' | 'api-key' | 'setup-token' | 'cached-token' | 'device-flow' | 'none'
 
+// A single tab in Browser mode. Each maps to its own <webview>.
+export interface BrowserTabState {
+  id: string
+  url: string
+  title: string
+  loading?: boolean
+}
+function freshTab(): BrowserTabState {
+  return { id: 'tab_' + Math.random().toString(36).slice(2, 9), url: '', title: 'New tab' }
+}
+
 interface ProviderInfo {
   id: string
   name: string
@@ -176,9 +187,11 @@ interface AppState {
   previewOpen: boolean
   previewUrl: string | null
   previewTab: 'web' | 'run' | null
-  // Browser view: the embedded browser becomes the primary surface and the
-  // chat moves to a side dock that drives it (browser_* tools).
+  // Browser mode: full-takeover, browser-first layout (Arc-style vertical tabs
+  // + assistant on the left, the active tab's page fills the window).
   browserView: boolean
+  browserTabs: BrowserTabState[]
+  activeBrowserTabId: string | null
   filesPanelOpen: boolean
   activeDrawer: DrawerKind
   commandPaletteOpen: boolean
@@ -273,6 +286,10 @@ interface AppState {
   openBrowserPanel: () => void
   toggleBrowserView: () => void
   setBrowserView: (open: boolean) => void
+  addBrowserTab: (url?: string) => void
+  closeBrowserTab: (id: string) => void
+  setActiveBrowserTab: (id: string) => void
+  updateBrowserTab: (id: string, patch: Partial<BrowserTabState>) => void
   toggleFilesPanel: () => void
   setFilesPanelOpen: (open: boolean) => void
   setDrawer: (drawer: DrawerKind) => void
@@ -563,6 +580,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   previewUrl: null,
   previewTab: null,
   browserView: false,
+  browserTabs: [],
+  activeBrowserTabId: null,
   filesPanelOpen: false,
   activeDrawer: null,
   commandPaletteOpen: false,
@@ -1630,9 +1649,36 @@ export const useAppStore = create<AppState>((set, get) => ({
   setPreviewOpen: (open: boolean) => set({ previewOpen: open }),
   openPreview: (url: string) => set({ previewOpen: true, previewUrl: url }),
   setPreviewTab: (tab) => set({ previewTab: tab }),
-  openBrowserPanel: () => set({ browserView: true }),
-  toggleBrowserView: () => set((s) => ({ browserView: !s.browserView })),
-  setBrowserView: (open: boolean) => set({ browserView: open }),
+  openBrowserPanel: () => set((s) => {
+    if (s.browserTabs.length) return { browserView: true }
+    const t = freshTab()
+    return { browserView: true, browserTabs: [t], activeBrowserTabId: t.id }
+  }),
+  toggleBrowserView: () => set((s) => {
+    if (s.browserView) return { browserView: false }
+    if (s.browserTabs.length) return { browserView: true }
+    const t = freshTab()
+    return { browserView: true, browserTabs: [t], activeBrowserTabId: t.id }
+  }),
+  setBrowserView: (open: boolean) => set((s) => {
+    if (!open) return { browserView: false }
+    if (s.browserTabs.length) return { browserView: true }
+    const t = freshTab()
+    return { browserView: true, browserTabs: [t], activeBrowserTabId: t.id }
+  }),
+  addBrowserTab: (url) => set((s) => {
+    const t: BrowserTabState = { id: 'tab_' + Math.random().toString(36).slice(2, 9), url: url ?? '', title: url ? '' : 'New tab', loading: !!url }
+    return { browserTabs: [...s.browserTabs, t], activeBrowserTabId: t.id }
+  }),
+  closeBrowserTab: (id) => set((s) => {
+    const idx = s.browserTabs.findIndex((t) => t.id === id)
+    const tabs = s.browserTabs.filter((t) => t.id !== id)
+    let active = s.activeBrowserTabId
+    if (active === id) active = tabs.length ? tabs[Math.max(0, idx - 1)].id : null
+    return { browserTabs: tabs, activeBrowserTabId: active }
+  }),
+  setActiveBrowserTab: (id) => set({ activeBrowserTabId: id }),
+  updateBrowserTab: (id, patch) => set((s) => ({ browserTabs: s.browserTabs.map((t) => (t.id === id ? { ...t, ...patch } : t)) })),
   toggleFilesPanel: () => set((s) => ({ filesPanelOpen: !s.filesPanelOpen })),
   setFilesPanelOpen: (open: boolean) => set({ filesPanelOpen: open }),
   setDrawer: (drawer) => set({ activeDrawer: drawer }),

@@ -2,8 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { ChatArea } from '../Chat/ChatArea'
 import { StatusBar } from '../Shared/StatusBar'
 import { PreviewPanel } from '../Preview/PreviewPanel'
-import { BrowserSurface } from '../Browser/BrowserSurface'
-import { BrowserChatDock } from '../Browser/BrowserChatDock'
+import { BrowserMode } from '../Browser/BrowserMode'
 import { useAppStore, type ModelInfo } from '../../store/appStore'
 import { Plus, MessageSquare, MessageCircle, PanelLeftClose, PanelLeft, PanelRight, Settings, Trash2, Folder, BookmarkCheck, Bot, Clock, BookOpen, GitCompare, StickyNote, FileText, Mail, CalendarDays, ChevronDown, FolderTree, Loader2, Search, Compass } from 'lucide-react'
 import { ApprovalModal, MCPApprovalModal } from '../Modals/ApprovalModal'
@@ -199,6 +198,10 @@ export function Layout() {
       className="app-shell h-screen w-screen flex flex-col overflow-hidden"
       style={{ backgroundColor: 'var(--theme-bg)', color: 'var(--theme-text)' }}
     >
+      {browserView ? (
+        <BrowserMode onNewSession={handleNewSession} />
+      ) : (
+        <>
       <div className="flex-1 flex overflow-hidden">
         {/* Sidebar */}
         {sidebarOpen && (
@@ -662,9 +665,7 @@ export function Layout() {
 
           {/* Body */}
           <div className="flex-1 overflow-hidden">
-            {browserView ? (
-              <BrowserSurface />
-            ) : activeSession ? (
+            {activeSession ? (
               <ChatArea />
             ) : (
               <EmptyState onNewSession={handleNewSession} />
@@ -672,20 +673,15 @@ export function Layout() {
           </div>
         </div>
 
-        {/* Browser view: chat moves to a side dock that drives the browser. */}
-        {browserView ? (
-          <BrowserChatDock onNewSession={handleNewSession} />
-        ) : (
-          <>
-            {/* Files panel (right, to the left of preview if both open) */}
-            {filesPanelOpen && !isChatSession && <FilesPanel />}
-            {/* Preview panel (right) */}
-            {previewOpen && <PreviewPanel />}
-          </>
-        )}
+        {/* Files panel (right, to the left of preview if both open) */}
+        {filesPanelOpen && !isChatSession && <FilesPanel />}
+        {/* Preview panel (right) */}
+        {previewOpen && <PreviewPanel />}
       </div>
 
       <StatusBar />
+        </>
+      )}
       <ApprovalModal />
       <MCPApprovalModal />
       <SettingsModal />

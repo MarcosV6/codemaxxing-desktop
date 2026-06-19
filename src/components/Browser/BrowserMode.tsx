@@ -5,7 +5,7 @@ import { BrowserTabView } from './BrowserTabView'
 import { useResizablePanel, ResizeHandle } from '../Shared/Resizable'
 import {
   ArrowLeft, Plus, ChevronLeft, ChevronRight, RotateCw, X, Search, Globe, Loader2,
-  MessageSquare, ChevronDown, ChevronUp, Compass,
+  MessageSquare, Compass,
 } from 'lucide-react'
 
 type BrowserResult = { ok: boolean; error?: string; title?: string; url?: string; text?: string; base64?: string }
@@ -50,7 +50,7 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
   useEffect(() => { activeIdRef.current = activeId }, [activeId])
 
   const [urlDraft, setUrlDraft] = useState('')
-  const [assistantOpen, setAssistantOpen] = useState(true)
+  const [assistantOpen, setAssistantOpen] = useState(false)
   const activeTab = tabs.find((t) => t.id === activeId) || null
   useEffect(() => { setUrlDraft(activeTab?.url || '') }, [activeTab?.url, activeId])
 
@@ -153,6 +153,9 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
             <ArrowLeft size={13} /> exit
           </button>
           <span className="flex-1" />
+          <button onClick={() => setAssistantOpen((v) => !v)} className={iconBtn} style={{ WebkitAppRegion: 'no-drag', color: assistantOpen ? 'var(--theme-primary)' : 'var(--theme-muted)' } as React.CSSProperties} title="Assistant">
+            <MessageSquare size={14} />
+          </button>
           <button onClick={() => addBrowserTab()} className={iconBtn} style={{ WebkitAppRegion: 'no-drag', color: 'var(--theme-muted)' } as React.CSSProperties} title="New tab">
             <Plus size={15} />
           </button>
@@ -211,35 +214,6 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
           })}
         </div>
 
-        {/* assistant */}
-        <div className="shrink-0" style={{ borderTop: '1px solid var(--theme-hairline)' }}>
-          <button
-            onClick={() => setAssistantOpen((v) => !v)}
-            className="w-full h-9 flex items-center gap-2 px-3 hover:bg-white/[0.03] transition-colors"
-            style={{ color: 'var(--theme-text)' }}
-          >
-            <MessageSquare size={13} style={{ color: 'var(--theme-primary)' }} />
-            <span className="text-[12px] font-medium">Assistant</span>
-            <span className="flex-1 text-left text-[10px] opacity-50">drives this tab</span>
-            {assistantOpen ? <ChevronDown size={13} style={{ color: 'var(--theme-muted)' }} /> : <ChevronUp size={13} style={{ color: 'var(--theme-muted)' }} />}
-          </button>
-          {assistantOpen && (
-            <div className="flex flex-col" style={{ height: 'clamp(240px, 42vh, 460px)', borderTop: '1px solid var(--theme-hairline)' }}>
-              {activeSession ? (
-                <ChatArea />
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center gap-3 px-5 text-center">
-                  <p className="text-[12px] leading-relaxed" style={{ color: 'var(--theme-muted)' }}>
-                    Start a chat to have the agent browse, read, and click for you.
-                  </p>
-                  <button onClick={onNewSession} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-medium" style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-bg)' }}>
-                    <Plus size={13} /> New session
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
       </aside>
 
       {/* ── Main: the active tab's page ── */}
@@ -257,6 +231,40 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
               <BrowserTabView tab={t} onUpdate={(p) => updateBrowserTab(t.id, p)} registerEl={registerEl} onDomReady={onDomReady} />
             </div>
           ))
+        )}
+
+        {assistantOpen && (
+          <div
+            style={{
+              position: 'absolute', bottom: 18, right: 18,
+              width: 384, height: 'min(560px, calc(100% - 36px))',
+              zIndex: 40, display: 'flex', flexDirection: 'column', overflow: 'hidden',
+              backgroundColor: 'var(--theme-bg-subtle)', border: '1px solid var(--theme-border)',
+              borderRadius: 14, boxShadow: '0 18px 50px rgba(0,0,0,0.45)',
+            }}
+          >
+            <div className="h-10 flex items-center gap-2 px-3 shrink-0" style={{ borderBottom: '1px solid var(--theme-hairline)' }}>
+              <MessageSquare size={13} style={{ color: 'var(--theme-primary)' }} />
+              <span className="text-[12px] font-medium" style={{ color: 'var(--theme-text)' }}>Assistant</span>
+              <span className="text-[10px] opacity-50">drives this tab</span>
+              <span className="flex-1" />
+              <button onClick={() => setAssistantOpen(false)} className={iconBtn} style={{ color: 'var(--theme-muted)' }} title="Close"><X size={14} /></button>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              {activeSession ? (
+                <ChatArea />
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center gap-3 px-5 text-center">
+                  <p className="text-[12px] leading-relaxed" style={{ color: 'var(--theme-muted)' }}>
+                    Start a chat to have the agent browse, read, and click for you.
+                  </p>
+                  <button onClick={onNewSession} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-medium" style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-bg)' }}>
+                    <Plus size={13} /> New session
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         )}
       </div>
     </div>

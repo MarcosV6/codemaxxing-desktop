@@ -344,6 +344,7 @@ export interface ElectronAPI {
     addTask: (text: string) => Promise<{ ok: boolean; task?: { id: string; text: string; done: boolean; createdAt: number }; error?: string }>
     toggleTask: (id: string) => Promise<{ ok: boolean }>
     deleteTask: (id: string) => Promise<{ ok: boolean }>
+    onChanged: (cb: () => void) => () => void
   }
 
   // Documents — JSON-backed, AI-assisted editor

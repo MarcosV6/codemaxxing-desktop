@@ -882,6 +882,41 @@ async function documentOp(op: { action: 'list' | 'read' | 'write' | 'append' | '
   return { ok: true, doc }
 }
 
+// ─── Notes & Tasks agent tools ───────────────────────────────────────────────
+type NoteRec = { id: string; text: string; createdAt: number }
+type TaskRec = { id: string; text: string; done: boolean; createdAt: number }
+function readNotes(): { notes: NoteRec[]; tasks: TaskRec[] } {
+  try {
+    const f = join(CONFIG_DIR, 'notes.json')
+    if (existsSync(f)) { const d = JSON.parse(readFileSync(f, 'utf-8')); return { notes: Array.isArray(d.notes) ? d.notes : [], tasks: Array.isArray(d.tasks) ? d.tasks : [] } }
+  } catch { /* corrupt → fresh */ }
+  return { notes: [], tasks: [] }
+}
+function writeNotes(store: { notes: NoteRec[]; tasks: TaskRec[] }) {
+  if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 })
+  writeFileSync(join(CONFIG_DIR, 'notes.json'), JSON.stringify(store, null, 2))
+}
+async function notesOp(op: { action: 'list' | 'add_note' | 'add_task' | 'toggle_task'; text?: string; id?: string }): Promise<{ ok: boolean; notes?: NoteRec[]; tasks?: TaskRec[]; error?: string }> {
+  const store = readNotes()
+  const gid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7)
+  if (op.action === 'list') return { ok: true, notes: store.notes, tasks: store.tasks }
+  if (op.action === 'add_note') {
+    const t = (op.text || '').trim(); if (!t) return { ok: false, error: 'empty note' }
+    store.notes.unshift({ id: gid(), text: t, createdAt: Date.now() }); writeNotes(store); emit('notes:changed'); return { ok: true, notes: store.notes }
+  }
+  if (op.action === 'add_task') {
+    const t = (op.text || '').trim(); if (!t) return { ok: false, error: 'empty task' }
+    store.tasks.unshift({ id: gid(), text: t, done: false, createdAt: Date.now() }); writeNotes(store); emit('notes:changed'); return { ok: true, tasks: store.tasks }
+  }
+  if (op.action === 'toggle_task') {
+    let task = op.id ? store.tasks.find((x) => x.id === op.id) : undefined
+    if (!task && op.text) { const needle = op.text.toLowerCase(); task = store.tasks.find((x) => x.text.toLowerCase().includes(needle)) }
+    if (!task) return { ok: false, error: 'task not found' }
+    task.done = !task.done; writeNotes(store); emit('notes:changed'); return { ok: true, tasks: store.tasks }
+  }
+  return { ok: false, error: 'unknown action' }
+}
+
 /** Make sure the desktop window is visible and focused. Called when an
  *  agent event needs immediate user attention (approval, ask-user). Cheap
  *  to call when the window is already up — `show()` + `focus()` are no-ops
@@ -1318,6 +1353,7 @@ function setupIPC(): void {
         onBrowserCommand: browserCommand,
         onPixelMatch: pixelMatch,
         onDocumentOp: documentOp,
+        onNotesOp: notesOp,
         onPlanExit: (plan) => emit('agent:planExit', { sessionId: opts.sessionId, plan }),
         onUsage: (u) => emit('agent:usage', { sessionId: opts.sessionId, usage: u }),
         onStats: (s) => emit('agent:stats', { sessionId: opts.sessionId, stats: s }),

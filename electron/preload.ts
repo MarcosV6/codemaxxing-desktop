@@ -290,6 +290,7 @@ contextBridge.exposeInMainWorld('electron', {
     addTask: (text: string) => ipcRenderer.invoke('notes:addTask', text),
     toggleTask: (id: string) => ipcRenderer.invoke('notes:toggleTask', id),
     deleteTask: (id: string) => ipcRenderer.invoke('notes:deleteTask', id),
+    onChanged: (cb: () => void) => on('notes:changed', cb),
   },
 
   // ── Documents ──

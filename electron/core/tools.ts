@@ -368,6 +368,38 @@ export const FILE_TOOLS: ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'note_add',
+      description: 'Add a note to the Notes & Tasks workspace.',
+      parameters: { type: 'object', properties: { text: { type: 'string', description: 'Note text' } }, required: ['text'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'task_add',
+      description: 'Add a task to the Notes & Tasks workspace.',
+      parameters: { type: 'object', properties: { text: { type: 'string', description: 'Task text' } }, required: ['text'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'task_toggle',
+      description: 'Toggle a task done/undone in the Notes & Tasks workspace, by id or by matching text.',
+      parameters: { type: 'object', properties: { id: { type: 'string', description: 'Task id' }, text: { type: 'string', description: 'Match a task by its text (used if id omitted)' } } },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'notes_list',
+      description: 'List the current notes and tasks in the Notes & Tasks workspace.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'glob',
       description:
         "Find files matching a glob pattern. Use this to locate files by name or extension across the project (e.g. '**/*.tsx', 'src/**/test.*', '*.json').",
@@ -677,6 +709,8 @@ export interface ToolExecContext {
   pixelMatch?: (opts: { url?: string; targetPath: string }) => Promise<{ ok: boolean; matchPercent?: number; diffPercent?: number; regions?: Array<{ name: string; diffPercent: number }>; error?: string }>
   // Documents workspace — the agent reads/writes the document open in the editor.
   documentOp?: (op: { action: 'list' | 'read' | 'write' | 'append' | 'create'; id?: string; title?: string; content?: string; text?: string }) => Promise<{ ok: boolean; documents?: { id: string; title: string }[]; doc?: { id: string; title: string; content: string }; error?: string }>
+  // Notes workspace — add/list notes & tasks.
+  notesOp?: (op: { action: 'list' | 'add_note' | 'add_task' | 'toggle_task'; text?: string; id?: string }) => Promise<{ ok: boolean; notes?: { id: string; text: string }[]; tasks?: { id: string; text: string; done: boolean }[]; error?: string }>
 }
 
 export async function executeTool(
@@ -977,6 +1011,34 @@ export async function executeTool(
       const r = await ctx.documentOp({ action: 'create', title, content: args.content ? String(args.content) : '' })
       if (!r.ok || !r.doc) return `Could not create the document: ${r.error ?? 'unknown error'}`
       return `Created "${r.doc.title}" (id: ${r.doc.id}).`
+    }
+
+    case 'note_add': {
+      if (!ctx.notesOp) return 'The Notes workspace is not available in this environment.'
+      const text = String(args.text ?? '').trim()
+      if (!text) return "Error: note_add needs 'text'."
+      const r = await ctx.notesOp({ action: 'add_note', text })
+      return r.ok ? `Added note: "${text}".` : `Could not add note: ${r.error ?? 'unknown error'}`
+    }
+    case 'task_add': {
+      if (!ctx.notesOp) return 'The Notes workspace is not available in this environment.'
+      const text = String(args.text ?? '').trim()
+      if (!text) return "Error: task_add needs 'text'."
+      const r = await ctx.notesOp({ action: 'add_task', text })
+      return r.ok ? `Added task: "${text}".` : `Could not add task: ${r.error ?? 'unknown error'}`
+    }
+    case 'task_toggle': {
+      if (!ctx.notesOp) return 'The Notes workspace is not available in this environment.'
+      const r = await ctx.notesOp({ action: 'toggle_task', id: args.id ? String(args.id) : undefined, text: args.text ? String(args.text) : undefined })
+      return r.ok ? 'Toggled the task.' : `Could not toggle: ${r.error ?? 'no matching task'}`
+    }
+    case 'notes_list': {
+      if (!ctx.notesOp) return 'The Notes workspace is not available in this environment.'
+      const r = await ctx.notesOp({ action: 'list' })
+      if (!r.ok) return `Could not list: ${r.error ?? 'unknown error'}`
+      const notes = (r.notes ?? []).map((n) => `- ${n.text}`).join('\n') || '(none)'
+      const tasks = (r.tasks ?? []).map((t) => `- [${t.done ? 'x' : ' '}] ${t.text}`).join('\n') || '(none)'
+      return `# Notes\n${notes}\n\n# Tasks\n${tasks}`
     }
 
     case 'glob': {

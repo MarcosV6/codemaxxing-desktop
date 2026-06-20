@@ -267,12 +267,16 @@ export function installBrowserMock(): void {
       onProgress: () => () => {},
     },
     notes: {
-      get: () => ok({ notes: [], tasks: [] }),
+      get: () => ok({
+        notes: [{ id: 'n1', text: 'A sample note so the workspace shows content.', createdAt: Date.now() }],
+        tasks: [{ id: 't1', text: 'try the assistant', done: false, createdAt: Date.now() }, { id: 't2', text: 'ship it', done: true, createdAt: Date.now() }],
+      }),
       addNote: () => ok({ note: null }),
       deleteNote: () => ok(),
       addTask: () => ok({ task: null }),
       toggleTask: () => ok(),
       deleteTask: () => ok(),
+      onChanged: () => () => { /* noop in browser */ },
     },
     documents: {
       list: () => ok({ documents: [

@@ -12,6 +12,7 @@ import { DrawerModal } from '../Modals/DrawerModal'
 import { CompareModal } from '../Modals/CompareModal'
 import { ResearchModal } from '../Modals/ResearchModal'
 import { DocumentsView } from '../Workspace/DocumentsView'
+import { NotesView } from '../Workspace/NotesView'
 import { EmailModal } from '../Modals/EmailModal'
 import { CalendarModal } from '../Modals/CalendarModal'
 import { CommandPalette } from '../Modals/CommandPalette'
@@ -60,6 +61,7 @@ export function Layout() {
   const filesPanelOpen = useAppStore((s) => s.filesPanelOpen)
   const toggleFilesPanel = useAppStore((s) => s.toggleFilesPanel)
   const setDrawer = useAppStore((s) => s.setDrawer)
+  const activeDrawer = useAppStore((s) => s.activeDrawer)
   const providers = useAppStore((s) => s.providers)
   const availableModels = useAppStore((s) => s.availableModels)
   const loadModels = useAppStore((s) => s.loadModels)
@@ -203,6 +205,8 @@ export function Layout() {
         <BrowserMode onNewSession={handleNewSession} />
       ) : documentsOpen ? (
         <DocumentsView onNewSession={handleNewSession} />
+      ) : activeDrawer === 'notes' ? (
+        <NotesView onNewSession={handleNewSession} />
       ) : (
         <>
       <div className="flex-1 flex overflow-hidden">

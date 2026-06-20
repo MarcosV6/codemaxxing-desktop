@@ -18,7 +18,8 @@ export function DrawerModal() {
     return () => window.removeEventListener('keydown', onKey)
   }, [activeDrawer, setDrawer])
 
-  if (!activeDrawer) return null
+  // 'notes' is now a full-page workspace (NotesView), not a drawer.
+  if (!activeDrawer || activeDrawer === 'notes') return null
 
   const titleMap = {
     checkpoints: { title: 'Checkpoints', icon: <BookmarkCheck size={14} /> },
@@ -59,7 +60,6 @@ export function DrawerModal() {
           {activeDrawer === 'bg-agents' && <BgAgentsPane />}
           {activeDrawer === 'cron' && <CronPane />}
           {activeDrawer === 'cookbook' && <CookbookPane />}
-          {activeDrawer === 'notes' && <NotesPane />}
           {activeDrawer === 'cockpit' && <CockpitPane />}
         </div>
       </div>

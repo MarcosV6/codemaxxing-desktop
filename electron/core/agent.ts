@@ -78,6 +78,8 @@ export interface AgentEvents {
   onPixelMatch?: (opts: { url?: string; targetPath: string }) => Promise<{ ok: boolean; matchPercent?: number; diffPercent?: number; regions?: Array<{ name: string; diffPercent: number }>; error?: string }>
   // Documents workspace — read/write the open document.
   onDocumentOp?: (op: { action: 'list' | 'read' | 'write' | 'append' | 'create'; id?: string; title?: string; content?: string; text?: string }) => Promise<{ ok: boolean; documents?: { id: string; title: string }[]; doc?: { id: string; title: string; content: string }; error?: string }>
+  // Notes workspace — add/list notes & tasks.
+  onNotesOp?: (op: { action: 'list' | 'add_note' | 'add_task' | 'toggle_task'; text?: string; id?: string }) => Promise<{ ok: boolean; notes?: { id: string; text: string }[]; tasks?: { id: string; text: string; done: boolean }[]; error?: string }>
 }
 
 export type SessionMode = 'code' | 'chat'
@@ -573,6 +575,7 @@ export class CodingAgent {
       browserCommand: this.events.onBrowserCommand,
       pixelMatch: this.events.onPixelMatch,
       documentOp: this.events.onDocumentOp,
+      notesOp: this.events.onNotesOp,
     }
   }
 

@@ -352,6 +352,10 @@ export interface ElectronAPI {
     save: (doc: { id?: string; title: string; content: string }) => Promise<{ ok: boolean; doc?: { id: string; title: string; content: string; updatedAt: number }; error?: string }>
     delete: (id: string) => Promise<{ ok: boolean }>
     assist: (opts: { sessionId?: string; content: string; instruction: string }) => Promise<{ ok: boolean; content?: string; error?: string }>
+    // Tell main which doc (+ live editor content) is open, so the agent's
+    // document_* tools default to it. And reload when the agent edits.
+    setActive: (ctx: { id: string | null; title: string; content: string }) => void
+    onChanged: (cb: () => void) => () => void
   }
 
   // Email — IMAP fetch + SMTP send

@@ -76,6 +76,8 @@ export interface AgentEvents {
   onBrowserCommand?: (cmd: { action: 'navigate' | 'read' | 'screenshot' | 'click'; url?: string; selector?: string; text?: string }) => Promise<{ ok: boolean; error?: string; title?: string; url?: string; text?: string; base64?: string }>
   // Visual pixel-match — diff the running UI against a target design image.
   onPixelMatch?: (opts: { url?: string; targetPath: string }) => Promise<{ ok: boolean; matchPercent?: number; diffPercent?: number; regions?: Array<{ name: string; diffPercent: number }>; error?: string }>
+  // Documents workspace — read/write the open document.
+  onDocumentOp?: (op: { action: 'list' | 'read' | 'write' | 'append' | 'create'; id?: string; title?: string; content?: string; text?: string }) => Promise<{ ok: boolean; documents?: { id: string; title: string }[]; doc?: { id: string; title: string; content: string }; error?: string }>
 }
 
 export type SessionMode = 'code' | 'chat'
@@ -570,6 +572,7 @@ export class CodingAgent {
       capturePreview: this.events.onCapturePreview,
       browserCommand: this.events.onBrowserCommand,
       pixelMatch: this.events.onPixelMatch,
+      documentOp: this.events.onDocumentOp,
     }
   }
 

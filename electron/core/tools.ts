@@ -328,6 +328,46 @@ export const FILE_TOOLS: ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'document_read',
+      description: "Read the document currently open in the Documents workspace (its title + full content). Omit id to use the open doc. Use this before editing so you work from the latest text.",
+      parameters: { type: 'object', properties: { id: { type: 'string', description: 'Document id (optional; defaults to the open doc)' } } },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'document_write',
+      description: "Replace the content (and optionally the title) of the open document in the Documents workspace. Pass the FULL new content. Omit id to write the open doc. The editor updates live.",
+      parameters: { type: 'object', properties: { content: { type: 'string', description: 'Full new document content (Markdown)' }, title: { type: 'string', description: 'New title (optional)' }, id: { type: 'string', description: 'Document id (optional; defaults to the open doc)' } }, required: ['content'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'document_append',
+      description: "Append text to the end of the open document (e.g. add a section). Omit id to use the open doc.",
+      parameters: { type: 'object', properties: { text: { type: 'string', description: 'Text to append' }, id: { type: 'string', description: 'Document id (optional; defaults to the open doc)' } }, required: ['text'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'document_create',
+      description: "Create a new document in the Documents workspace.",
+      parameters: { type: 'object', properties: { title: { type: 'string', description: 'Title' }, content: { type: 'string', description: 'Initial content (Markdown, optional)' } }, required: ['title'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'document_list',
+      description: 'List the documents in the Documents workspace (id + title).',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'glob',
       description:
         "Find files matching a glob pattern. Use this to locate files by name or extension across the project (e.g. '**/*.tsx', 'src/**/test.*', '*.json').",
@@ -635,6 +675,8 @@ export interface ToolExecContext {
   // Visual pixel-match: screenshot a URL and diff it against a target design
   // image on disk; reports overall match + per-region (3×3) differences.
   pixelMatch?: (opts: { url?: string; targetPath: string }) => Promise<{ ok: boolean; matchPercent?: number; diffPercent?: number; regions?: Array<{ name: string; diffPercent: number }>; error?: string }>
+  // Documents workspace — the agent reads/writes the document open in the editor.
+  documentOp?: (op: { action: 'list' | 'read' | 'write' | 'append' | 'create'; id?: string; title?: string; content?: string; text?: string }) => Promise<{ ok: boolean; documents?: { id: string; title: string }[]; doc?: { id: string; title: string; content: string }; error?: string }>
 }
 
 export async function executeTool(
@@ -899,6 +941,42 @@ export async function executeTool(
       const worst = (r.regions ?? []).filter((x) => x.diffPercent > 2).sort((a, b) => b.diffPercent - a.diffPercent).slice(0, 3)
       const where = worst.length ? worst.map((w) => `${w.name} (${w.diffPercent.toFixed(0)}% off)`).join(', ') : 'negligible / evenly distributed'
       return `Visual match vs ${target}: ${(r.matchPercent ?? 0).toFixed(1)}% (${(r.diffPercent ?? 0).toFixed(1)}% of pixels differ).\nBiggest differences: ${where}.\nAdjust those regions, then call pixel_match again to re-check.`
+    }
+
+    case 'document_list': {
+      if (!ctx.documentOp) return 'The Documents workspace is not available in this environment.'
+      const r = await ctx.documentOp({ action: 'list' })
+      if (!r.ok) return `Could not list documents: ${r.error ?? 'unknown error'}`
+      if (!r.documents || r.documents.length === 0) return 'No documents yet.'
+      return r.documents.map((d) => `- ${d.title || 'Untitled'} (id: ${d.id})`).join('\n')
+    }
+    case 'document_read': {
+      if (!ctx.documentOp) return 'The Documents workspace is not available in this environment.'
+      const r = await ctx.documentOp({ action: 'read', id: args.id ? String(args.id) : undefined })
+      if (!r.ok || !r.doc) return `Could not read the document: ${r.error ?? 'unknown error'}`
+      return `# ${r.doc.title || 'Untitled'} (id: ${r.doc.id})\n\n${r.doc.content || '(empty)'}`
+    }
+    case 'document_write': {
+      if (!ctx.documentOp) return 'The Documents workspace is not available in this environment.'
+      const content = String(args.content ?? '')
+      const r = await ctx.documentOp({ action: 'write', id: args.id ? String(args.id) : undefined, title: args.title ? String(args.title) : undefined, content })
+      if (!r.ok || !r.doc) return `Could not write the document: ${r.error ?? 'unknown error'}`
+      return `Updated "${r.doc.title}" (${content.length} chars). The editor now shows your changes.`
+    }
+    case 'document_append': {
+      if (!ctx.documentOp) return 'The Documents workspace is not available in this environment.'
+      const text = String(args.text ?? '')
+      if (!text) return "Error: document_append needs 'text'."
+      const r = await ctx.documentOp({ action: 'append', id: args.id ? String(args.id) : undefined, text })
+      if (!r.ok || !r.doc) return `Could not append: ${r.error ?? 'unknown error'}`
+      return `Appended to "${r.doc.title}". The editor updated.`
+    }
+    case 'document_create': {
+      if (!ctx.documentOp) return 'The Documents workspace is not available in this environment.'
+      const title = String(args.title ?? 'Untitled')
+      const r = await ctx.documentOp({ action: 'create', title, content: args.content ? String(args.content) : '' })
+      if (!r.ok || !r.doc) return `Could not create the document: ${r.error ?? 'unknown error'}`
+      return `Created "${r.doc.title}" (id: ${r.doc.id}).`
     }
 
     case 'glob': {

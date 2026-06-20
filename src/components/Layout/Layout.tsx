@@ -11,7 +11,7 @@ import { NewSessionModal } from '../Modals/NewSessionModal'
 import { DrawerModal } from '../Modals/DrawerModal'
 import { CompareModal } from '../Modals/CompareModal'
 import { ResearchModal } from '../Modals/ResearchModal'
-import { DocumentsModal } from '../Modals/DocumentsModal'
+import { DocumentsView } from '../Workspace/DocumentsView'
 import { EmailModal } from '../Modals/EmailModal'
 import { CalendarModal } from '../Modals/CalendarModal'
 import { CommandPalette } from '../Modals/CommandPalette'
@@ -46,6 +46,7 @@ export function Layout() {
   const openCompare = useAppStore((s) => s.openCompare)
   const openResearch = useAppStore((s) => s.openResearch)
   const openDocuments = useAppStore((s) => s.openDocuments)
+  const documentsOpen = useAppStore((s) => s.documentsOpen)
   const openEmail = useAppStore((s) => s.openEmail)
   const openCalendar = useAppStore((s) => s.openCalendar)
   const updateSessionCwd = useAppStore((s) => s.updateSessionCwd)
@@ -200,6 +201,8 @@ export function Layout() {
     >
       {browserView ? (
         <BrowserMode onNewSession={handleNewSession} />
+      ) : documentsOpen ? (
+        <DocumentsView onNewSession={handleNewSession} />
       ) : (
         <>
       <div className="flex-1 flex overflow-hidden">
@@ -688,7 +691,6 @@ export function Layout() {
       <DrawerModal />
       <CompareModal />
       <ResearchModal />
-      <DocumentsModal />
       <EmailModal />
       <CalendarModal />
       <CommandPalette />

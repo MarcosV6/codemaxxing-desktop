@@ -275,10 +275,15 @@ export function installBrowserMock(): void {
       deleteTask: () => ok(),
     },
     documents: {
-      list: () => ok({ documents: [] }),
+      list: () => ok({ documents: [
+        { id: 'doc1', title: 'Welcome', content: '# Welcome\n\nThis is a demo document so the editor shows content in the browser preview.', updatedAt: Date.now() },
+        { id: 'doc2', title: 'Ideas', content: '- first idea\n- second idea', updatedAt: Date.now() - 8.64e7 },
+      ] }),
       save: (doc: { id?: string; title: string; content: string }) => ok({ doc: { id: doc.id || 'mock', title: doc.title, content: doc.content, updatedAt: Date.now() } }),
       delete: () => ok(),
       assist: (opts: { content?: string }) => ok({ content: opts?.content ?? '' }),
+      setActive: () => { /* noop in browser */ },
+      onChanged: () => () => { /* noop in browser */ },
     },
     email: {
       getAccount: () => ok({ account: null }),

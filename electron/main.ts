@@ -829,6 +829,59 @@ async function browserCommand(
   })
 }
 
+// ─── Documents agent tools ───────────────────────────────────────────────────
+// The Documents workspace reports the open doc (with live editor content) here,
+// so the agent's document_* tools default to "this doc". Writes persist to the
+// same JSON store the UI reads and emit `documents:changed` so the editor reloads.
+type DocRecord = { id: string; title: string; content: string; updatedAt: number }
+let activeDocContext: { id: string | null; title: string; content: string } | null = null
+ipcMain.on('documents:setActive', (_e, ctx: { id: string | null; title: string; content: string }) => { activeDocContext = ctx })
+
+function readDocsFile(): DocRecord[] {
+  try {
+    const f = join(CONFIG_DIR, 'documents.json')
+    if (existsSync(f)) { const d = JSON.parse(readFileSync(f, 'utf-8')); return Array.isArray(d.documents) ? d.documents : [] }
+  } catch { /* corrupt → fresh */ }
+  return []
+}
+function writeDocsFile(documents: DocRecord[]) {
+  if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 })
+  writeFileSync(join(CONFIG_DIR, 'documents.json'), JSON.stringify({ documents }, null, 2))
+}
+function saveDocItem(input: { id?: string; title: string; content: string }): DocRecord {
+  const docs = readDocsFile()
+  if (input.id) {
+    const ex = docs.find((d) => d.id === input.id)
+    if (ex) { ex.title = input.title; ex.content = input.content; ex.updatedAt = Date.now(); writeDocsFile(docs); return ex }
+  }
+  const created = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7), title: input.title || 'Untitled', content: input.content || '', updatedAt: Date.now() }
+  docs.unshift(created); writeDocsFile(docs); return created
+}
+
+async function documentOp(op: { action: 'list' | 'read' | 'write' | 'append' | 'create'; id?: string; title?: string; content?: string; text?: string }): Promise<{ ok: boolean; documents?: { id: string; title: string }[]; doc?: { id: string; title: string; content: string }; error?: string }> {
+  const docs = readDocsFile()
+  if (op.action === 'list') return { ok: true, documents: docs.map((d) => ({ id: d.id, title: d.title })) }
+  if (op.action === 'create') { const doc = saveDocItem({ title: op.title || 'Untitled', content: op.content || '' }); emit('documents:changed'); return { ok: true, doc } }
+  const targetId = op.id || activeDocContext?.id || undefined
+  if (op.action === 'read') {
+    if (targetId && activeDocContext && activeDocContext.id === targetId) return { ok: true, doc: { id: targetId, title: activeDocContext.title, content: activeDocContext.content } }
+    const d = docs.find((x) => x.id === targetId)
+    if (!d) return { ok: false, error: 'No document open — open one in Documents or pass an id (use document_list).' }
+    return { ok: true, doc: { id: d.id, title: d.title, content: d.content } }
+  }
+  if (!targetId) return { ok: false, error: 'No target document — open one in Documents or pass an id.' }
+  const existing = docs.find((x) => x.id === targetId)
+  const baseContent = (activeDocContext && activeDocContext.id === targetId) ? activeDocContext.content : (existing?.content ?? '')
+  const baseTitle = existing?.title ?? (activeDocContext?.title ?? 'Untitled')
+  let content = baseContent
+  let title = baseTitle
+  if (op.action === 'write') { content = op.content ?? content; if (op.title) title = op.title }
+  if (op.action === 'append') { content = baseContent + (op.text || '') }
+  const doc = saveDocItem({ id: targetId, title, content })
+  emit('documents:changed')
+  return { ok: true, doc }
+}
+
 /** Make sure the desktop window is visible and focused. Called when an
  *  agent event needs immediate user attention (approval, ask-user). Cheap
  *  to call when the window is already up — `show()` + `focus()` are no-ops
@@ -1264,6 +1317,7 @@ function setupIPC(): void {
         },
         onBrowserCommand: browserCommand,
         onPixelMatch: pixelMatch,
+        onDocumentOp: documentOp,
         onPlanExit: (plan) => emit('agent:planExit', { sessionId: opts.sessionId, plan }),
         onUsage: (u) => emit('agent:usage', { sessionId: opts.sessionId, usage: u }),
         onStats: (s) => emit('agent:stats', { sessionId: opts.sessionId, stats: s }),

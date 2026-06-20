@@ -298,6 +298,8 @@ contextBridge.exposeInMainWorld('electron', {
     save: (doc: { id?: string; title: string; content: string }) => ipcRenderer.invoke('documents:save', doc),
     delete: (id: string) => ipcRenderer.invoke('documents:delete', id),
     assist: (opts: { sessionId?: string; content: string; instruction: string }) => ipcRenderer.invoke('documents:assist', opts),
+    setActive: (ctx: { id: string | null; title: string; content: string }) => ipcRenderer.send('documents:setActive', ctx),
+    onChanged: (cb: () => void) => on('documents:changed', cb),
   },
 
   // ── Email ──

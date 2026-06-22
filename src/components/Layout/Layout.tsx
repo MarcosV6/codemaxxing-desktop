@@ -13,8 +13,8 @@ import { CompareModal } from '../Modals/CompareModal'
 import { ResearchModal } from '../Modals/ResearchModal'
 import { DocumentsView } from '../Workspace/DocumentsView'
 import { NotesView } from '../Workspace/NotesView'
-import { EmailModal } from '../Modals/EmailModal'
-import { CalendarModal } from '../Modals/CalendarModal'
+import { EmailView } from '../Workspace/EmailView'
+import { CalendarView } from '../Workspace/CalendarView'
 import { CommandPalette } from '../Modals/CommandPalette'
 import { OnboardingOverlay } from '../Modals/OnboardingOverlay'
 import { FilesPanel } from '../Files/FilesPanel'
@@ -49,7 +49,9 @@ export function Layout() {
   const openDocuments = useAppStore((s) => s.openDocuments)
   const documentsOpen = useAppStore((s) => s.documentsOpen)
   const openEmail = useAppStore((s) => s.openEmail)
+  const emailOpen = useAppStore((s) => s.emailOpen)
   const openCalendar = useAppStore((s) => s.openCalendar)
+  const calendarOpen = useAppStore((s) => s.calendarOpen)
   const updateSessionCwd = useAppStore((s) => s.updateSessionCwd)
   const updateSessionModel = useAppStore((s) => s.updateSessionModel)
   const renameSession = useAppStore((s) => s.renameSession)
@@ -207,6 +209,10 @@ export function Layout() {
         <DocumentsView onNewSession={handleNewSession} />
       ) : activeDrawer === 'notes' ? (
         <NotesView onNewSession={handleNewSession} />
+      ) : emailOpen ? (
+        <EmailView onNewSession={handleNewSession} />
+      ) : calendarOpen ? (
+        <CalendarView onNewSession={handleNewSession} />
       ) : (
         <>
       <div className="flex-1 flex overflow-hidden">
@@ -695,8 +701,6 @@ export function Layout() {
       <DrawerModal />
       <CompareModal />
       <ResearchModal />
-      <EmailModal />
-      <CalendarModal />
       <CommandPalette />
       <NewSessionModal open={newSessionOpen} onClose={() => setNewSessionOpen(false)} />
       <OnboardingOverlay />

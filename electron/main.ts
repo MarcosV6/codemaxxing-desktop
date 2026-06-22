@@ -917,6 +917,73 @@ async function notesOp(op: { action: 'list' | 'add_note' | 'add_task' | 'toggle_
   return { ok: false, error: 'unknown action' }
 }
 
+// ─── Email agent tools ───────────────────────────────────────────────────────
+// The Email workspace reports the open message here so email_read targets it;
+// email_send reuses the configured SMTP account (password decrypted via auth).
+type EmailAcctRec = { email: string; smtpHost: string; smtpPort: number; password: string }
+let activeEmailContext: { uid?: number; from?: string; to?: string; subject?: string; text?: string } | null = null
+ipcMain.on('email:setActive', (_e, ctx: { uid?: number; from?: string; to?: string; subject?: string; text?: string } | null) => { activeEmailContext = ctx })
+function readEmailAcctFile(): EmailAcctRec | null {
+  try {
+    const f = join(CONFIG_DIR, 'email.json')
+    if (existsSync(f)) { const a = JSON.parse(readFileSync(f, 'utf-8')); return { ...a, password: auth.decryptSecret(a.password || '') } }
+  } catch { /* corrupt → none */ }
+  return null
+}
+async function emailOp(op: { action: 'read' | 'send'; to?: string; subject?: string; text?: string }): Promise<{ ok: boolean; message?: { from?: string; to?: string; subject?: string; text?: string }; error?: string }> {
+  if (op.action === 'read') {
+    if (!activeEmailContext) return { ok: false, error: 'No email open — open one in the Email workspace.' }
+    return { ok: true, message: activeEmailContext }
+  }
+  const a = readEmailAcctFile()
+  if (!a) return { ok: false, error: 'No email account configured (set one up in the Email workspace).' }
+  if (!op.to) return { ok: false, error: "email_send needs a recipient ('to')." }
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const nm: any = await import('nodemailer')
+    const createTransport = nm.createTransport || nm.default?.createTransport
+    const transport = createTransport({ host: a.smtpHost, port: a.smtpPort, secure: a.smtpPort === 465, auth: { user: a.email, pass: a.password }, connectionTimeout: 15000, greetingTimeout: 10000, socketTimeout: 20000 })
+    await transport.sendMail({ from: a.email, to: op.to, subject: op.subject || '(no subject)', text: op.text || '' })
+    return { ok: true }
+  } catch (err: unknown) { return { ok: false, error: auth.scrubSecrets((err as Error)?.message ?? String(err)) } }
+}
+
+// ─── Calendar agent tools ────────────────────────────────────────────────────
+// The Calendar workspace reports its loaded events so calendar_list can return
+// them; calendar_add creates a CalDAV event (then the view re-syncs).
+type CalEvt = { summary: string; start: number; end: number; location?: string }
+let activeCalEvents: CalEvt[] = []
+ipcMain.on('calendar:setEvents', (_e, events: CalEvt[]) => { activeCalEvents = Array.isArray(events) ? events : [] })
+function readCalAcctFile(): { url: string; username: string; password: string } | null {
+  try {
+    const f = join(CONFIG_DIR, 'calendar.json')
+    if (existsSync(f)) { const a = JSON.parse(readFileSync(f, 'utf-8')); return { ...a, password: auth.decryptSecret(a.password || '') } }
+  } catch { /* corrupt → none */ }
+  return null
+}
+async function calendarOp(op: { action: 'list' | 'add'; summary?: string; start?: number; end?: number; location?: string }): Promise<{ ok: boolean; events?: CalEvt[]; error?: string }> {
+  if (op.action === 'list') return { ok: true, events: activeCalEvents }
+  const a = readCalAcctFile()
+  if (!a) return { ok: false, error: 'No calendar account configured (set one up in the Calendar workspace).' }
+  if (!op.summary || !op.start) return { ok: false, error: "calendar_add needs 'summary' and 'start'." }
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const dav: any = await import('tsdav')
+    const createDAVClient = dav.createDAVClient || dav.default?.createDAVClient
+    const client: any = await createDAVClient({ serverUrl: a.url, credentials: { username: a.username, password: a.password }, authMethod: 'Basic', defaultAccountType: 'caldav' }) // eslint-disable-line @typescript-eslint/no-explicit-any
+    const calendars: unknown[] = await client.fetchCalendars()
+    const cal = calendars[0]
+    if (!cal) return { ok: false, error: 'No calendar found on the server.' }
+    const fmt = (ms: number) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
+    const uid = `${Date.now().toString(36)}@codemaxxing`
+    const end = op.end || op.start + 3600000
+    const ics = `BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//codemaxxing//EN\nBEGIN:VEVENT\nUID:${uid}\nDTSTAMP:${fmt(Date.now())}\nDTSTART:${fmt(op.start)}\nDTEND:${fmt(end)}\nSUMMARY:${String(op.summary).replace(/\r?\n/g, ' ')}\n${op.location ? `LOCATION:${String(op.location).replace(/\r?\n/g, ' ')}\n` : ''}END:VEVENT\nEND:VCALENDAR`
+    await client.createCalendarObject({ calendar: cal, filename: `${uid}.ics`, iCalString: ics })
+    emit('calendar:changed')
+    return { ok: true }
+  } catch (err: unknown) { return { ok: false, error: auth.scrubSecrets((err as Error)?.message ?? String(err)) } }
+}
+
 /** Make sure the desktop window is visible and focused. Called when an
  *  agent event needs immediate user attention (approval, ask-user). Cheap
  *  to call when the window is already up — `show()` + `focus()` are no-ops
@@ -1354,6 +1421,8 @@ function setupIPC(): void {
         onPixelMatch: pixelMatch,
         onDocumentOp: documentOp,
         onNotesOp: notesOp,
+        onEmailOp: emailOp,
+        onCalendarOp: calendarOp,
         onPlanExit: (plan) => emit('agent:planExit', { sessionId: opts.sessionId, plan }),
         onUsage: (u) => emit('agent:usage', { sessionId: opts.sessionId, usage: u }),
         onStats: (s) => emit('agent:stats', { sessionId: opts.sessionId, stats: s }),

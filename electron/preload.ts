@@ -310,6 +310,7 @@ contextBridge.exposeInMainWorld('electron', {
     list: (opts?: { limit?: number }) => ipcRenderer.invoke('email:list', opts),
     get: (uid: number) => ipcRenderer.invoke('email:get', uid),
     send: (opts: { to: string; subject: string; text: string }) => ipcRenderer.invoke('email:send', opts),
+    setActive: (ctx: { uid?: number; from?: string; to?: string; subject?: string; text?: string } | null) => ipcRenderer.send('email:setActive', ctx),
   },
 
   // ── Calendar ──
@@ -317,6 +318,8 @@ contextBridge.exposeInMainWorld('electron', {
     getAccount: () => ipcRenderer.invoke('calendar:getAccount'),
     saveAccount: (a: { url: string; username: string; password?: string }) => ipcRenderer.invoke('calendar:saveAccount', a),
     events: (opts?: { start?: number; end?: number }) => ipcRenderer.invoke('calendar:events', opts),
+    setEvents: (events: Array<{ summary: string; start: number; end: number; location: string }>) => ipcRenderer.send('calendar:setEvents', events),
+    onChanged: (cb: () => void) => on('calendar:changed', cb),
   },
 
   // ── Config ──

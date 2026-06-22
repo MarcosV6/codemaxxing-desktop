@@ -80,6 +80,10 @@ export interface AgentEvents {
   onDocumentOp?: (op: { action: 'list' | 'read' | 'write' | 'append' | 'create'; id?: string; title?: string; content?: string; text?: string }) => Promise<{ ok: boolean; documents?: { id: string; title: string }[]; doc?: { id: string; title: string; content: string }; error?: string }>
   // Notes workspace — add/list notes & tasks.
   onNotesOp?: (op: { action: 'list' | 'add_note' | 'add_task' | 'toggle_task'; text?: string; id?: string }) => Promise<{ ok: boolean; notes?: { id: string; text: string }[]; tasks?: { id: string; text: string; done: boolean }[]; error?: string }>
+  // Email workspace — read the open message + send mail.
+  onEmailOp?: (op: { action: 'read' | 'send'; to?: string; subject?: string; text?: string }) => Promise<{ ok: boolean; message?: { from?: string; to?: string; subject?: string; text?: string }; error?: string }>
+  // Calendar workspace — list events + add an event.
+  onCalendarOp?: (op: { action: 'list' | 'add'; summary?: string; start?: number; end?: number; location?: string }) => Promise<{ ok: boolean; events?: { summary: string; start: number; end: number; location?: string }[]; error?: string }>
 }
 
 export type SessionMode = 'code' | 'chat'
@@ -576,6 +580,8 @@ export class CodingAgent {
       pixelMatch: this.events.onPixelMatch,
       documentOp: this.events.onDocumentOp,
       notesOp: this.events.onNotesOp,
+      emailOp: this.events.onEmailOp,
+      calendarOp: this.events.onCalendarOp,
     }
   }
 

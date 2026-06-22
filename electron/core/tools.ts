@@ -400,6 +400,38 @@ export const FILE_TOOLS: ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'email_read',
+      description: 'Read the email message currently open in the Email workspace (from/to/subject/body). Use before drafting a reply.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'email_send',
+      description: "Send an email from the configured account in the Email workspace. Confirm the recipient and content with the user before sending.",
+      parameters: { type: 'object', properties: { to: { type: 'string', description: 'Recipient email address' }, subject: { type: 'string', description: 'Subject' }, text: { type: 'string', description: 'Plain-text body' } }, required: ['to', 'text'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'calendar_list',
+      description: 'List the upcoming events shown in the Calendar workspace.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'calendar_add',
+      description: "Add an event to the user's calendar (CalDAV). Provide start (and optionally end) as ISO 8601 datetimes. Confirm details with the user first.",
+      parameters: { type: 'object', properties: { summary: { type: 'string', description: 'Event title' }, start: { type: 'string', description: 'Start datetime, ISO 8601 (e.g. 2026-06-23T15:00:00)' }, end: { type: 'string', description: 'End datetime, ISO 8601 (optional; defaults to +1h)' }, location: { type: 'string', description: 'Location (optional)' } }, required: ['summary', 'start'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'glob',
       description:
         "Find files matching a glob pattern. Use this to locate files by name or extension across the project (e.g. '**/*.tsx', 'src/**/test.*', '*.json').",
@@ -711,6 +743,10 @@ export interface ToolExecContext {
   documentOp?: (op: { action: 'list' | 'read' | 'write' | 'append' | 'create'; id?: string; title?: string; content?: string; text?: string }) => Promise<{ ok: boolean; documents?: { id: string; title: string }[]; doc?: { id: string; title: string; content: string }; error?: string }>
   // Notes workspace — add/list notes & tasks.
   notesOp?: (op: { action: 'list' | 'add_note' | 'add_task' | 'toggle_task'; text?: string; id?: string }) => Promise<{ ok: boolean; notes?: { id: string; text: string }[]; tasks?: { id: string; text: string; done: boolean }[]; error?: string }>
+  // Email workspace — read the open message + send mail.
+  emailOp?: (op: { action: 'read' | 'send'; to?: string; subject?: string; text?: string }) => Promise<{ ok: boolean; message?: { from?: string; to?: string; subject?: string; text?: string }; error?: string }>
+  // Calendar workspace — list events + add an event.
+  calendarOp?: (op: { action: 'list' | 'add'; summary?: string; start?: number; end?: number; location?: string }) => Promise<{ ok: boolean; events?: { summary: string; start: number; end: number; location?: string }[]; error?: string }>
 }
 
 export async function executeTool(
@@ -1039,6 +1075,39 @@ export async function executeTool(
       const notes = (r.notes ?? []).map((n) => `- ${n.text}`).join('\n') || '(none)'
       const tasks = (r.tasks ?? []).map((t) => `- [${t.done ? 'x' : ' '}] ${t.text}`).join('\n') || '(none)'
       return `# Notes\n${notes}\n\n# Tasks\n${tasks}`
+    }
+
+    case 'email_read': {
+      if (!ctx.emailOp) return 'The Email workspace is not available in this environment.'
+      const r = await ctx.emailOp({ action: 'read' })
+      if (!r.ok || !r.message) return `Could not read the email: ${r.error ?? 'unknown error'}`
+      const m = r.message
+      return `From: ${m.from || ''}\nTo: ${m.to || ''}\nSubject: ${m.subject || ''}\n\n${m.text || '(no body)'}`
+    }
+    case 'email_send': {
+      if (!ctx.emailOp) return 'The Email workspace is not available in this environment.'
+      const to = String(args.to ?? '').trim()
+      if (!to) return "Error: email_send needs 'to'."
+      const r = await ctx.emailOp({ action: 'send', to, subject: args.subject ? String(args.subject) : undefined, text: args.text ? String(args.text) : '' })
+      return r.ok ? `Email sent to ${to}.` : `Could not send: ${r.error ?? 'unknown error'}`
+    }
+
+    case 'calendar_list': {
+      if (!ctx.calendarOp) return 'The Calendar workspace is not available in this environment.'
+      const r = await ctx.calendarOp({ action: 'list' })
+      if (!r.ok) return `Could not list events: ${r.error ?? 'unknown error'}`
+      if (!r.events || r.events.length === 0) return 'No upcoming events.'
+      return r.events.map((e) => `- ${new Date(e.start).toLocaleString()} — ${e.summary}${e.location ? ` @ ${e.location}` : ''}`).join('\n')
+    }
+    case 'calendar_add': {
+      if (!ctx.calendarOp) return 'The Calendar workspace is not available in this environment.'
+      const summary = String(args.summary ?? '').trim()
+      if (!summary) return "Error: calendar_add needs 'summary'."
+      const startMs = args.start ? Date.parse(String(args.start)) : NaN
+      if (!startMs || Number.isNaN(startMs)) return "Error: calendar_add needs a valid 'start' (ISO 8601 datetime)."
+      const endParsed = args.end ? Date.parse(String(args.end)) : NaN
+      const r = await ctx.calendarOp({ action: 'add', summary, start: startMs, end: Number.isNaN(endParsed) ? undefined : endParsed, location: args.location ? String(args.location) : undefined })
+      return r.ok ? `Added "${summary}" to your calendar.` : `Could not add the event: ${r.error ?? 'unknown error'}`
     }
 
     case 'glob': {

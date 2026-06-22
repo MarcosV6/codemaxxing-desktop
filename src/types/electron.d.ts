@@ -366,6 +366,7 @@ export interface ElectronAPI {
     list: (opts?: { limit?: number }) => Promise<{ ok: boolean; messages?: Array<{ uid: number; from: string; fromName: string; subject: string; date: number; seen: boolean }>; error?: string }>
     get: (uid: number) => Promise<{ ok: boolean; message?: { uid: number; from: string; to: string; subject: string; date: number; text: string }; error?: string }>
     send: (opts: { to: string; subject: string; text: string }) => Promise<{ ok: boolean; error?: string }>
+    setActive: (ctx: { uid?: number; from?: string; to?: string; subject?: string; text?: string } | null) => void
   }
 
   // Calendar — CalDAV
@@ -373,6 +374,8 @@ export interface ElectronAPI {
     getAccount: () => Promise<{ ok: boolean; account: { url: string; username: string; passwordSet: boolean } | null }>
     saveAccount: (a: { url: string; username: string; password?: string }) => Promise<{ ok: boolean }>
     events: (opts?: { start?: number; end?: number }) => Promise<{ ok: boolean; events?: Array<{ summary: string; start: number; end: number; location: string; calendar: string }>; error?: string }>
+    setEvents: (events: Array<{ summary: string; start: number; end: number; location: string }>) => void
+    onChanged: (cb: () => void) => () => void
   }
 
   // Config

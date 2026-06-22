@@ -290,16 +290,25 @@ export function installBrowserMock(): void {
       onChanged: () => () => { /* noop in browser */ },
     },
     email: {
-      getAccount: () => ok({ account: null }),
+      getAccount: () => ok({ account: { email: 'you@example.com', imapHost: 'imap.example.com', imapPort: 993, smtpHost: 'smtp.example.com', smtpPort: 465, passwordSet: true } }),
       saveAccount: () => ok(),
-      list: () => ok({ messages: [] }),
-      get: () => ok({ message: null }),
+      list: () => ok({ messages: [
+        { uid: 2, from: 'alex@team.com', fromName: 'Alex', subject: 'Re: the build', date: Date.now() - 3.6e6, seen: false },
+        { uid: 1, from: 'newsletter@dev.to', fromName: 'DEV', subject: 'Weekly digest', date: Date.now() - 8.6e7, seen: true },
+      ] }),
+      get: (uid: number) => ok({ message: { uid, from: 'alex@team.com', to: 'you@example.com', subject: 'Re: the build', date: Date.now() - 3.6e6, text: 'Looks great — can you ship the arm64 build today?' } }),
       send: () => ok(),
+      setActive: () => { /* noop in browser */ },
     },
     calendar: {
-      getAccount: () => ok({ account: null }),
+      getAccount: () => ok({ account: { url: 'https://caldav.example.com', username: 'you@example.com', passwordSet: true } }),
       saveAccount: () => ok(),
-      events: () => ok({ events: [] }),
+      events: () => ok({ events: [
+        { summary: 'Standup', start: Date.now() + 3.6e6, end: Date.now() + 5.4e6, location: '', calendar: 'Work' },
+        { summary: 'Design review', start: Date.now() + 9e7, end: Date.now() + 9.4e7, location: 'Zoom', calendar: 'Work' },
+      ] }),
+      setEvents: () => { /* noop in browser */ },
+      onChanged: () => () => { /* noop in browser */ },
     },
     preview: {
       // Browser-only: register the callback and expose window.__firePreviewOpen(url)

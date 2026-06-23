@@ -386,16 +386,18 @@ export function installBrowserMock(): void {
       listModels: async (providerId: string) => {
         try {
           if (providerId === 'lmstudio') {
-            const r = await fetch('http://127.0.0.1:1234/v1/models', { signal: AbortSignal.timeout(3000) })
-            if (!r.ok) return { ok: false, error: `LM Studio returned ${r.status}` }
-            const j = await r.json()
-            return { ok: true, models: (j.data || []).map((m: any) => ({ id: m.id, name: m.id })) }
+            try {
+              const r = await fetch('http://127.0.0.1:1234/v1/models', { signal: AbortSignal.timeout(3000) })
+              if (r.ok) { const j = await r.json(); return { ok: true, models: (j.data || []).map((m: any) => ({ id: m.id, name: m.id })) } }
+            } catch { /* browser CORS blocks localhost in the preview — fall back to samples */ }
+            return { ok: true, models: [{ id: 'qwen2.5-coder-32b-instruct', name: 'qwen2.5-coder-32b-instruct' }, { id: 'llama-3.2-3b-instruct', name: 'llama-3.2-3b-instruct' }] }
           }
           if (providerId === 'ollama') {
-            const r = await fetch('http://127.0.0.1:11434/v1/models', { signal: AbortSignal.timeout(3000) })
-            if (!r.ok) return { ok: false, error: `Ollama returned ${r.status}` }
-            const j = await r.json()
-            return { ok: true, models: (j.data || []).map((m: any) => ({ id: m.id, name: m.id })) }
+            try {
+              const r = await fetch('http://127.0.0.1:11434/v1/models', { signal: AbortSignal.timeout(3000) })
+              if (r.ok) { const j = await r.json(); return { ok: true, models: (j.data || []).map((m: any) => ({ id: m.id, name: m.id })) } }
+            } catch { /* preview CORS — fall back to samples */ }
+            return { ok: true, models: [{ id: 'llama3.2:latest', name: 'llama3.2:latest' }] }
           }
         } catch (e: any) {
           return { ok: false, error: String(e?.message ?? e) }

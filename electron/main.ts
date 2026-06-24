@@ -1149,6 +1149,24 @@ function setupIPC(): void {
           return { ok: false, error: 'No base URL configured for this provider. Open Settings → Providers and set the URL of your server (e.g. http://your-tailnet-host:8080/v1).' }
         }
         console.log('[llm:listModels] local probe', providerId, baseUrl)
+        // LM Studio: its OpenAI-compat /v1/models only lists models currently
+        // LOADED (unless JIT loading is on). The native REST API GET /api/v0/models
+        // lists EVERY downloaded model regardless of load state — which is what
+        // users expect to pick from. Try it first; fall through to /v1/models.
+        if (providerId === 'lmstudio') {
+          const root = baseUrl.replace(/\/v1\/?$/, '')
+          try {
+            const r = await fetch(`${root}/api/v0/models`, { signal: AbortSignal.timeout(4000) })
+            if (r.ok) {
+              const j: any = await r.json()
+              const models = Array.isArray(j?.data) ? j.data : []
+              if (models.length > 0) {
+                console.log('[llm:listModels] lmstudio /api/v0/models →', models.length, 'downloaded models')
+                return { ok: true, models: models.map((m: any) => ({ name: m.id, id: m.id })) }
+              }
+            }
+          } catch { /* native API not available (older LM Studio) → fall through */ }
+        }
         let url: string
         try {
           url = new URL('models', baseUrl.endsWith('/') ? baseUrl : baseUrl + '/').toString()

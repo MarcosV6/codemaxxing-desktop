@@ -29,13 +29,14 @@ export function OnboardingOverlay() {
   const [saving, setSaving] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [rechecking, setRechecking] = useState(false)
+  const [localResult, setLocalResult] = useState<string | null>(null)
 
   if (!open) return null
 
   const authedCloud = providers.filter((p) => p.authed && !p.local)
   const connected = authedCloud.length > 0 || detectedAuth.length > 0
   const keyProviders = providers.filter((p) => p.methods.includes('api-key') && !p.local)
-  const oauthProviders = providers.filter((p) => p.methods.includes('oauth'))
+  const hasOAuth = (id: string) => !!providers.find((p) => p.id === id && p.methods.includes('oauth'))
   const keyDef = providers.find((p) => p.id === keyProvider)
 
   const connectKey = async () => {
@@ -47,9 +48,21 @@ export function OnboardingOverlay() {
     setBusy(provider)
     try { await runAuthFlow(provider, 'oauth') } finally { setBusy(null) }
   }
-  const recheck = async () => {
-    setRechecking(true)
-    try { await refresh() } finally { setRechecking(false) }
+  const detectLocal = async () => {
+    setRechecking(true); setLocalResult(null)
+    try {
+      const [lm, ol] = await Promise.all([
+        window.electron.llm.listModels('lmstudio'),
+        window.electron.llm.listModels('ollama'),
+      ])
+      const parts: string[] = []
+      if (lm.ok && lm.models && lm.models.length) parts.push(`LM Studio: ${lm.models.length} model${lm.models.length === 1 ? '' : 's'}`)
+      if (ol.ok && ol.models && ol.models.length) parts.push(`Ollama: ${ol.models.length} model${ol.models.length === 1 ? '' : 's'}`)
+      await refresh()
+      setLocalResult(parts.length
+        ? `Found ${parts.join(' · ')}. You're set — pick one when you start a session.`
+        : "No local models found. Start LM Studio's server (Developer tab) or Ollama with a model, then Detect again.")
+    } finally { setRechecking(false) }
   }
 
   return (
@@ -178,39 +191,45 @@ export function OnboardingOverlay() {
                 )}
               </div>
 
-              {/* OAuth */}
-              {oauthProviders.length > 0 && (
-                <div className="flex gap-2 mb-2.5">
-                  {oauthProviders.slice(0, 2).map((p) => (
-                    <button
-                      key={p.id}
-                      onClick={() => oauth(p.id)}
-                      disabled={busy === p.id}
-                      className="flex-1 text-[12px] px-3 py-2.5 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
-                      style={{ backgroundColor: 'var(--theme-bg-raised)', border: '1px solid var(--theme-border)', color: 'var(--theme-text)' }}
-                    >
-                      {busy === p.id ? <Loader2 size={13} className="animate-spin" /> : <Cpu size={13} style={{ color: 'var(--theme-secondary)' }} />}
-                      Sign in with {p.name}
-                    </button>
-                  ))}
+              {/* OAuth — the easiest path for most people */}
+              {(hasOAuth('anthropic') || hasOAuth('openai')) && (
+                <div className="mb-2.5">
+                  <div className="text-[10.5px] uppercase tracking-wider opacity-40 mb-1.5" style={{ color: 'var(--theme-muted)' }}>Or sign in (no key needed)</div>
+                  <div className="flex gap-2">
+                    {hasOAuth('anthropic') && (
+                      <button onClick={() => oauth('anthropic')} disabled={busy === 'anthropic'} className="flex-1 text-[12px] px-3 py-2.5 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors disabled:opacity-50" style={{ backgroundColor: 'var(--theme-bg-raised)', border: '1px solid var(--theme-border)', color: 'var(--theme-text)' }}>
+                        {busy === 'anthropic' ? <Loader2 size={13} className="animate-spin" /> : <Cpu size={13} style={{ color: 'var(--theme-secondary)' }} />}
+                        Login with Claude
+                      </button>
+                    )}
+                    {hasOAuth('openai') && (
+                      <button onClick={() => oauth('openai')} disabled={busy === 'openai'} className="flex-1 text-[12px] px-3 py-2.5 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors disabled:opacity-50" style={{ backgroundColor: 'var(--theme-bg-raised)', border: '1px solid var(--theme-border)', color: 'var(--theme-text)' }}>
+                        {busy === 'openai' ? <Loader2 size={13} className="animate-spin" /> : <Cpu size={13} style={{ color: 'var(--theme-secondary)' }} />}
+                        Login with ChatGPT
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
 
-              {/* Local */}
-              <div className="rounded-lg p-3 flex items-center justify-between" style={{ backgroundColor: 'var(--theme-bg-raised)', border: '1px solid var(--theme-hairline)' }}>
-                <div className="flex items-center gap-2 min-w-0">
-                  <Cpu size={14} style={{ color: 'var(--theme-success)' }} />
-                  <span className="text-[12px] truncate" style={{ color: 'var(--theme-muted)' }}>
-                    Or run free local models with <a href="https://ollama.com" target="_blank" rel="noreferrer" className="underline" style={{ color: 'var(--theme-secondary)' }}>Ollama</a>
-                  </span>
+              {/* Local models — LM Studio / Ollama */}
+              <div className="rounded-lg p-3" style={{ backgroundColor: 'var(--theme-bg-raised)', border: '1px solid var(--theme-hairline)' }}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Cpu size={14} style={{ color: 'var(--theme-success)' }} />
+                    <span className="text-[12px] truncate" style={{ color: 'var(--theme-muted)' }}>
+                      Run free local models — <a href="https://lmstudio.ai" target="_blank" rel="noreferrer" className="underline" style={{ color: 'var(--theme-secondary)' }}>LM Studio</a> or <a href="https://ollama.com" target="_blank" rel="noreferrer" className="underline" style={{ color: 'var(--theme-secondary)' }}>Ollama</a>
+                    </span>
+                  </div>
+                  <button
+                    onClick={detectLocal}
+                    className="text-[11px] px-2.5 py-1.5 rounded-md shrink-0 flex items-center gap-1.5 hover:bg-white/5"
+                    style={{ border: '1px solid var(--theme-border)', color: 'var(--theme-muted)' }}
+                  >
+                    {rechecking ? <Loader2 size={11} className="animate-spin" /> : null} Detect
+                  </button>
                 </div>
-                <button
-                  onClick={recheck}
-                  className="text-[11px] px-2.5 py-1.5 rounded-md shrink-0 flex items-center gap-1.5 hover:bg-white/5"
-                  style={{ border: '1px solid var(--theme-border)', color: 'var(--theme-muted)' }}
-                >
-                  {rechecking ? <Loader2 size={11} className="animate-spin" /> : null} Re-check
-                </button>
+                {localResult && <div className="text-[11px] mt-2 leading-relaxed" style={{ color: 'var(--theme-muted)' }}>{localResult}</div>}
               </div>
 
               {authFlowStatus && authFlowStatus.messages.length > 0 && (

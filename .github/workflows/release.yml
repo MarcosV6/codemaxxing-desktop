@@ -26,10 +26,12 @@ jobs:
         include:
           # Native arch per runner — avoids cross-compiling the better-sqlite3
           # native addon, which electron-rebuild only builds for the host arch.
-          - { os: macos-14, platform: mac, arch: arm64 }
-          - { os: macos-13, platform: mac, arch: x64 }
-          - { os: windows-latest, platform: win, arch: x64 }
-          - { os: ubuntu-latest, platform: linux, arch: x64 }
+          # mac: zip only — DMG creation is flaky on headless CI runners; the
+          # signed-ish .dmg ships from the maintainer's local build. (Intel-Mac
+          # runners are scarce/queue forever, so x64 mac is built locally too.)
+          - { os: macos-14, platform: mac, arch: arm64, args: '--mac zip --arm64' }
+          - { os: windows-latest, platform: win, arch: x64, args: '--win --x64' }
+          - { os: ubuntu-latest, platform: linux, arch: x64, args: '--linux --x64' }
     steps:
       - uses: actions/checkout@v4
 
@@ -49,7 +51,7 @@ jobs:
       - run: npm run build:app
 
       - name: Package (${{ matrix.platform }} ${{ matrix.arch }})
-        run: npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish never
+        run: npx electron-builder ${{ matrix.args }} --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Signing is OPTIONAL and unset by default: with these secrets empty,
@@ -84,7 +86,9 @@ jobs:
     name: Publish GitHub Release
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    # Attach whatever built — one platform failing must not block the others
+    # from reaching the release.
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/') }}
     permissions:
       contents: write
     steps:
@@ -106,4 +110,6 @@ jobs:
           files: dist-release/*
           fail_on_unmatched_files: false
           draft: false
-          generate_release_notes: true
+          # Don't regenerate notes — preserve the hand-written release notes
+          # (install instructions). softprops only appends the files.
+          generate_release_notes: false

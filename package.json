@@ -51,7 +51,10 @@
     "codemaxxing",
     "mcp"
   ],
-  "author": "Marcos Vallejo",
+  "author": {
+    "name": "Marcos Vallejo",
+    "email": "MarcosV6@users.noreply.github.com"
+  },
   "license": "MIT",
   "build": {
     "appId": "com.codemaxxing.app",

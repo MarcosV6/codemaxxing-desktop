@@ -65,7 +65,6 @@ export function Layout() {
   const setDrawer = useAppStore((s) => s.setDrawer)
   const activeDrawer = useAppStore((s) => s.activeDrawer)
   const providers = useAppStore((s) => s.providers)
-  const availableModels = useAppStore((s) => s.availableModels)
   const loadModels = useAppStore((s) => s.loadModels)
 
   const [sidebarOpen, setSidebarOpen] = useState(true)

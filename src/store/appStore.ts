@@ -1639,32 +1639,38 @@ export const useAppStore = create<AppState>((set, get) => ({
   closeCompare: () => set({ compareOpen: false }),
   openResearch: () => set({ researchOpen: true }),
   closeResearch: () => set({ researchOpen: false }),
-  openDocuments: () => set({ documentsOpen: true }),
+  // Full-page surfaces (browser / documents / email / calendar / notes) are
+  // mutually exclusive — opening one closes the others so ⌘K can switch
+  // between them without leaving a stale surface "underneath".
+  openDocuments: () => set({ documentsOpen: true, emailOpen: false, calendarOpen: false, browserView: false, activeDrawer: null }),
   closeDocuments: () => set({ documentsOpen: false }),
-  openEmail: () => set({ emailOpen: true }),
+  openEmail: () => set({ emailOpen: true, documentsOpen: false, calendarOpen: false, browserView: false, activeDrawer: null }),
   closeEmail: () => set({ emailOpen: false }),
-  openCalendar: () => set({ calendarOpen: true }),
+  openCalendar: () => set({ calendarOpen: true, documentsOpen: false, emailOpen: false, browserView: false, activeDrawer: null }),
   closeCalendar: () => set({ calendarOpen: false }),
   togglePreview: () => set((s) => ({ previewOpen: !s.previewOpen })),
   setPreviewOpen: (open: boolean) => set({ previewOpen: open }),
   openPreview: (url: string) => set({ previewOpen: true, previewUrl: url }),
   setPreviewTab: (tab) => set({ previewTab: tab }),
   openBrowserPanel: () => set((s) => {
-    if (s.browserTabs.length) return { browserView: true }
+    const off = { documentsOpen: false, emailOpen: false, calendarOpen: false, activeDrawer: null }
+    if (s.browserTabs.length) return { browserView: true, ...off }
     const t = freshTab()
-    return { browserView: true, browserTabs: [t], activeBrowserTabId: t.id }
+    return { browserView: true, browserTabs: [t], activeBrowserTabId: t.id, ...off }
   }),
   toggleBrowserView: () => set((s) => {
     if (s.browserView) return { browserView: false }
-    if (s.browserTabs.length) return { browserView: true }
+    const off = { documentsOpen: false, emailOpen: false, calendarOpen: false, activeDrawer: null }
+    if (s.browserTabs.length) return { browserView: true, ...off }
     const t = freshTab()
-    return { browserView: true, browserTabs: [t], activeBrowserTabId: t.id }
+    return { browserView: true, browserTabs: [t], activeBrowserTabId: t.id, ...off }
   }),
   setBrowserView: (open: boolean) => set((s) => {
     if (!open) return { browserView: false }
-    if (s.browserTabs.length) return { browserView: true }
+    const off = { documentsOpen: false, emailOpen: false, calendarOpen: false, activeDrawer: null }
+    if (s.browserTabs.length) return { browserView: true, ...off }
     const t = freshTab()
-    return { browserView: true, browserTabs: [t], activeBrowserTabId: t.id }
+    return { browserView: true, browserTabs: [t], activeBrowserTabId: t.id, ...off }
   }),
   addBrowserTab: (url) => set((s) => {
     const t: BrowserTabState = { id: 'tab_' + Math.random().toString(36).slice(2, 9), url: url ?? '', title: url ? '' : 'New tab', loading: !!url }
@@ -1681,7 +1687,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   updateBrowserTab: (id, patch) => set((s) => ({ browserTabs: s.browserTabs.map((t) => (t.id === id ? { ...t, ...patch } : t)) })),
   toggleFilesPanel: () => set((s) => ({ filesPanelOpen: !s.filesPanelOpen })),
   setFilesPanelOpen: (open: boolean) => set({ filesPanelOpen: open }),
-  setDrawer: (drawer) => set({ activeDrawer: drawer }),
+  setDrawer: (drawer) => set(drawer === 'notes'
+    ? { activeDrawer: 'notes', documentsOpen: false, emailOpen: false, calendarOpen: false, browserView: false }
+    : { activeDrawer: drawer }),
   setCommandPaletteOpen: (open: boolean) => set({ commandPaletteOpen: open }),
 }))
 

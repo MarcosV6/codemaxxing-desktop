@@ -165,7 +165,7 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
         <div className="flex items-center gap-1 px-2 pb-2 shrink-0">
           <button onClick={() => getActiveEl()?.goBack?.()} className={iconBtn} style={{ color: 'var(--theme-muted)' }} title="Back"><ChevronLeft size={15} /></button>
           <button onClick={() => getActiveEl()?.goForward?.()} className={iconBtn} style={{ color: 'var(--theme-muted)' }} title="Forward"><ChevronRight size={15} /></button>
-          <button onClick={() => { const el = getActiveEl(); activeTab?.loading ? el?.stop?.() : el?.reload?.() }} className={iconBtn} style={{ color: 'var(--theme-muted)' }} title={activeTab?.loading ? 'Stop' : 'Reload'}>
+          <button onClick={() => { const el = getActiveEl(); if (activeTab?.loading) el?.stop?.(); else el?.reload?.() }} className={iconBtn} style={{ color: 'var(--theme-muted)' }} title={activeTab?.loading ? 'Stop' : 'Reload'}>
             {activeTab?.loading ? <X size={14} /> : <RotateCw size={13} />}
           </button>
           <div className="flex-1 flex items-center gap-1.5 rounded-md px-2" style={{ backgroundColor: 'var(--theme-bg)', border: '1px solid var(--theme-border)' }}>

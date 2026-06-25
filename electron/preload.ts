@@ -46,7 +46,7 @@ contextBridge.exposeInMainWorld('electron', {
 
   // ── Agent ──
   agent: {
-    send: (opts: { sessionId: string; message: string; images?: Array<{ id?: string; dataUrl: string; mediaType: string; name?: string }> }) => ipcRenderer.invoke('agent:send', opts),
+    send: (opts: { sessionId: string; message: string; images?: Array<{ id?: string; dataUrl: string; mediaType: string; name?: string }>; activeSurfaces?: string[] }) => ipcRenderer.invoke('agent:send', opts),
     abort: (sessionId: string) => ipcRenderer.invoke('agent:abort', sessionId),
     approvalResponse: (sessionId: string, callId: string, decision: 'yes' | 'no' | 'always') =>
       ipcRenderer.invoke('agent:approvalResponse', sessionId, callId, decision),

@@ -100,6 +100,18 @@ const CHAT_MODE_TOOL_NAMES = new Set([
   'think',
 ])
 
+// Tools that only make sense inside a given full-page surface. Sending all of
+// them on every request bloats the payload — which the ChatGPT Codex OAuth
+// backend rejects ("input exceeds the context window") even on small chats.
+// They're included only when that surface is active (see AgentConfig.activeSurfaces).
+const SURFACE_TOOLS: Record<string, string> = {
+  browser_navigate: 'browser', browser_read: 'browser', browser_screenshot: 'browser', browser_click: 'browser', pixel_match: 'browser',
+  document_list: 'documents', document_read: 'documents', document_write: 'documents', document_append: 'documents', document_create: 'documents',
+  note_add: 'notes', task_add: 'notes', task_toggle: 'notes', notes_list: 'notes',
+  email_read: 'email', email_send: 'email',
+  calendar_list: 'calendar', calendar_add: 'calendar',
+}
+
 export interface AgentConfig {
   provider: 'anthropic' | 'openai'
   model: string
@@ -121,6 +133,13 @@ export interface AgentConfig {
    * touching the filesystem.
    */
   mode?: SessionMode
+  /**
+   * Which full-page surfaces (browser/documents/email/calendar/notes) are
+   * currently open. Their tools are only sent when active — this keeps the
+   * tool payload lean (the ChatGPT Codex OAuth backend rejects large requests).
+   * `undefined` = include every tool (back-compat).
+   */
+  activeSurfaces?: string[]
 }
 
 export interface RunResult {
@@ -406,9 +425,19 @@ export class CodingAgent {
     // research helpers — gives users a "claude.ai / chatgpt.com" experience
     // inside the app without ever risking the agent touching their filesystem.
     const isChatMode = this.config.mode === 'chat'
-    const baseTools = isChatMode
+    // Surface-tool gating: include browser/documents/etc. tools only when that
+    // surface is open. undefined = include all (back-compat).
+    const surfaces = this.config.activeSurfaces
+    const surfaceSet = new Set(surfaces ?? [])
+    const includeTool = (name: string) => {
+      if (surfaces === undefined) return true
+      const s = SURFACE_TOOLS[name]
+      return !s || surfaceSet.has(s)
+    }
+    const baseTools = (isChatMode
       ? FILE_TOOLS.filter(t => CHAT_MODE_TOOL_NAMES.has(t.function.name))
       : FILE_TOOLS
+    ).filter(t => includeTool(t.function.name))
     const allTools = isChatMode ? baseTools : [...baseTools, ...getAllMCPTools()]
 
     let iterations = 0

@@ -1248,9 +1248,21 @@ export const useAppStore = create<AppState>((set, get) => ({
       }))
     }
 
+    // Which full-page surfaces are open — the agent only loads a surface's
+    // tools when it's active, keeping the request lean (the ChatGPT Codex OAuth
+    // backend rejects large tool payloads).
+    const surf = get()
+    const activeSurfaces: string[] = []
+    if (surf.browserView) activeSurfaces.push('browser')
+    if (surf.documentsOpen) activeSurfaces.push('documents')
+    if (surf.emailOpen) activeSurfaces.push('email')
+    if (surf.calendarOpen) activeSurfaces.push('calendar')
+    if (surf.activeDrawer === 'notes') activeSurfaces.push('notes')
+
     await window.electron.agent.send({
       sessionId: activeSessionId,
       message,
+      activeSurfaces,
       ...(hasImages
         ? { images: images!.map(img => ({ id: img.id, dataUrl: img.dataUrl, mediaType: img.mediaType, name: img.name })) }
         : {}),

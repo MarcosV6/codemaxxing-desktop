@@ -1276,7 +1276,7 @@ function setupIPC(): void {
   // ~10MB blob hits the SQLite write — otherwise a single bad paste leaves
   // a multi-MB row that gets re-loaded on every history fetch.
   const MAX_IMAGE_BYTES_RAW = 8 * 1024 * 1024 // 8MB raw; ~10.7MB as base64
-  registerInvoke('agent:send', async (opts: { sessionId: string; message: string; images?: Array<{ id?: string; dataUrl: string; mediaType: string; name?: string }> }) => {
+  registerInvoke('agent:send', async (opts: { sessionId: string; message: string; images?: Array<{ id?: string; dataUrl: string; mediaType: string; name?: string }>; activeSurfaces?: string[] }) => {
     // Reject overlapping sends for the same session. Without this, a fast
     // double-click on Send (or a queued IPC during a slow stream) spawns a
     // second CodingAgent reading the same SQLite history, both writing
@@ -1398,6 +1398,7 @@ function setupIPC(): void {
         scope: sess.cwd,
         abortSignal: abort.signal,
         mode: sess.mode,
+        activeSurfaces: opts.activeSurfaces,
       },
       {
         onText: (delta) => emit('agent:text', { sessionId: opts.sessionId, delta }),

@@ -3,8 +3,27 @@ import react from '@vitejs/plugin-react'
 import electron from 'vite-plugin-electron'
 import renderer from 'vite-plugin-electron-renderer'
 import { resolve } from 'path'
+import { readFileSync, writeFileSync, existsSync } from 'fs'
+import { transformSync } from 'esbuild'
 import { builtinModules } from 'module'
 import pkg from './package.json'
+
+// vite builds the preload as ESM (it ignores output.format and the package is
+// `type: "module"`). A sandboxed Electron preload is loaded as CommonJS, so any
+// `import`/`export` makes it crash → `window.electron` undefined → the renderer
+// silently falls back to the dev-mock. This plugin rewrites the emitted file to
+// real CommonJS after the bundle is written, which is what actually fixes it.
+const preloadToCjs = {
+  name: 'preload-esm-to-cjs',
+  closeBundle() {
+    const file = resolve(__dirname, 'dist-electron/preload.cjs')
+    if (!existsSync(file)) return
+    const src = readFileSync(file, 'utf8')
+    if (!/^\s*(import|export)\b/m.test(src)) return // already CJS
+    const out = transformSync(src, { format: 'cjs', platform: 'node', loader: 'js' })
+    writeFileSync(file, out.code)
+  },
+}
 
 // Main-process deps we must NOT bundle (native addons or node-only modules)
 const mainExternals = [
@@ -46,20 +65,21 @@ export default defineConfig({
         vite: {
           build: {
             outDir: 'dist-electron',
-            lib: {
-              entry: 'electron/preload.ts',
-              formats: ['cjs'],
-              fileName: () => 'preload.cjs',
-            },
+            // No `lib` mode: with `type: "module"` in package.json, vite's lib
+            // build was emitting `export default …` (ESM) into the .cjs file,
+            // which a sandboxed preload (loaded as CommonJS) can't parse — so it
+            // crashed and `window.electron` was undefined. Plain rollupOptions
+            // with format:'cjs' produces real CommonJS.
             rollupOptions: {
+              input: resolve(__dirname, 'electron/preload.ts'),
               external: ['electron'],
               output: {
-                format: 'cjs',
                 entryFileNames: 'preload.cjs',
                 inlineDynamicImports: true,
               },
             },
           },
+          plugins: [preloadToCjs],
         },
       },
     ]),

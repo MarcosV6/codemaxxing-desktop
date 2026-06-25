@@ -1101,11 +1101,37 @@ function setupIPC(): void {
       const cred = auth.getCredential(providerId)
       const route = providerRoute(providerId)
       const apiKey = cred?.apiKey || 'not-needed'
-      // Local providers: ignore any persisted `localhost` baseUrl from old
-      // sessions — Node prefers ::1, LM Studio / Ollama bind IPv4-only, and a
-      // stale cred would silently override the route fix. Force 127.0.0.1.
+      // LM Studio: probe several address candidates — it may bind IPv4-only,
+      // IPv6-only, or both depending on version/OS, so don't hard-force
+      // 127.0.0.1 (the CLI uses `localhost` and works). Try both APIs:
+      // /api/v0/models lists ALL DOWNLOADED models; /v1/models only the loaded.
+      if (providerId === 'lmstudio') {
+        const raw = cred?.baseUrl || route.baseUrl
+        const isDefault = /(127\.0\.0\.1|localhost|\[::1\]):1234/.test(raw)
+        const roots = isDefault
+          ? ['http://127.0.0.1:1234', 'http://localhost:1234', 'http://[::1]:1234']
+          : [raw.replace(/\/v1\/?$/, '')]
+        for (const root of roots) {
+          for (const path of ['/api/v0/models', '/v1/models']) {
+            try {
+              const r = await fetch(`${root}${path}`, { signal: AbortSignal.timeout(3000) })
+              if (!r.ok) continue
+              const j: any = await r.json()
+              const models = Array.isArray(j?.data) ? j.data : []
+              if (models.length > 0) {
+                console.log('[llm:listModels] lmstudio', root + path, '→', models.length, 'models')
+                return { ok: true, models: models.map((m: any) => ({ name: m.id, id: m.id })) }
+              }
+            } catch { /* try next candidate */ }
+          }
+        }
+        return { ok: false, error: "Couldn't reach LM Studio on port 1234. In LM Studio → Developer tab → Start Server, and make sure a model is downloaded." }
+      }
+
+      // Other local providers (Ollama): Node prefers ::1 but it binds
+      // IPv4-only, so force 127.0.0.1.
       let baseUrl = cred?.baseUrl || route.baseUrl
-      if (providerId === 'lmstudio' || providerId === 'ollama') {
+      if (providerId === 'ollama') {
         baseUrl = baseUrl.replace('://localhost', '://127.0.0.1').replace('://[::1]', '://127.0.0.1')
       }
 
@@ -1144,29 +1170,11 @@ function setupIPC(): void {
       // overkill and its layered error messages obscure what's actually
       // wrong (DNS, TCP, TLS, HTTP shape — all collapsed to "Connection
       // error.").
-      if (providerId === 'lmstudio' || providerId === 'ollama' || providerId === 'custom') {
+      if (providerId === 'ollama' || providerId === 'custom') {
         if (!baseUrl) {
           return { ok: false, error: 'No base URL configured for this provider. Open Settings → Providers and set the URL of your server (e.g. http://your-tailnet-host:8080/v1).' }
         }
         console.log('[llm:listModels] local probe', providerId, baseUrl)
-        // LM Studio: its OpenAI-compat /v1/models only lists models currently
-        // LOADED (unless JIT loading is on). The native REST API GET /api/v0/models
-        // lists EVERY downloaded model regardless of load state — which is what
-        // users expect to pick from. Try it first; fall through to /v1/models.
-        if (providerId === 'lmstudio') {
-          const root = baseUrl.replace(/\/v1\/?$/, '')
-          try {
-            const r = await fetch(`${root}/api/v0/models`, { signal: AbortSignal.timeout(4000) })
-            if (r.ok) {
-              const j: any = await r.json()
-              const models = Array.isArray(j?.data) ? j.data : []
-              if (models.length > 0) {
-                console.log('[llm:listModels] lmstudio /api/v0/models →', models.length, 'downloaded models')
-                return { ok: true, models: models.map((m: any) => ({ name: m.id, id: m.id })) }
-              }
-            }
-          } catch { /* native API not available (older LM Studio) → fall through */ }
-        }
         let url: string
         try {
           url = new URL('models', baseUrl.endsWith('/') ? baseUrl : baseUrl + '/').toString()

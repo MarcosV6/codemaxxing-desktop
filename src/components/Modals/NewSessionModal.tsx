@@ -16,6 +16,7 @@ export function NewSessionModal({ open, onClose }: NewSessionModalProps) {
   const pickDirectory = useAppStore((s) => s.pickDirectory)
   const createSession = useAppStore((s) => s.createSession)
   const saveCredential = useAppStore((s) => s.saveCredential)
+  const runAuthFlow = useAppStore((s) => s.runAuthFlow)
 
   const [mode, setMode] = useState<SessionMode>('code')
   const [cwd, setCwd] = useState(appConfig.lastCwd || '')
@@ -109,6 +110,16 @@ export function NewSessionModal({ open, onClose }: NewSessionModalProps) {
       setReloadTick((t) => t + 1) // re-fetch models now that we're authed
     } finally { setSetupSaving(false) }
   }
+  // OAuth: opens the browser login (Claude Pro/Max, ChatGPT, OpenRouter).
+  const doOAuth = async () => {
+    if (!provider) return
+    setSetupSaving(true)
+    try {
+      const r = await runAuthFlow(provider, 'oauth')
+      if (r.ok) setReloadTick((t) => t + 1)
+    } finally { setSetupSaving(false) }
+  }
+  const oauthLabel = provider === 'anthropic' ? 'Login with Claude (Pro/Max)' : provider === 'openai' ? 'Login with ChatGPT' : `Sign in with ${selProvider?.name ?? 'provider'}`
   // Chat mode doesn't need a project directory — agent can't touch the
   // filesystem regardless. Default it to home so the cwd field stays valid
   // for downstream consumers (memory scope, etc.) without forcing the user
@@ -214,19 +225,30 @@ export function NewSessionModal({ open, onClose }: NewSessionModalProps) {
             {needsSetup && (
               <div className="mt-1.5 rounded-lg p-2.5 space-y-2" style={{ backgroundColor: 'var(--theme-bg-subtle)', border: '1px solid var(--theme-border)' }}>
                 <div className="text-[11px]" style={{ color: 'var(--theme-muted)' }}>
-                  {selProvider?.name} isn't set up. Paste an API key to connect it now:
+                  {selProvider?.name} isn't set up. {selProvider?.methods.includes('oauth') ? 'Sign in, or paste an API key:' : 'Paste an API key to connect it:'}
                 </div>
+
+                {selProvider?.methods.includes('oauth') && (
+                  <>
+                    <button onClick={doOAuth} disabled={setupSaving} className="w-full text-[12px] px-3 py-2 rounded font-medium flex items-center justify-center gap-2 disabled:opacity-50" style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-bg)' }}>
+                      {setupSaving ? <Loader2 size={12} className="animate-spin" /> : null}
+                      {oauthLabel}
+                    </button>
+                    <div className="text-[10px] text-center opacity-40">— or —</div>
+                  </>
+                )}
+
                 <div className="flex items-center gap-1.5">
                   <input
                     type="password"
                     value={setupKey}
                     onChange={(e) => setSetupKey(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') void connectProvider() }}
-                    placeholder="sk-…"
+                    placeholder="sk-…  (API key)"
                     className="flex-1 min-w-0 text-xs font-mono px-2 py-1.5 rounded border bg-transparent outline-none"
                     style={{ borderColor: 'var(--theme-border)' }}
                   />
-                  <button onClick={connectProvider} disabled={setupSaving || !setupKey.trim()} className="text-[11px] px-2.5 py-1.5 rounded font-medium shrink-0 disabled:opacity-40 flex items-center" style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-bg)' }}>
+                  <button onClick={connectProvider} disabled={setupSaving || !setupKey.trim()} className="text-[11px] px-2.5 py-1.5 rounded font-medium shrink-0 disabled:opacity-40 flex items-center" style={{ border: '1px solid var(--theme-border)', color: 'var(--theme-text)' }}>
                     {setupSaving ? <Loader2 size={12} className="animate-spin" /> : 'Connect'}
                   </button>
                 </div>

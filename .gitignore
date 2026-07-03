@@ -33,3 +33,6 @@ Thumbs.db
 # macOS codesigning artifacts
 *.keychain
 *.keychain-db
+
+# Local testing log — never ships
+TESTING.md

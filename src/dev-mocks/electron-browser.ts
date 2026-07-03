@@ -216,7 +216,7 @@ export function installBrowserMock(): void {
     },
 
     session: {
-      create: (opts: { cwd: string; provider: string; model: string; title?: string; mode?: 'code' | 'chat' }) => {
+      create: (opts: { cwd: string; provider: string; model: string; title?: string; mode?: 'code' | 'chat' | 'browser' }) => {
         const id = 'mock_' + Math.random().toString(36).slice(2, 8)
         const meta = { ...DEMO_META, id, title: opts.title ?? null, cwd: opts.cwd, provider: opts.provider, model: opts.model, mode: opts.mode ?? 'code', message_count: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
         mockSessions.set(id, meta)

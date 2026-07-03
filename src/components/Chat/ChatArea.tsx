@@ -107,6 +107,14 @@ const EMPTY_SUGGESTIONS_CHAT: EmptySuggestion[] = [
   { icon: MessageCircle, label: 'Just yap',                          hint: 'no agenda, no tools — vibes only' },
 ]
 
+/** Browser-mode quickstarts — the agent drives the live page. */
+const EMPTY_SUGGESTIONS_BROWSER: EmptySuggestion[] = [
+  { icon: Globe,     label: 'Open a site for me',          hint: 'name it or paste a URL' },
+  { icon: BookOpen,  label: 'Read this page & summarize',   hint: 'open a page, then ask' },
+  { icon: Lightbulb, label: 'Research across a few tabs',   hint: "I'll browse and compare" },
+  { icon: Zap,       label: 'Search and click through',     hint: 'e.g. find the docs for X' },
+]
+
 /** Taglines rotated in the empty state — same energy as the TUI spinner
  *  messages, just quieter since this is the first thing people see. */
 const EMPTY_TAGLINES_CODE = [
@@ -125,18 +133,28 @@ const EMPTY_TAGLINES_CHAT = [
   'web search on, vibes high',
 ]
 
+const EMPTY_TAGLINES_BROWSER = [
+  'where to?',
+  'name a site, I\'ll drive',
+  'I can read, click + type',
+  'point me at the web',
+  'let\'s browse',
+]
+
 /** Landing screen for a brand-new session. Swaps out once there's any
  *  message history. Mirrors the TUI's playfulness — ASCII-ish wordmark,
  *  rotating tagline, and fun suggestion cards that feel like quick-picks
  *  rather than corporate templates. */
-function EmptyState({ onPick, mode }: { onPick: (label: string) => void; mode: 'code' | 'chat' }) {
-  const taglines = mode === 'chat' ? EMPTY_TAGLINES_CHAT : EMPTY_TAGLINES_CODE
-  const suggestions = mode === 'chat' ? EMPTY_SUGGESTIONS_CHAT : EMPTY_SUGGESTIONS_CODE
+function EmptyState({ onPick, mode }: { onPick: (label: string) => void; mode: 'code' | 'chat' | 'browser' }) {
+  const taglines = mode === 'chat' ? EMPTY_TAGLINES_CHAT : mode === 'browser' ? EMPTY_TAGLINES_BROWSER : EMPTY_TAGLINES_CODE
+  const suggestions = mode === 'chat' ? EMPTY_SUGGESTIONS_CHAT : mode === 'browser' ? EMPTY_SUGGESTIONS_BROWSER : EMPTY_SUGGESTIONS_CODE
   const [tagIdx] = useState(() => Math.floor(Math.random() * taglines.length))
-  const badgeLabel = mode === 'chat' ? 'chat mode' : 'codemaxxing'
+  const badgeLabel = mode === 'chat' ? 'chat mode' : mode === 'browser' ? 'browser agent' : 'codemaxxing'
   const subtitle = mode === 'chat'
     ? 'pick a quickstart, or just start typing — web search is enabled'
-    : <>pick a quickstart, or just start typing — <span className="font-mono opacity-80">/help</span> if you're lost</>
+    : mode === 'browser'
+      ? 'pick a quickstart, or just start typing — I can navigate, read, click + type'
+      : <>pick a quickstart, or just start typing — <span className="font-mono opacity-80">/help</span> if you're lost</>
   return (
     <div className="h-full flex items-center justify-center">
       <div className="w-full max-w-[600px] px-6 pb-16">
@@ -684,7 +702,7 @@ export function ChatArea() {
       <div className="flex-1 min-h-0 mask-fade-top">
         {isEmpty ? (
           <EmptyState
-            mode={activeSession?.mode === 'chat' ? 'chat' : 'code'}
+            mode={activeSession?.mode === 'chat' ? 'chat' : activeSession?.mode === 'browser' ? 'browser' : 'code'}
             onPick={(label) => { setInput(label); inputRef.current?.focus() }}
           />
         ) : (
@@ -740,7 +758,11 @@ export function ChatArea() {
             attachments={attachments}
             onAttachmentsChange={setAttachments}
             mode={activeSession?.mode === 'chat' ? 'chat' : 'code'}
-            onToggleMode={() => { void setActiveSessionMode(activeSession?.mode === 'chat' ? 'code' : 'chat') }}
+            // Browser sessions aren't agent/chat — hide the toggle so it can't
+            // flip the session out of browser mode.
+            onToggleMode={activeSession?.mode === 'browser'
+              ? undefined
+              : () => { void setActiveSessionMode(activeSession?.mode === 'chat' ? 'code' : 'chat') }}
             modelLabel={activeSession?.model ?? null}
           />
           {isRunning && (

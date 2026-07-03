@@ -10,6 +10,7 @@ import type {
   AuthCredentialDisplay,
   ImageAttachment,
   Task,
+  SessionMode,
 } from '../types'
 import type {
   ApprovalMode,
@@ -100,7 +101,7 @@ interface SessionMeta {
   prompt_tokens: number
   completion_tokens: number
   estimated_cost: number
-  mode?: 'code' | 'chat'
+  mode?: 'code' | 'chat' | 'browser'
 }
 
 export interface PendingAsk {
@@ -222,7 +223,7 @@ interface AppState {
   clearAuthFlowStatus: () => void
 
   loadSessions: () => Promise<void>
-  createSession: (opts: { cwd: string; provider: string; model: string; title?: string; mode?: 'code' | 'chat' }) => Promise<string | null>
+  createSession: (opts: { cwd: string; provider: string; model: string; title?: string; mode?: SessionMode }) => Promise<string | null>
   switchSession: (sessionId: string) => Promise<void>
   deleteSession: (sessionId: string) => Promise<void>
   updateSessionCwd: (sessionId: string, cwd: string) => Promise<void>
@@ -286,6 +287,9 @@ interface AppState {
   openBrowserPanel: () => void
   toggleBrowserView: () => void
   setBrowserView: (open: boolean) => void
+  /** Leave the browser surface — clears the transient toggle and, if the
+   *  active session is a browser-type session, moves to a non-browser one. */
+  exitBrowser: () => Promise<void>
   addBrowserTab: (url?: string) => void
   closeBrowserTab: (id: string) => void
   setActiveBrowserTab: (id: string) => void
@@ -481,7 +485,7 @@ function toSessionFromMeta(meta: SessionMeta, messages: ChatMessage[] = []): Ses
     cwd: meta.cwd,
     tokenCount: meta.prompt_tokens + meta.completion_tokens,
     estimatedCost: meta.estimated_cost,
-    mode: meta.mode === 'chat' ? 'chat' : 'code',
+    mode: meta.mode === 'chat' ? 'chat' : meta.mode === 'browser' ? 'browser' : 'code',
   }
 }
 
@@ -1046,6 +1050,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   createSession: async (opts) => {
+    // Browser sessions rarely get a chat message right away, which would
+    // leave them "Untitled" in the sidebar — default them to "Browser".
+    if (!opts.title && opts.mode === 'browser') opts = { ...opts, title: 'Browser' }
     const result = await window.electron.session.create(opts)
     if (!result.ok || !result.session) return null
     const newSession = toSessionFromMeta(result.session as SessionMeta, [])
@@ -1086,6 +1093,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({
         activeSession: toSessionFromMeta(meta, messages),
         activeSessionId: sessionId,
+        // The browser surface is driven by the session's mode. Bind browserView
+        // to it on switch so a stuck transient/agent-opened browser can't keep
+        // showing over a chat/code session (and a browser session shows it).
+        browserView: meta.mode === 'browser',
         currentAssistantText: '',
         currentThinkingText: '',
         currentToolCalls: [],
@@ -1245,6 +1256,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       await window.electron.session.updateTitle(activeSessionId, newTitle)
       set((s) => ({
         activeSession: s.activeSession ? { ...s.activeSession, title: newTitle } : null,
+        // Patch the sidebar list in place too — onDone reloads it, but that
+        // can be a minute away and "Untitled" shouldn't linger that long.
+        sessionList: s.sessionList.map((m) => (m.id === activeSessionId ? { ...m, title: newTitle } : m)),
       }))
     }
 
@@ -1253,7 +1267,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     // backend rejects large tool payloads).
     const surf = get()
     const activeSurfaces: string[] = []
-    if (surf.browserView) activeSurfaces.push('browser')
+    if (surf.browserView || surf.activeSession?.mode === 'browser') activeSurfaces.push('browser')
     if (surf.documentsOpen) activeSurfaces.push('documents')
     if (surf.emailOpen) activeSurfaces.push('email')
     if (surf.calendarOpen) activeSurfaces.push('calendar')
@@ -1684,6 +1698,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     const t = freshTab()
     return { browserView: true, browserTabs: [t], activeBrowserTabId: t.id, ...off }
   }),
+  exitBrowser: async () => {
+    set({ browserView: false })
+    const s = get()
+    // A browser-type session keeps the takeover up (its mode drives the view),
+    // so leaving means switching to another session. Prefer the most recent
+    // non-browser one; otherwise drop to the empty state.
+    if (s.activeSession?.mode === 'browser') {
+      const next = s.sessionList.find((m) => m.id !== s.activeSessionId && m.mode !== 'browser')
+      if (next) await get().switchSession(next.id)
+      else set({ activeSessionId: null, activeSession: null })
+    }
+  },
   addBrowserTab: (url) => set((s) => {
     const t: BrowserTabState = { id: 'tab_' + Math.random().toString(36).slice(2, 9), url: url ?? '', title: url ? '' : 'New tab', loading: !!url }
     return { browserTabs: [...s.browserTabs, t], activeBrowserTabId: t.id }

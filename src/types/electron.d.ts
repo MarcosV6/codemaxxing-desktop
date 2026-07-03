@@ -126,7 +126,7 @@ export interface ElectronAPI {
 
   // Sessions
   session: {
-    create: (opts: { cwd: string; provider: string; model: string; title?: string; mode?: 'code' | 'chat' }) => Promise<{ ok: boolean; session?: any; error?: string }>
+    create: (opts: { cwd: string; provider: string; model: string; title?: string; mode?: 'code' | 'chat' | 'browser' }) => Promise<{ ok: boolean; session?: any; error?: string }>
     list: () => Promise<{ ok: boolean; sessions?: any[]; error?: string }>
     get: (id: string) => Promise<{ ok: boolean; session?: any; messages?: any[]; error?: string }>
     delete: (id: string) => Promise<{ ok: boolean }>
@@ -328,7 +328,7 @@ export interface ElectronAPI {
   // Built-in browser — agent drives the same <webview> the user sees
   browser: {
     onCommand: (
-      cb: (cmd: { id: string; action: 'navigate' | 'read' | 'screenshot' | 'click'; url?: string; selector?: string; text?: string }) => void,
+      cb: (cmd: { id: string; action: 'navigate' | 'read' | 'screenshot' | 'click' | 'type' | 'scroll'; url?: string; selector?: string; text?: string; submit?: boolean; direction?: string }) => void,
     ) => () => void
     onOpen: (cb: () => void) => () => void
     sendResult: (id: string, result: { ok: boolean; error?: string; title?: string; url?: string; text?: string; base64?: string }) => void

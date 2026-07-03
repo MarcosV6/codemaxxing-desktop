@@ -63,7 +63,7 @@ function getDb(): Database.Database {
   return db
 }
 
-export type SessionMode = 'code' | 'chat'
+export type SessionMode = 'code' | 'chat' | 'browser'
 
 function generateId(): string {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789'
@@ -174,7 +174,7 @@ export function loadMessages(sessionId: string): ChatCompletionMessageParam[] {
 }
 
 function normalizeRow(row: any): SessionInfo {
-  return { ...row, mode: (row?.mode === 'chat' ? 'chat' : 'code') as SessionMode }
+  return { ...row, mode: (row?.mode === 'chat' ? 'chat' : row?.mode === 'browser' ? 'browser' : 'code') as SessionMode }
 }
 
 export function listSessions(limit = 100): SessionInfo[] {

@@ -31,7 +31,7 @@ contextBridge.exposeInMainWorld('electron', {
 
   // ── Sessions ──
   session: {
-    create: (opts: { cwd: string; provider: string; model: string; title?: string; mode?: 'code' | 'chat' }) =>
+    create: (opts: { cwd: string; provider: string; model: string; title?: string; mode?: 'code' | 'chat' | 'browser' }) =>
       ipcRenderer.invoke('session:create', opts),
     list: () => ipcRenderer.invoke('session:list'),
     get: (id: string) => ipcRenderer.invoke('session:get', id),
@@ -271,7 +271,7 @@ contextBridge.exposeInMainWorld('electron', {
   browser: {
     // main → renderer: the agent issued a command; drive the webview + reply.
     onCommand: (
-      cb: (cmd: { id: string; action: 'navigate' | 'read' | 'screenshot' | 'click'; url?: string; selector?: string; text?: string }) => void,
+      cb: (cmd: { id: string; action: 'navigate' | 'read' | 'screenshot' | 'click' | 'type' | 'scroll'; url?: string; selector?: string; text?: string; submit?: boolean; direction?: string }) => void,
     ) => on('browser:command', cb),
     // main → renderer: open/focus the Browser tab (idempotent).
     onOpen: (cb: () => void) => on('browser:open', cb),

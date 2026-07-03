@@ -313,6 +313,36 @@ export const FILE_TOOLS: ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'browser_type',
+      description: 'Type text into an input or textarea in the built-in browser, targeted by CSS selector. Fires input/change events so web apps react. Set submit=true to press Enter after typing (e.g. run a search or submit a form). Read or screenshot afterward to see the result.',
+      parameters: {
+        type: 'object',
+        properties: {
+          selector: { type: 'string', description: 'CSS selector of the input/textarea to type into' },
+          text: { type: 'string', description: 'The text to type' },
+          submit: { type: 'boolean', description: 'Press Enter / submit the form after typing (default false)' },
+        },
+        required: ['selector', 'text'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_scroll',
+      description: 'Scroll the page in the built-in browser to reveal more content — by direction (down/up/top/bottom) or to a specific element (selector). Useful for lazy-loaded feeds and long pages before reading/clicking.',
+      parameters: {
+        type: 'object',
+        properties: {
+          direction: { type: 'string', enum: ['down', 'up', 'top', 'bottom'], description: 'Scroll direction (default down)' },
+          selector: { type: 'string', description: 'Optional CSS selector to scroll into view (overrides direction)' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'pixel_match',
       description: 'Compare the running UI to a target design image and find where they differ. Screenshots a URL (or the last preview), diffs it against the target image on disk, and reports an overall match % plus which screen regions diverge most — so you can iterate toward the design.',
       parameters: {
@@ -735,7 +765,7 @@ export interface ToolExecContext {
   capturePreview?: (url?: string) => Promise<{ ok: boolean; mime?: string; base64?: string; error?: string }>
   // Drive the built-in browser (same webview the user sees). Round-trips to the
   // renderer; resolves with the action's result (page text, screenshot, etc.).
-  browserCommand?: (cmd: { action: 'navigate' | 'read' | 'screenshot' | 'click'; url?: string; selector?: string; text?: string }) => Promise<{ ok: boolean; error?: string; title?: string; url?: string; text?: string; base64?: string }>
+  browserCommand?: (cmd: { action: 'navigate' | 'read' | 'screenshot' | 'click' | 'type' | 'scroll'; url?: string; selector?: string; text?: string; submit?: boolean; direction?: string }) => Promise<{ ok: boolean; error?: string; title?: string; url?: string; text?: string; base64?: string }>
   // Visual pixel-match: screenshot a URL and diff it against a target design
   // image on disk; reports overall match + per-region (3×3) differences.
   pixelMatch?: (opts: { url?: string; targetPath: string }) => Promise<{ ok: boolean; matchPercent?: number; diffPercent?: number; regions?: Array<{ name: string; diffPercent: number }>; error?: string }>
@@ -825,22 +855,54 @@ export async function executeTool(
         const content = readFileSync(filePath, 'utf-8')
         if (!oldText) return 'Error: oldText cannot be empty.'
         if (oldText === newText) return 'Error: oldText and newText are identical — nothing to do.'
-        if (!content.includes(oldText)) return `Error: Could not find exact text in ${rawPath}`
 
-        const matchCount = content.split(oldText).length - 1
-        if (!replaceAll && matchCount > 1) {
-          return `Error: oldText matches ${matchCount} locations in ${rawPath}. Include more surrounding context or pass replaceAll=true.`
+        let nextContent: string
+        let replacements = 1
+        let note = ''
+        if (content.includes(oldText)) {
+          const matchCount = content.split(oldText).length - 1
+          if (!replaceAll && matchCount > 1) {
+            return `Error: oldText matches ${matchCount} locations in ${rawPath}. Include more surrounding context or pass replaceAll=true.`
+          }
+          const parts = content.split(oldText)
+          nextContent = replaceAll
+            ? parts.join(newText)
+            : parts[0] + newText + parts.slice(1).join(oldText)
+          replacements = replaceAll ? matchCount : 1
+        } else {
+          // Exact match failed — the #1 cause is trailing-whitespace /
+          // indentation drift in the model's copy of the text. Without a
+          // fallback, models re-send the same near-miss forever. Retry with
+          // a line-based match that ignores trailing whitespace; the real
+          // file lines get replaced only on a single unambiguous hit.
+          const trimEnd = (l: string) => l.replace(/[ \t]+$/, '')
+          const contentLines = content.split('\n')
+          const oldLines = oldText.split('\n').map(trimEnd)
+          const starts: number[] = []
+          for (let i = 0; i + oldLines.length <= contentLines.length; i++) {
+            let ok = true
+            for (let j = 0; j < oldLines.length; j++) {
+              if (trimEnd(contentLines[i + j]) !== oldLines[j]) { ok = false; break }
+            }
+            if (ok) starts.push(i)
+          }
+          if (starts.length === 1) {
+            const i = starts[0]
+            const before = contentLines.slice(0, i)
+            const after = contentLines.slice(i + oldLines.length)
+            nextContent = [...before, newText, ...after].join('\n')
+            note = ' — matched with trailing-whitespace tolerance'
+          } else if (starts.length > 1) {
+            return `Error: oldText isn't an exact match, and a whitespace-tolerant search finds ${starts.length} candidate locations in ${rawPath}. Include more surrounding lines to pin down one.`
+          } else {
+            return `Error: Could not find that text in ${rawPath}. The file may have changed since you read it — call read_file again and retry with the exact current text.`
+          }
         }
-        const parts = content.split(oldText)
-        const nextContent = replaceAll
-          ? parts.join(newText)
-          : parts[0] + newText + parts.slice(1).join(oldText)
         writeFileSync(filePath, nextContent, 'utf-8')
         const diffStr = generateDiff(content, nextContent, rawPath)
         const addedLines = newText.split('\n').length
         const removedLines = oldText.split('\n').length
-        const replacements = replaceAll ? matchCount : 1
-        return `✅ Edited ${rawPath} (${replacements} replacement${replacements === 1 ? '' : 's'})\n<<<DIFF>>>${rawPath}\n+${addedLines} -${removedLines}\n${diffStr}<<<END_DIFF>>>`
+        return `✅ Edited ${rawPath} (${replacements} replacement${replacements === 1 ? '' : 's'}${note})\n<<<DIFF>>>${rawPath}\n+${addedLines} -${removedLines}\n${diffStr}<<<END_DIFF>>>`
       } catch (e: any) {
         return `Error editing file: ${e instanceof Error ? e.message : String(e)}`
       }
@@ -999,6 +1061,28 @@ export async function executeTool(
       const r = await ctx.browserCommand({ action: 'click', selector, text })
       if (!r.ok) return `Could not click: ${r.error ?? 'no matching element'}.`
       return 'Clicked. Use browser_read or browser_screenshot to see what changed.'
+    }
+
+    case 'browser_type': {
+      if (!ctx.browserCommand) return 'The built-in browser is not available in this environment.'
+      const selector = String(args.selector ?? '').trim()
+      const text = String(args.text ?? '')
+      if (!selector) return "Error: browser_type needs a 'selector' for the input to type into."
+      const submit = args.submit === true
+      const r = await ctx.browserCommand({ action: 'type', selector, text, submit })
+      if (!r.ok) return `Could not type into ${selector}: ${r.error ?? 'no matching element'}.`
+      return submit
+        ? `Typed and submitted. Now on:\n${r.url || '(same page)'}\n\nUse browser_read or browser_screenshot to see the result.`
+        : 'Typed. Use browser_type submit=true or browser_click to submit, then read/screenshot.'
+    }
+
+    case 'browser_scroll': {
+      if (!ctx.browserCommand) return 'The built-in browser is not available in this environment.'
+      const selector = args.selector ? String(args.selector) : undefined
+      const direction = args.direction ? String(args.direction) : 'down'
+      const r = await ctx.browserCommand({ action: 'scroll', selector, direction })
+      if (!r.ok) return `Could not scroll: ${r.error ?? 'unknown error'}.`
+      return `Scrolled ${selector ? `to ${selector}` : direction}. Use browser_read or browser_screenshot to see what's now in view.`
     }
 
     case 'pixel_match': {

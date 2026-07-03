@@ -73,7 +73,7 @@ export interface AgentEvents {
   onOpenPreview?: (url: string) => void
   onCapturePreview?: (url?: string) => Promise<{ ok: boolean; mime?: string; base64?: string; error?: string }>
   // Built-in browser bridge — agent drives the same webview the user sees.
-  onBrowserCommand?: (cmd: { action: 'navigate' | 'read' | 'screenshot' | 'click'; url?: string; selector?: string; text?: string }) => Promise<{ ok: boolean; error?: string; title?: string; url?: string; text?: string; base64?: string }>
+  onBrowserCommand?: (cmd: { action: 'navigate' | 'read' | 'screenshot' | 'click' | 'type' | 'scroll'; url?: string; selector?: string; text?: string; submit?: boolean; direction?: string }) => Promise<{ ok: boolean; error?: string; title?: string; url?: string; text?: string; base64?: string }>
   // Visual pixel-match — diff the running UI against a target design image.
   onPixelMatch?: (opts: { url?: string; targetPath: string }) => Promise<{ ok: boolean; matchPercent?: number; diffPercent?: number; regions?: Array<{ name: string; diffPercent: number }>; error?: string }>
   // Documents workspace — read/write the open document.
@@ -105,7 +105,7 @@ const CHAT_MODE_TOOL_NAMES = new Set([
 // backend rejects ("input exceeds the context window") even on small chats.
 // They're included only when that surface is active (see AgentConfig.activeSurfaces).
 const SURFACE_TOOLS: Record<string, string> = {
-  browser_navigate: 'browser', browser_read: 'browser', browser_screenshot: 'browser', browser_click: 'browser', pixel_match: 'browser',
+  browser_navigate: 'browser', browser_read: 'browser', browser_screenshot: 'browser', browser_click: 'browser', browser_type: 'browser', browser_scroll: 'browser', pixel_match: 'browser',
   document_list: 'documents', document_read: 'documents', document_write: 'documents', document_append: 'documents', document_create: 'documents',
   note_add: 'notes', task_add: 'notes', task_toggle: 'notes', notes_list: 'notes',
   email_read: 'email', email_send: 'email',

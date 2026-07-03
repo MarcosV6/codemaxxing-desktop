@@ -40,18 +40,13 @@ Claude Desktop is locked to Anthropic. Codex Desktop is locked to OpenAI. Every 
 
 ## Install
 
-> **Status:** v1.0.0 preview. macOS Apple Silicon + Intel ship from GitHub Releases; Windows/Linux build from source. Signed installers + auto-update will follow.
+> **Status:** preview. macOS (Apple Silicon), Windows, and Linux builds ship from [GitHub Releases](https://github.com/MarcosV6/codemaxxing-desktop/releases/latest) on every tagged version. Signed installers + auto-update will follow.
 
 ### macOS
 
-Pick the build for your Mac from the latest [release](https://github.com/MarcosV6/codemaxxing-desktop/releases):
+Grab the newest `Codemaxxing-x.y.z-arm64-mac.zip` (or `.dmg`) from the [**latest release**](https://github.com/MarcosV6/codemaxxing-desktop/releases/latest) — always use the newest version; older builds had known issues.
 
-| Mac | Download |
-|---|---|
-| **Apple Silicon** (M1, M2, M3, M4) | [`Codemaxxing-1.0.0-arm64-mac.zip`](https://github.com/MarcosV6/codemaxxing-desktop/releases/download/v1.0.0/Codemaxxing-1.0.0-arm64-mac.zip) |
-| **Intel** | [`Codemaxxing-1.0.0-mac.zip`](https://github.com/MarcosV6/codemaxxing-desktop/releases/download/v1.0.0/Codemaxxing-1.0.0-mac.zip) |
-
-> Not sure which you have? Click the **Apple menu** (top-left) → **About This Mac**. If "Chip" says **Apple M…** use the Apple Silicon link. If "Processor" says **Intel** use the Intel one.
+> Apple Silicon (M1–M4) only for now. Intel builds will return once we set up CI for them.
 
 #### One-liner install (Terminal)
 

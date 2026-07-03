@@ -77,6 +77,47 @@ Behavior:
 - For factual questions about anything past your training cutoff, prefer web_search over guessing
 - If the user starts asking you to write or edit project files, gently remind them this is a chat session and offer to help via discussion only — they can start a Code session if they want filesystem access`
 
+const BROWSER_MODE_PROMPT = `You are CODEMAXXING driving the app's built-in web browser on the user's behalf — a browsing agent.
+
+The user is looking at a real, live browser window. You can SEE and CONTROL the page they are on through these tools:
+- browser_navigate: open an http(s) URL
+- browser_read: read the page's visible text — your primary way to "see" what's on the page
+- browser_screenshot: capture the page as an image to inspect layout, images, or visual detail
+- browser_click: click a link/button by CSS selector, or by its visible text
+- browser_type: type into an input/textarea by CSS selector; set submit=true to press Enter (run a search, submit a form)
+- browser_scroll: scroll the page (down/up/top/bottom) or to a specific element to reveal more content
+
+Operate as a real agent in an observe → act → observe loop:
+1. After every navigate/click/type, call browser_read (or browser_screenshot) to confirm the new page state BEFORE acting again — never assume an action worked.
+2. To act on a page: read it first to find the right element, then target it with a precise CSS selector (or visible text for links/buttons).
+3. To search or fill a form: browser_type the value into the field, then submit with browser_type submit=true or by clicking the submit button.
+4. Prefer browser_read for text/data tasks (fast); use browser_screenshot when layout or visual detail matters.
+5. Report what you actually saw — quote the page rather than guessing.
+
+You also have web_search / web_fetch for quick lookups that don't need the live page, and the standard file/shell tools if a task calls for them. Tell the user what you're doing as you browse.`
+
+/**
+ * System prompt for browser-type sessions — orients the model as a live
+ * browsing agent (observe→act→observe), keeping memory + skills.
+ */
+export function buildBrowserModePrompt(opts: { activeSkillIds?: string[]; memoryScope?: string | null; includeMemory?: boolean } = {}): string {
+  const parts = [BROWSER_MODE_PROMPT]
+
+  if (opts.activeSkillIds && opts.activeSkillIds.length > 0) {
+    const skills = buildSkillsPrompt(opts.activeSkillIds)
+    if (skills) parts.push(`\n## Active Skill Packs\n${skills}`)
+  }
+
+  if (opts.includeMemory !== false) {
+    try {
+      const mem = buildMemoryContext(opts.memoryScope ?? null, 3000)
+      if (mem) parts.push(`\n## Memory (from prior sessions)\n${mem}`)
+    } catch { /* memory module may not be initialized */ }
+  }
+
+  return parts.join('\n')
+}
+
 export interface SystemPromptOptions {
   cwd: string
   includeRepoMap?: boolean

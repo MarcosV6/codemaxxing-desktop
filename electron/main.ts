@@ -32,7 +32,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
 
 import { CodingAgent, type ApprovalResult, type ApprovalMode, type ReasoningEffort } from './core/agent.js'
-import { buildSystemPrompt, buildChatModePrompt } from './core/prompt.js'
+import { buildSystemPrompt, buildChatModePrompt, buildBrowserModePrompt } from './core/prompt.js'
 import { diffBitmaps } from './core/pixelmatch.js'
 import * as sessions from './core/sessions.js'
 import * as auth from './core/auth.js'
@@ -614,12 +614,13 @@ function remoteHandlers() {
       return { ok: true, session: { ...sess, messages } }
     },
     createSession: async (opts: { cwd: string; provider: string; model: string; title?: string; mode?: string }) => {
+      const m = opts.mode === 'chat' ? 'chat' : opts.mode === 'browser' ? 'browser' : 'code'
       const id = sessions.createSession(
         opts.cwd,
         opts.provider,
         opts.model,
         opts.title,
-        opts.mode === 'chat' ? 'chat' : 'code',
+        m,
       )
       return { ok: true, id }
     },
@@ -815,15 +816,17 @@ function waitForBrowserReady(timeoutMs = 4000): Promise<void> {
 }
 
 async function browserCommand(
-  cmd: { action: 'navigate' | 'read' | 'screenshot' | 'click'; url?: string; selector?: string; text?: string },
+  cmd: { action: 'navigate' | 'read' | 'screenshot' | 'click' | 'type' | 'scroll'; url?: string; selector?: string; text?: string; submit?: boolean; direction?: string },
 ): Promise<BrowserResult> {
   emit('browser:open') // open the Preview panel + select Browser tab (idempotent)
   await waitForBrowserReady()
   const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  // navigate (and type-then-submit, which can trigger navigation) get longer.
+  const longRun = cmd.action === 'navigate' || (cmd.action === 'type' && cmd.submit)
   return await new Promise<BrowserResult>((resolve) => {
     const timeout = setTimeout(() => {
       if (pendingBrowserCmds.delete(id)) resolve({ ok: false, error: 'Browser command timed out (is the Browser tab reachable?).' })
-    }, cmd.action === 'navigate' ? 30_000 : 20_000)
+    }, longRun ? 30_000 : 20_000)
     pendingBrowserCmds.set(id, (r) => { clearTimeout(timeout); resolve(r) })
     emit('browser:command', { id, ...cmd })
   })
@@ -1241,7 +1244,7 @@ function setupIPC(): void {
   })
 
   // ── Session management ──
-  ipcMain.handle('session:create', async (_e, opts: { cwd: string; provider: string; model: string; title?: string; mode?: 'code' | 'chat' }) => {
+  ipcMain.handle('session:create', async (_e, opts: { cwd: string; provider: string; model: string; title?: string; mode?: 'code' | 'chat' | 'browser' }) => {
     const id = sessions.createSession(opts.cwd, opts.provider, opts.model, opts.title, opts.mode ?? 'code')
     const s = sessions.getSession(id)!
     return { ok: true, session: s }
@@ -1329,20 +1332,25 @@ function setupIPC(): void {
       : { role: 'user', content: opts.message }
     sessions.saveMessage(opts.sessionId, userMsg)
 
-    // Chat-mode sessions get a stripped-down conversational prompt; the
-    // default code prompt includes the repo map, project rules, and full
-    // coding-agent persona that would only confuse a chat-only session.
+    // Each session mode gets a prompt tuned to it: chat = stripped-down
+    // conversational; browser = live browsing-agent (observe→act loop); code =
+    // the full coding-agent persona with repo map + project rules.
     const isChatMode = sess.mode === 'chat'
     const systemPrompt = isChatMode
       ? buildChatModePrompt({
           activeSkillIds: appConfig.activeSkillIds ?? [],
           memoryScope: sess.cwd,
         })
-      : buildSystemPrompt({
-          cwd: sess.cwd,
-          activeSkillIds: appConfig.activeSkillIds ?? [],
-          memoryScope: sess.cwd,
-        })
+      : sess.mode === 'browser'
+        ? buildBrowserModePrompt({
+            activeSkillIds: appConfig.activeSkillIds ?? [],
+            memoryScope: sess.cwd,
+          })
+        : buildSystemPrompt({
+            cwd: sess.cwd,
+            activeSkillIds: appConfig.activeSkillIds ?? [],
+            memoryScope: sess.cwd,
+          })
 
     // MCP servers are coding-agent infrastructure — skip them entirely in
     // chat mode so a chat session never blocks on MCP startup or surfaces
@@ -1397,7 +1405,9 @@ function setupIPC(): void {
         reasoningEffort: appConfig.reasoningEffort ?? 'off',
         scope: sess.cwd,
         abortSignal: abort.signal,
-        mode: sess.mode,
+        // Browser sessions run the full agent (so it can drive the page +
+        // touch files); only chat sessions use the stripped conversational mode.
+        mode: sess.mode === 'chat' ? 'chat' : 'code',
         activeSurfaces: opts.activeSurfaces,
       },
       {

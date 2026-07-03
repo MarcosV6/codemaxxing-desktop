@@ -50,14 +50,8 @@ if [[ "$ARCH" == "x86_64" ]]; then
 fi
 
 case "$ARCH" in
-  arm64)
-    ASSET="Codemaxxing-1.0.0-arm64-mac.zip"
-    ARCH_LABEL="Apple Silicon"
-    ;;
-  x86_64)
-    ASSET="Codemaxxing-1.0.0-mac.zip"
-    ARCH_LABEL="Intel"
-    ;;
+  arm64)  ARCH_LABEL="Apple Silicon" ;;
+  x86_64) ARCH_LABEL="Intel" ;;
   *)
     red "Unsupported architecture: $ARCH"
     red "Expected arm64 or x86_64."
@@ -67,12 +61,38 @@ esac
 
 bold "Codemaxxing Desktop — installer"
 echo "  Architecture: ${ARCH_LABEL} (${ARCH})"
-echo "  Asset:        ${ASSET}"
 echo ""
 
-# Download URL. We resolve via the GitHub `releases/latest` redirect so the
-# script doesn't go stale every release — it always grabs whatever's tagged
-# as Latest at install time.
+# Resolve the real asset name from the latest release via the GitHub API —
+# asset filenames embed the version (Codemaxxing-1.2.3-arm64-mac.zip), so a
+# hard-coded name would break on every release. No jq dependency: grep/sed
+# the JSON for asset names.
+bold "0/4 Finding the latest release…"
+RELEASE_JSON="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" || true)"
+ASSET_NAMES="$(printf '%s' "$RELEASE_JSON" | grep -o '"name": *"[^"]*\.zip"' | sed 's/.*"name": *"//;s/"$//' || true)"
+
+if [[ "$ARCH" == "arm64" ]]; then
+  ASSET="$(printf '%s\n' "$ASSET_NAMES" | grep -E '^Codemaxxing-.*-arm64-mac\.zip$' | head -1 || true)"
+else
+  # Intel asset has no arch suffix — exclude the arm64 one explicitly.
+  ASSET="$(printf '%s\n' "$ASSET_NAMES" | grep -E '^Codemaxxing-.*-mac\.zip$' | grep -v 'arm64' | head -1 || true)"
+fi
+
+if [[ -z "$ASSET" ]]; then
+  if [[ "$ARCH" == "x86_64" ]]; then
+    red "No Intel macOS build in the latest release yet — Apple Silicon only for now."
+    red "You can build from source instead: https://github.com/${REPO}#install"
+  else
+    red "Couldn't find a macOS asset in the latest release (GitHub API may be rate-limiting)."
+    red "Download manually from https://github.com/${REPO}/releases/latest"
+  fi
+  exit 1
+fi
+echo "  Asset: ${ASSET}"
+echo ""
+
+# `releases/latest/download/<asset>` follows the Latest redirect at install
+# time, so the URL never goes stale.
 DL_URL="https://github.com/${REPO}/releases/latest/download/${ASSET}"
 
 # Decide install location. /Applications is the canonical home; if the user

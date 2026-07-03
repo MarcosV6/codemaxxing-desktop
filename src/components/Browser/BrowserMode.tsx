@@ -1,7 +1,11 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react'
 import { useAppStore } from '../../store/appStore'
-import { ChatArea } from '../Chat/ChatArea'
 import { BrowserTabView } from './BrowserTabView'
+import { BrowserSpaces } from './BrowserSpaces'
+import { BrowserAssistant } from './BrowserAssistant'
+import { NewTabPage } from './NewTabPage'
+import { SiteIcon } from './SiteIcon'
+import { useBrowserSpaces } from './useBrowserSpaces'
 import { useResizablePanel, ResizeHandle } from '../Shared/Resizable'
 import {
   ArrowLeft, Plus, ChevronLeft, ChevronRight, RotateCw, X, Search, Globe, Loader2,
@@ -9,7 +13,7 @@ import {
 } from 'lucide-react'
 
 type BrowserResult = { ok: boolean; error?: string; title?: string; url?: string; text?: string; base64?: string }
-type BrowserCommand = { id: string; action: 'navigate' | 'read' | 'screenshot' | 'click'; url?: string; selector?: string; text?: string }
+type BrowserCommand = { id: string; action: 'navigate' | 'read' | 'screenshot' | 'click' | 'type' | 'scroll'; url?: string; selector?: string; text?: string; submit?: boolean; direction?: string }
 type BrowserBridge = {
   onCommand: (cb: (cmd: BrowserCommand) => void) => () => void
   sendResult: (id: string, r: BrowserResult) => void
@@ -38,10 +42,23 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
   const closeBrowserTab = useAppStore((s) => s.closeBrowserTab)
   const setActiveBrowserTab = useAppStore((s) => s.setActiveBrowserTab)
   const updateBrowserTab = useAppStore((s) => s.updateBrowserTab)
-  const setBrowserView = useAppStore((s) => s.setBrowserView)
-  const activeSession = useAppStore((s) => s.activeSession)
+  const exitBrowser = useAppStore((s) => s.exitBrowser)
 
   const left = useResizablePanel({ storageKey: 'browser-left', defaultWidth: 288, min: 240, max: 480, dock: 'left' })
+  const right = useResizablePanel({ storageKey: 'browser-assistant-right', defaultWidth: 400, min: 320, max: 680, dock: 'right' })
+  const browserSpaces = useBrowserSpaces()
+  // Assistant placement: floating over the page (default) or docked to the
+  // right as a resizable column. Persisted so it sticks across sessions.
+  const [assistantDock, setAssistantDock] = useState<'float' | 'right'>(
+    () => (typeof localStorage !== 'undefined' && localStorage.getItem('browser-assistant-dock') === 'right' ? 'right' : 'float'),
+  )
+  const toggleAssistantDock = useCallback(() => {
+    setAssistantDock((d) => {
+      const next = d === 'right' ? 'float' : 'right'
+      try { localStorage.setItem('browser-assistant-dock', next) } catch { /* noop */ }
+      return next
+    })
+  }, [])
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const els = useRef(new Map<string, any>())
@@ -51,8 +68,14 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
 
   const [urlDraft, setUrlDraft] = useState('')
   const [assistantOpen, setAssistantOpen] = useState(false)
+  // Entering the browser via a browser-type session bypasses the openBrowserPanel
+  // path that seeds a tab, so make sure there's always at least one tab open.
+  useEffect(() => { if (tabs.length === 0) addBrowserTab() }, [tabs.length, addBrowserTab])
   const activeTab = tabs.find((t) => t.id === activeId) || null
   useEffect(() => { setUrlDraft(activeTab?.url || '') }, [activeTab?.url, activeId])
+  // The active tab as a saveable site (null on a blank tab) — used by the
+  // spaces panel's "pin current" / "add current to folder" actions.
+  const current = activeTab?.url ? { title: activeTab.title || activeTab.url, url: activeTab.url } : null
 
   const getActiveEl = () => (activeIdRef.current ? els.current.get(activeIdRef.current) : undefined)
 
@@ -88,6 +111,42 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
       const needle = (text || '').toLowerCase()
       return `(()=>{const els=[...document.querySelectorAll('a,button,[role="button"],input[type="submit"],input[type="button"],summary')];const el=els.find(e=>(((e.innerText||e.value||'')+'')).trim().toLowerCase().includes(${JSON.stringify(needle)}));if(el){el.scrollIntoView({block:'center'});el.click();return true}return false})()`
     }
+    // Set a field's value the React-friendly way (native setter + input/change),
+    // then optionally submit by dispatching Enter and form.requestSubmit().
+    const typeJs = (selector: string, text: string, submit: boolean) => `(()=>{
+      const el=document.querySelector(${JSON.stringify(selector)});
+      if(!el) return false;
+      el.focus();
+      const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const desc = Object.getOwnPropertyDescriptor(proto,'value');
+      if(desc&&desc.set){desc.set.call(el, ${JSON.stringify(text)});}else{el.value=${JSON.stringify(text)};}
+      el.dispatchEvent(new Event('input',{bubbles:true}));
+      el.dispatchEvent(new Event('change',{bubbles:true}));
+      ${submit ? `var k={key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true};
+      el.dispatchEvent(new KeyboardEvent('keydown',k));
+      el.dispatchEvent(new KeyboardEvent('keypress',k));
+      el.dispatchEvent(new KeyboardEvent('keyup',k));
+      if(el.form){try{el.form.requestSubmit?el.form.requestSubmit():el.form.submit();}catch(e){}}` : ''}
+      return true;
+    })()`
+    const scrollJs = (direction: string, selector?: string) => {
+      if (selector) return `(()=>{const el=document.querySelector(${JSON.stringify(selector)});if(el){el.scrollIntoView({block:'center'});return true}return false})()`
+      const m: Record<string, string> = {
+        down: 'window.scrollBy(0,Math.round(innerHeight*0.9))',
+        up: 'window.scrollBy(0,-Math.round(innerHeight*0.9))',
+        top: 'window.scrollTo(0,0)',
+        bottom: 'window.scrollTo(0,document.body.scrollHeight)',
+      }
+      return `(()=>{${m[direction] || m.down};return true})()`
+    }
+    // Wait for a navigation that an action (e.g. type+submit) may trigger —
+    // resolves on the next did-stop-loading or after a short timeout.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const waitForSettle = (wv: any, ms: number) => new Promise<void>((resolve) => {
+      const done = () => { wv.removeEventListener('did-stop-loading', done); clearTimeout(t); resolve() }
+      const t = setTimeout(() => { wv.removeEventListener('did-stop-loading', done); resolve() }, ms)
+      wv.addEventListener('did-stop-loading', done)
+    })
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const loadAndWait = (wv: any, target: string) => new Promise<void>((resolve) => {
       const done = () => {
@@ -120,6 +179,18 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
         } else if (cmd.action === 'click') {
           const clicked = await wv.executeJavaScript(clickJs(cmd.selector, cmd.text), true)
           reply({ ok: !!clicked, error: clicked ? undefined : 'no matching element' })
+        } else if (cmd.action === 'type') {
+          if (!cmd.selector) { reply({ ok: false, error: 'no selector' }); return }
+          const typed = await wv.executeJavaScript(typeJs(cmd.selector, cmd.text || '', !!cmd.submit), true)
+          if (!typed) { reply({ ok: false, error: 'no matching element' }); return }
+          if (cmd.submit) {
+            await waitForSettle(wv, 8_000)
+            if (activeIdRef.current) updateBrowserTab(activeIdRef.current, { url: wv.getURL?.() || '' })
+          }
+          reply({ ok: true, url: wv.getURL?.() || '', title: wv.getTitle?.() || '' })
+        } else if (cmd.action === 'scroll') {
+          const scrolled = await wv.executeJavaScript(scrollJs(cmd.direction || 'down', cmd.selector), true)
+          reply({ ok: !!scrolled, error: scrolled ? undefined : 'no matching element' })
         } else {
           reply({ ok: false, error: 'unknown action' })
         }
@@ -142,76 +213,101 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
       >
         <ResizeHandle handleProps={left.handleProps} label="browser sidebar" />
 
-        {/* top row — drag region; left space reserved for traffic lights */}
-        <div className="h-12 flex items-center gap-2 pl-[80px] pr-2 shrink-0" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
-          <button
-            onClick={() => setBrowserView(false)}
-            className="flex items-center gap-1 px-2 py-1 rounded-md text-[11.5px] hover:bg-white/5 transition-colors"
-            style={{ WebkitAppRegion: 'no-drag', color: 'var(--theme-muted)' } as React.CSSProperties}
-            title="Exit browser mode"
-          >
-            <ArrowLeft size={13} /> exit
-          </button>
+        {/* top row — traffic lights | nav arrows + assistant | back-to-sessions (Arc-style) */}
+        <div className="h-12 flex items-center gap-0.5 pl-[80px] pr-1.5 shrink-0" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
           <span className="flex-1" />
-          <button onClick={() => setAssistantOpen((v) => !v)} className={iconBtn} style={{ WebkitAppRegion: 'no-drag', color: assistantOpen ? 'var(--theme-primary)' : 'var(--theme-muted)' } as React.CSSProperties} title="Assistant">
-            <MessageSquare size={14} />
+          <button onClick={() => getActiveEl()?.goBack?.()} className={iconBtn} style={{ WebkitAppRegion: 'no-drag', color: 'var(--theme-muted)' } as React.CSSProperties} title="Back"><ChevronLeft size={17} /></button>
+          <button onClick={() => getActiveEl()?.goForward?.()} className={iconBtn} style={{ WebkitAppRegion: 'no-drag', color: 'var(--theme-muted)' } as React.CSSProperties} title="Forward"><ChevronRight size={17} /></button>
+          <button onClick={() => { const el = getActiveEl(); if (activeTab?.loading) el?.stop?.(); else el?.reload?.() }} className={iconBtn} style={{ WebkitAppRegion: 'no-drag', color: 'var(--theme-muted)' } as React.CSSProperties} title={activeTab?.loading ? 'Stop' : 'Reload'}>
+            {activeTab?.loading ? <X size={15} /> : <RotateCw size={14} />}
           </button>
-          <button onClick={() => addBrowserTab()} className={iconBtn} style={{ WebkitAppRegion: 'no-drag', color: 'var(--theme-muted)' } as React.CSSProperties} title="New tab">
-            <Plus size={15} />
+          <button onClick={() => setAssistantOpen((v) => !v)} className={iconBtn} style={{ WebkitAppRegion: 'no-drag', color: assistantOpen ? 'var(--theme-primary)' : 'var(--theme-muted)' } as React.CSSProperties} title="Assistant">
+            <MessageSquare size={15} />
+          </button>
+          <button
+            onClick={() => { void exitBrowser() }}
+            className={iconBtn}
+            style={{ WebkitAppRegion: 'no-drag', color: 'var(--theme-muted)' } as React.CSSProperties}
+            title="Back to sessions"
+          >
+            <ArrowLeft size={15} />
           </button>
         </div>
 
-        {/* url + nav */}
-        <div className="flex items-center gap-1 px-2 pb-2 shrink-0">
-          <button onClick={() => getActiveEl()?.goBack?.()} className={iconBtn} style={{ color: 'var(--theme-muted)' }} title="Back"><ChevronLeft size={15} /></button>
-          <button onClick={() => getActiveEl()?.goForward?.()} className={iconBtn} style={{ color: 'var(--theme-muted)' }} title="Forward"><ChevronRight size={15} /></button>
-          <button onClick={() => { const el = getActiveEl(); if (activeTab?.loading) el?.stop?.(); else el?.reload?.() }} className={iconBtn} style={{ color: 'var(--theme-muted)' }} title={activeTab?.loading ? 'Stop' : 'Reload'}>
-            {activeTab?.loading ? <X size={14} /> : <RotateCw size={13} />}
-          </button>
-          <div className="flex-1 flex items-center gap-1.5 rounded-md px-2" style={{ backgroundColor: 'var(--theme-bg)', border: '1px solid var(--theme-border)' }}>
-            <Search size={12} style={{ color: 'var(--theme-muted)', flexShrink: 0 }} />
+        {/* big Arc-style search pill on its own row */}
+        <div className="px-2.5 pb-2.5 shrink-0">
+          <div
+            className="flex items-center gap-2.5 rounded-xl px-3.5 py-2.5 transition-colors focus-within:border-[color:var(--theme-primary)]"
+            style={{ backgroundColor: 'var(--theme-bg)', border: '1px solid var(--theme-border)' }}
+          >
+            <Search size={15} style={{ color: 'var(--theme-muted)', flexShrink: 0 }} />
             <input
               value={urlDraft}
               onChange={(e) => setUrlDraft(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') navigateActive(urlDraft) }}
-              placeholder="Search or enter address"
-              className="flex-1 min-w-0 bg-transparent outline-none text-[12px] py-1.5"
+              onFocus={(e) => e.currentTarget.select()}
+              placeholder="Search or Enter URL…"
+              className="flex-1 min-w-0 bg-transparent outline-none text-[13.5px]"
               style={{ color: 'var(--theme-text)' }}
             />
           </div>
         </div>
 
-        {/* vertical tabs */}
-        <div className="flex-1 min-h-0 overflow-y-auto px-2 flex flex-col gap-0.5">
-          {tabs.map((t) => {
-            const active = t.id === activeId
-            return (
-              <div
-                key={t.id}
-                onClick={() => setActiveBrowserTab(t.id)}
-                className="group flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors"
-                style={{
-                  backgroundColor: active ? 'var(--theme-bg-raised)' : 'transparent',
-                  borderLeft: active ? '2px solid var(--theme-primary)' : '2px solid transparent',
-                }}
-              >
-                {t.loading
-                  ? <Loader2 size={13} className="animate-spin shrink-0" style={{ color: 'var(--theme-primary)' }} />
-                  : <Globe size={13} className="shrink-0" style={{ color: active ? 'var(--theme-primary)' : 'var(--theme-muted)' }} />}
-                <span className="flex-1 truncate text-[12px]" style={{ color: active ? 'var(--theme-text)' : 'var(--theme-muted)' }}>
-                  {t.title || t.url || 'New tab'}
-                </span>
-                <button
-                  onClick={(e) => { e.stopPropagation(); closeBrowserTab(t.id) }}
-                  className="w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-white/10 transition-opacity shrink-0"
-                  style={{ color: 'var(--theme-muted)' }}
-                  title="Close tab"
+        {/* scrollable: pinned + folders, then open tabs */}
+        <div className="flex-1 min-h-0 overflow-y-auto px-2 pb-3 flex flex-col gap-3">
+          <BrowserSpaces
+            spaces={browserSpaces.spaces}
+            current={current}
+            onOpen={(url) => navigateActive(url)}
+            pinSite={browserSpaces.pinSite}
+            unpin={browserSpaces.unpin}
+            addFolder={browserSpaces.addFolder}
+            removeFolder={browserSpaces.removeFolder}
+            toggleFolder={browserSpaces.toggleFolder}
+            addSiteToFolder={browserSpaces.addSiteToFolder}
+            removeSiteFromFolder={browserSpaces.removeSiteFromFolder}
+          />
+
+          <div className="flex flex-col gap-0.5">
+            <div className="flex items-center px-1">
+              <span className="text-[10px] uppercase tracking-wider font-mono" style={{ color: 'var(--theme-muted)' }}>Tabs</span>
+              <span className="flex-1" />
+              <button onClick={() => addBrowserTab()} className="w-4 h-4 rounded flex items-center justify-center hover:bg-white/5" style={{ color: 'var(--theme-muted)' }} title="New tab">
+                <Plus size={12} />
+              </button>
+            </div>
+            {tabs.map((t) => {
+              const active = t.id === activeId
+              return (
+                <div
+                  key={t.id}
+                  onClick={() => setActiveBrowserTab(t.id)}
+                  className="group flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors"
+                  style={{
+                    backgroundColor: active ? 'var(--theme-bg-raised)' : 'transparent',
+                    borderLeft: active ? '2px solid var(--theme-primary)' : '2px solid transparent',
+                  }}
                 >
-                  <X size={12} />
-                </button>
-              </div>
-            )
-          })}
+                  {t.loading
+                    ? <Loader2 size={13} className="animate-spin shrink-0" style={{ color: 'var(--theme-primary)' }} />
+                    : t.url
+                      ? <SiteIcon url={t.url} size={13} />
+                      : <Globe size={13} className="shrink-0" style={{ color: active ? 'var(--theme-primary)' : 'var(--theme-muted)' }} />}
+                  <span className="flex-1 truncate text-[12px]" style={{ color: active ? 'var(--theme-text)' : 'var(--theme-muted)' }}>
+                    {t.title || t.url || 'New tab'}
+                  </span>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); closeBrowserTab(t.id) }}
+                    className="w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-white/10 transition-opacity shrink-0"
+                    style={{ color: 'var(--theme-muted)' }}
+                    title="Close tab"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              )
+            })}
+          </div>
         </div>
 
       </aside>
@@ -233,40 +329,37 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
           ))
         )}
 
-        {assistantOpen && (
+        {/* Arc-style new-tab page over the (blank) active tab's webview. */}
+        {activeTab && !activeTab.url && (
+          <NewTabPage spaces={browserSpaces.spaces} onOpen={(u) => navigateActive(u)} />
+        )}
+
+        {/* Floating assistant — overlays the page bottom-right. */}
+        {assistantOpen && assistantDock === 'float' && (
           <div
             style={{
               position: 'absolute', bottom: 18, right: 18,
               width: 384, height: 'min(560px, calc(100% - 36px))',
               zIndex: 40, display: 'flex', flexDirection: 'column', overflow: 'hidden',
-              backgroundColor: 'var(--theme-bg-subtle)', border: '1px solid var(--theme-border)',
+              border: '1px solid var(--theme-border)',
               borderRadius: 14, boxShadow: '0 18px 50px rgba(0,0,0,0.45)',
             }}
           >
-            <div className="h-10 flex items-center gap-2 px-3 shrink-0" style={{ borderBottom: '1px solid var(--theme-hairline)' }}>
-              <MessageSquare size={13} style={{ color: 'var(--theme-primary)' }} />
-              <span className="text-[12px] font-medium" style={{ color: 'var(--theme-text)' }}>Assistant</span>
-              <span className="text-[10px] opacity-50">drives this tab</span>
-              <span className="flex-1" />
-              <button onClick={() => setAssistantOpen(false)} className={iconBtn} style={{ color: 'var(--theme-muted)' }} title="Close"><X size={14} /></button>
-            </div>
-            <div className="flex-1 overflow-hidden">
-              {activeSession ? (
-                <ChatArea />
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center gap-3 px-5 text-center">
-                  <p className="text-[12px] leading-relaxed" style={{ color: 'var(--theme-muted)' }}>
-                    Start a chat to have the agent browse, read, and click for you.
-                  </p>
-                  <button onClick={onNewSession} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-medium" style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-bg)' }}>
-                    <Plus size={13} /> New session
-                  </button>
-                </div>
-              )}
-            </div>
+            <BrowserAssistant dock="float" onToggleDock={toggleAssistantDock} onClose={() => setAssistantOpen(false)} onNewSession={onNewSession} />
           </div>
         )}
       </div>
+
+      {/* Docked assistant — resizable right column beside the page. */}
+      {assistantOpen && assistantDock === 'right' && (
+        <aside
+          className="relative flex flex-col shrink-0 h-full"
+          style={{ width: right.width, borderLeft: '1px solid var(--theme-hairline)' }}
+        >
+          <ResizeHandle handleProps={right.handleProps} label="assistant panel" />
+          <BrowserAssistant dock="right" onToggleDock={toggleAssistantDock} onClose={() => setAssistantOpen(false)} onNewSession={onNewSession} />
+        </aside>
+      )}
     </div>
   )
 }

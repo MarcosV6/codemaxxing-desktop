@@ -191,7 +191,14 @@ export function CommandPalette() {
       { kind: 'action', id: 'act:council', title: 'Convene Council', subtitle: 'N models answer → one synthesized best', icon: Gavel, hint: 'workspace', run: () => { setOpen(false); openCompare() } },
       { kind: 'action', id: 'act:cockpit', title: 'Context Cockpit', subtitle: "See the model's window + compact/checkpoint", icon: Gauge, hint: 'session', run: () => { setOpen(false); setDrawer('cockpit') } },
       { kind: 'action', id: 'act:local', title: 'Go Fully Local', subtitle: 'Switch this session to a local model · $0', icon: HardDrive, hint: 'session', run: () => { setOpen(false); goLocal() } },
-      { kind: 'action', id: 'act:browser', title: 'Open Browser', subtitle: 'Embedded browser — the agent can navigate, read + click it', icon: Compass, hint: 'workspace', run: () => { setOpen(false); openBrowserPanel() } },
+      { kind: 'action', id: 'act:browser', title: 'Open Browser', subtitle: 'Embedded browser — the agent can navigate, read + click it', icon: Compass, hint: 'workspace', run: () => {
+        setOpen(false)
+        // One path into the browser: prefer the most recent browser session
+        // (same as the sidebar entry); fall back to the transient panel.
+        const recent = sessionList.find((s) => (s as { mode?: string }).mode === 'browser')
+        if (recent) void switchSession(recent.id)
+        else openBrowserPanel()
+      } },
       { kind: 'action', id: 'act:remote', title: 'Remote Access (phone)', subtitle: 'Pair a device → drive this agent from your phone', icon: Smartphone, hint: 'settings', run: () => { setOpen(false); openSettings() } },
       { kind: 'action', id: 'act:welcome', title: 'Welcome / Setup', subtitle: 'Re-open the first-run walkthrough', icon: Rocket, hint: 'help', run: () => { setOpen(false); openOnboarding() } },
       { kind: 'action', id: 'act:research', title: 'Deep Research', subtitle: 'Web research → cited report', icon: Search, hint: 'workspace', run: () => { setOpen(false); openResearch() } },

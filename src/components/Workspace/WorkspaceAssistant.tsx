@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useAppStore } from '../../store/appStore'
 import { ChatArea } from '../Chat/ChatArea'
 import { useResizablePanel, ResizeHandle } from '../Shared/Resizable'
+import { AssistantModelPicker } from '../Shared/AssistantModelPicker'
 import { MessageSquare, Plus, ChevronRight } from 'lucide-react'
 
 /**
@@ -37,9 +38,10 @@ export function WorkspaceAssistant({ onNewSession, hint }: { onNewSession: () =>
       style={{ width: dock.width, minWidth: 300, backgroundColor: 'var(--theme-bg-subtle)', borderLeft: '1px solid var(--theme-border)' }}
     >
       <ResizeHandle handleProps={dock.handleProps} label="assistant" />
-      <div className="h-10 flex items-center gap-2 px-3 shrink-0" style={{ borderBottom: '1px solid var(--theme-hairline)' }}>
-        <MessageSquare size={13} style={{ color: 'var(--theme-primary)' }} />
-        <span className="text-[12px] font-medium" style={{ color: 'var(--theme-text)' }}>Assistant</span>
+      <div className="h-10 flex items-center gap-1.5 px-2.5 shrink-0" style={{ borderBottom: '1px solid var(--theme-hairline)' }}>
+        <MessageSquare size={13} style={{ color: 'var(--theme-primary)', flexShrink: 0 }} />
+        <span className="text-[12px] font-medium shrink-0" style={{ color: 'var(--theme-text)' }}>Assistant</span>
+        <AssistantModelPicker />
         {hint && <span className="text-[10px] opacity-50 ml-0.5 truncate">{hint}</span>}
         <span className="flex-1" />
         <button onClick={() => setCollapsed(true)} className="w-6 h-6 rounded-md flex items-center justify-center hover:bg-white/5 transition-colors shrink-0" style={{ color: 'var(--theme-muted)' }} title="Collapse">

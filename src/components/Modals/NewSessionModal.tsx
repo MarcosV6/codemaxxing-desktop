@@ -1,14 +1,16 @@
 import React, { useEffect, useState } from 'react'
 import { useAppStore } from '../../store/appStore'
-import { X, Folder, Code2, MessageCircle, AlertCircle, Pencil, Loader2, ExternalLink } from 'lucide-react'
+import { X, Folder, Code2, MessageCircle, Compass, AlertCircle, Pencil, Loader2, ExternalLink } from 'lucide-react'
 import type { SessionMode } from '../../types'
 
 interface NewSessionModalProps {
   open: boolean
   onClose: () => void
+  /** Preselect a session type (e.g. the sidebar Browser entry opens with 'browser'). */
+  initialMode?: SessionMode
 }
 
-export function NewSessionModal({ open, onClose }: NewSessionModalProps) {
+export function NewSessionModal({ open, onClose, initialMode }: NewSessionModalProps) {
   const appConfig = useAppStore((s) => s.appConfig)
   const providers = useAppStore((s) => s.providers)
   const availableModels = useAppStore((s) => s.availableModels)
@@ -39,7 +41,7 @@ export function NewSessionModal({ open, onClose }: NewSessionModalProps) {
 
   useEffect(() => {
     if (open) {
-      setMode('code')
+      setMode(initialMode ?? 'code')
       setCwd(appConfig.lastCwd || '')
       setProvider(appConfig.lastProvider || '')
       setModel(appConfig.lastModel || '')
@@ -47,7 +49,7 @@ export function NewSessionModal({ open, onClose }: NewSessionModalProps) {
       setModelStatus('idle')
       setModelError(null)
     }
-  }, [open, appConfig])
+  }, [open, appConfig, initialMode])
 
   useEffect(() => {
     if (!open) return
@@ -124,8 +126,10 @@ export function NewSessionModal({ open, onClose }: NewSessionModalProps) {
   // filesystem regardless. Default it to home so the cwd field stays valid
   // for downstream consumers (memory scope, etc.) without forcing the user
   // to pick anything.
-  const isChatMode = mode === 'chat'
-  const effectiveCwd = isChatMode ? (cwd || '~') : cwd
+  // Chat and browser sessions don't operate on a project directory, so default
+  // the cwd to home and hide the picker.
+  const noProjectDir = mode === 'chat' || mode === 'browser'
+  const effectiveCwd = noProjectDir ? (cwd || '~') : cwd
   const canCreate = effectiveCwd && provider && model && !loading
 
   const handleCreate = async () => {
@@ -154,40 +158,54 @@ export function NewSessionModal({ open, onClose }: NewSessionModalProps) {
           {/* ── Mode toggle ── */}
           <div className="space-y-1">
             <div className="text-[10px] uppercase font-mono opacity-60">Session type</div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <button
                 onClick={() => setMode('code')}
-                className="flex items-center gap-2 px-3 py-2 rounded border text-left"
+                className="flex flex-col gap-1.5 px-3 py-2.5 rounded border text-left"
                 style={{
                   borderColor: mode === 'code' ? 'var(--theme-primary, #7AA2F7)' : 'var(--theme-border, #334155)',
                   backgroundColor: mode === 'code' ? 'color-mix(in srgb, var(--theme-primary) 12%, transparent)' : 'transparent',
                 }}
               >
-                <Code2 size={14} style={{ color: mode === 'code' ? 'var(--theme-primary)' : undefined }} />
+                <Code2 size={15} style={{ color: mode === 'code' ? 'var(--theme-primary)' : undefined }} />
                 <div>
-                  <div className="text-xs font-mono">Code</div>
-                  <div className="text-[10px] opacity-60">Full agent — files, shell, git</div>
+                  <div className="text-xs font-mono">Agent</div>
+                  <div className="text-[10px] opacity-60 leading-tight">Files, shell, git</div>
                 </div>
               </button>
               <button
                 onClick={() => setMode('chat')}
-                className="flex items-center gap-2 px-3 py-2 rounded border text-left"
+                className="flex flex-col gap-1.5 px-3 py-2.5 rounded border text-left"
                 style={{
                   borderColor: mode === 'chat' ? 'var(--theme-primary, #7AA2F7)' : 'var(--theme-border, #334155)',
                   backgroundColor: mode === 'chat' ? 'color-mix(in srgb, var(--theme-primary) 12%, transparent)' : 'transparent',
                 }}
               >
-                <MessageCircle size={14} style={{ color: mode === 'chat' ? 'var(--theme-primary)' : undefined }} />
+                <MessageCircle size={15} style={{ color: mode === 'chat' ? 'var(--theme-primary)' : undefined }} />
                 <div>
                   <div className="text-xs font-mono">Chat</div>
-                  <div className="text-[10px] opacity-60">Plain conversation + web search</div>
+                  <div className="text-[10px] opacity-60 leading-tight">Talk + web search</div>
+                </div>
+              </button>
+              <button
+                onClick={() => setMode('browser')}
+                className="flex flex-col gap-1.5 px-3 py-2.5 rounded border text-left"
+                style={{
+                  borderColor: mode === 'browser' ? 'var(--theme-primary, #7AA2F7)' : 'var(--theme-border, #334155)',
+                  backgroundColor: mode === 'browser' ? 'color-mix(in srgb, var(--theme-primary) 12%, transparent)' : 'transparent',
+                }}
+              >
+                <Compass size={15} style={{ color: mode === 'browser' ? 'var(--theme-primary)' : undefined }} />
+                <div>
+                  <div className="text-xs font-mono">Browser</div>
+                  <div className="text-[10px] opacity-60 leading-tight">Browse — agent drives</div>
                 </div>
               </button>
             </div>
           </div>
 
-          {/* ── Project directory (code mode only) ── */}
-          {!isChatMode && (
+          {/* ── Project directory (code/agent mode only) ── */}
+          {!noProjectDir && (
             <div className="space-y-1">
               <div className="text-[10px] uppercase font-mono opacity-60">Project directory</div>
               <div className="flex items-center gap-2">

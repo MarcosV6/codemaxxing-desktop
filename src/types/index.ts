@@ -57,7 +57,7 @@ export interface ChatMessage {
   retryPrompt?: string
 }
 
-export type SessionMode = 'code' | 'chat'
+export type SessionMode = 'code' | 'chat' | 'browser'
 
 export interface Session {
   id: string
@@ -73,6 +73,7 @@ export interface Session {
   /**
    * 'code' (default) — full coding agent with filesystem/shell tools.
    * 'chat' — plain conversational LLM with web research only, no filesystem.
+   * 'browser' — Arc-style browser surface; the assistant can drive the page.
    */
   mode: SessionMode
 }

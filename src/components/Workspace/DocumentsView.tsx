@@ -75,7 +75,7 @@ export function DocumentsView({ onNewSession }: { onNewSession: () => void }) {
       {/* left: document list */}
       <aside className="relative flex flex-col shrink-0 h-full" style={{ width: left.width, backgroundColor: 'var(--theme-bg-subtle)', borderRight: '1px solid var(--theme-hairline)' }}>
         <ResizeHandle handleProps={left.handleProps} label="documents list" />
-        <div className="h-12 flex items-center gap-2 pl-[80px] pr-2 shrink-0" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+        <div className="h-12 flex items-center gap-2 pl-[80px] pr-2 shrink-0" style={{ WebkitAppRegion: 'drag', borderBottom: '1px solid var(--theme-hairline)' } as React.CSSProperties}>
           <button onClick={() => close()} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11.5px] hover:bg-white/5 transition-colors" style={{ WebkitAppRegion: 'no-drag', color: 'var(--theme-muted)' } as React.CSSProperties} title="Exit Documents">
             <ArrowLeft size={13} /> exit
           </button>

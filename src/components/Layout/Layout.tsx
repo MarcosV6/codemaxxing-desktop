@@ -4,6 +4,7 @@ import { StatusBar } from '../Shared/StatusBar'
 import { PreviewPanel } from '../Preview/PreviewPanel'
 import { BrowserMode } from '../Browser/BrowserMode'
 import { useAppStore, type ModelInfo } from '../../store/appStore'
+import type { SessionMode } from '../../types'
 import { Plus, MessageSquare, MessageCircle, PanelLeftClose, PanelLeft, PanelRight, Settings, Trash2, Folder, BookmarkCheck, Bot, Clock, BookOpen, GitCompare, StickyNote, FileText, Mail, CalendarDays, ChevronDown, FolderTree, Loader2, Search, Compass } from 'lucide-react'
 import { ApprovalModal, MCPApprovalModal } from '../Modals/ApprovalModal'
 import { SettingsModal } from '../Modals/SettingsModal'
@@ -59,7 +60,6 @@ export function Layout() {
   const previewOpen = useAppStore((s) => s.previewOpen)
   const togglePreview = useAppStore((s) => s.togglePreview)
   const browserView = useAppStore((s) => s.browserView)
-  const toggleBrowserView = useAppStore((s) => s.toggleBrowserView)
   const filesPanelOpen = useAppStore((s) => s.filesPanelOpen)
   const toggleFilesPanel = useAppStore((s) => s.toggleFilesPanel)
   const setDrawer = useAppStore((s) => s.setDrawer)
@@ -71,6 +71,9 @@ export function Layout() {
   // Layout is per-device UI state — persisted via localStorage, not config IPC.
   const sidebarResize = useResizablePanel({ storageKey: 'sidebar', defaultWidth: 220, min: 170, max: 420, dock: 'left' })
   const [newSessionOpen, setNewSessionOpen] = useState(false)
+  const [newSessionMode, setNewSessionMode] = useState<SessionMode | undefined>(undefined)
+  const [toolsOpen, setToolsOpen] = useState(false)
+  const toolsRef = useRef<HTMLDivElement>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
@@ -87,6 +90,16 @@ export function Layout() {
   // delay rendering the rest of the list.
   const [loadingProviders, setLoadingProviders] = useState<Set<string>>(new Set())
   const [modelFilter, setModelFilter] = useState('')
+
+  // Close tools popover on outside click / escape
+  useEffect(() => {
+    if (!toolsOpen) return
+    const onDown = (e: MouseEvent) => { if (toolsRef.current && !toolsRef.current.contains(e.target as Node)) setToolsOpen(false) }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setToolsOpen(false) }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => { window.removeEventListener('mousedown', onDown); window.removeEventListener('keydown', onKey) }
+  }, [toolsOpen])
 
   // Close model picker on outside click / escape
   useEffect(() => {
@@ -171,19 +184,49 @@ export function Layout() {
         e.preventDefault()
         toggleFilesPanel()
       }
+      // ⌘N — advertised next to the sidebar's New session button.
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'n') {
+        e.preventDefault()
+        setNewSessionMode(undefined)
+        setNewSessionOpen(true)
+        setSidebarOpen(true)
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [togglePreview, toggleFilesPanel])
 
   const handleNewSession = () => {
+    setNewSessionMode(undefined)
     setNewSessionOpen(true)
     setSidebarOpen(true)
   }
 
+  // Sidebar Browser entry — ONE path into the browser: switch to the most
+  // recent browser session, or open New Session preset to Browser if none.
+  const openBrowserWorkspace = () => {
+    const recent = sessionList.find((s) => (s as { mode?: string }).mode === 'browser')
+    if (recent) { void switchSession(recent.id); return }
+    setNewSessionMode('browser')
+    setNewSessionOpen(true)
+  }
+
+  // Two-step delete: first click arms (icon turns red), second click within
+  // 3s deletes. A stray click can't nuke a session's history.
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  useEffect(() => {
+    if (!confirmDeleteId) return
+    const t = setTimeout(() => setConfirmDeleteId(null), 3000)
+    return () => clearTimeout(t)
+  }, [confirmDeleteId])
   const handleDeleteSession = (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation()
-    void deleteSession(sessionId)
+    if (confirmDeleteId === sessionId) {
+      setConfirmDeleteId(null)
+      void deleteSession(sessionId)
+    } else {
+      setConfirmDeleteId(sessionId)
+    }
   }
 
   const handleChangeCwd = async () => {
@@ -196,15 +239,29 @@ export function Layout() {
   // filesystem, so the cwd picker, Files panel, and panel toggle are
   // suppressed in their UI to avoid implying capabilities that don't exist.
   const isChatSession = activeSession?.mode === 'chat'
+  // A browser-type session renders the Arc-style browser surface in place of
+  // the chat. The legacy global `browserView` toggle still works for opening a
+  // transient browser without creating a session.
+  const showBrowser = browserView || activeSession?.mode === 'browser'
+  // Keep the browser surface mounted once it's been opened, and just hide it
+  // with CSS when you're elsewhere — unmounting it would destroy every
+  // <webview> and reload all tabs on return. Real browsers don't lose state.
+  const [browserEverOpened, setBrowserEverOpened] = useState(false)
+  useEffect(() => { if (showBrowser) setBrowserEverOpened(true) }, [showBrowser])
 
   return (
     <div
       className="app-shell h-screen w-screen flex flex-col overflow-hidden"
       style={{ backgroundColor: 'var(--theme-bg)', color: 'var(--theme-text)' }}
     >
-      {browserView ? (
-        <BrowserMode onNewSession={handleNewSession} />
-      ) : documentsOpen ? (
+      {/* Browser surface: mounted once opened, hidden (not unmounted) when away,
+          so its <webview> tabs keep their state instead of reloading. */}
+      {browserEverOpened && (
+        <div className="flex-1 flex overflow-hidden" style={{ display: showBrowser ? undefined : 'none' }}>
+          <BrowserMode onNewSession={handleNewSession} />
+        </div>
+      )}
+      {showBrowser ? null : documentsOpen ? (
         <DocumentsView onNewSession={handleNewSession} />
       ) : activeDrawer === 'notes' ? (
         <NotesView onNewSession={handleNewSession} />
@@ -255,18 +312,6 @@ export function Layout() {
                 <span>New session</span>
                 <span className="ml-auto text-[10.5px] opacity-40 font-mono">⌘N</span>
               </button>
-              <button
-                onClick={toggleBrowserView}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] transition-colors hover:bg-white/5 focus-ring mt-0.5"
-                style={{
-                  color: browserView ? 'var(--theme-primary)' : 'var(--theme-text)',
-                  backgroundColor: browserView ? 'color-mix(in srgb, var(--theme-primary) 10%, transparent)' : 'transparent',
-                }}
-                title="Browser — the agent can navigate, read + click it"
-              >
-                <Compass size={14} />
-                <span>Browser</span>
-              </button>
             </div>
 
             {/* Section header */}
@@ -311,8 +356,15 @@ export function Layout() {
                           }}
                         />
                       )}
-                      {(s as { mode?: 'code' | 'chat' }).mode === 'chat' && !isRenaming && (
+                      {(s as { mode?: SessionMode }).mode === 'chat' && !isRenaming && (
                         <MessageCircle
+                          size={11}
+                          className="shrink-0 opacity-50"
+                          style={{ color: 'var(--theme-secondary)' }}
+                        />
+                      )}
+                      {(s as { mode?: SessionMode }).mode === 'browser' && !isRenaming && (
+                        <Compass
                           size={11}
                           className="shrink-0 opacity-50"
                           style={{ color: 'var(--theme-secondary)' }}
@@ -355,9 +407,16 @@ export function Layout() {
                           </span>
                           <button
                             onClick={(e) => handleDeleteSession(e, s.id)}
-                            className="absolute right-2 opacity-0 group-hover:opacity-60 hover:!opacity-100 w-5 h-5 rounded flex items-center justify-center transition-all"
-                            style={{ color: 'var(--theme-muted)' }}
-                            title="Delete"
+                            className={`absolute right-2 w-5 h-5 rounded flex items-center justify-center transition-all ${
+                              confirmDeleteId === s.id
+                                ? 'opacity-100'
+                                : 'opacity-0 group-hover:opacity-60 hover:!opacity-100'
+                            }`}
+                            style={{
+                              color: confirmDeleteId === s.id ? '#f7768e' : 'var(--theme-muted)',
+                              backgroundColor: confirmDeleteId === s.id ? 'color-mix(in srgb, #f7768e 15%, transparent)' : 'transparent',
+                            }}
+                            title={confirmDeleteId === s.id ? 'Click again to delete' : 'Delete'}
                           >
                             <Trash2 size={12} />
                           </button>
@@ -369,37 +428,84 @@ export function Layout() {
               )}
             </div>
 
-            {/* Bottom: compact tool rail — icon-only with tooltips, one flat group */}
+            {/* Workspaces — labeled destinations, one row each. The active
+                surface gets the same highlight treatment as the active session. */}
+            <div className="px-2 pb-1 shrink-0">
+              <div className="px-2 pt-3 pb-1.5">
+                <span className="text-[10.5px] font-medium uppercase tracking-wider opacity-40">Workspaces</span>
+              </div>
+              {/* No active-state styling here: opening any of these replaces the
+                  whole layout (sidebar included), so none can be "current". */}
+              {[
+                { icon: Compass, label: 'Browser', onClick: openBrowserWorkspace },
+                { icon: FileText, label: 'Documents', onClick: openDocuments },
+                { icon: StickyNote, label: 'Notes & Tasks', onClick: () => setDrawer('notes') },
+                { icon: Mail, label: 'Email', onClick: openEmail },
+                { icon: CalendarDays, label: 'Calendar', onClick: openCalendar },
+              ].map(({ icon: Icon, label, onClick }) => (
+                <button
+                  key={label}
+                  onClick={onClick}
+                  className="w-full flex items-center gap-2 px-2 py-[7px] rounded-lg text-[12.5px] transition-colors hover:bg-white/5 focus-ring"
+                  style={{ color: 'var(--theme-text)' }}
+                >
+                  <Icon size={14} style={{ opacity: 0.65 }} />
+                  <span>{label}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Footer: Tools popover (utilities, labeled) + Settings */}
             <div
-              className="p-2"
+              className="p-2 flex items-center gap-1 shrink-0"
               style={{ borderTop: '1px solid var(--theme-hairline)' }}
             >
-              <div className="flex flex-wrap gap-1">
-                {[
-                  { icon: BookOpen, label: 'Cookbook', onClick: () => setDrawer('cookbook') },
-                  { icon: GitCompare, label: 'Compare', onClick: openCompare },
-                  { icon: Search, label: 'Deep Research', onClick: openResearch },
-                  { icon: StickyNote, label: 'Notes & Tasks', onClick: () => setDrawer('notes') },
-                  { icon: FileText, label: 'Documents', onClick: openDocuments },
-                  { icon: Mail, label: 'Email', onClick: openEmail },
-                  { icon: CalendarDays, label: 'Calendar', onClick: openCalendar },
-                  { icon: BookmarkCheck, label: 'Checkpoints', onClick: () => setDrawer('checkpoints') },
-                  { icon: Bot, label: 'Background agents', onClick: () => setDrawer('bg-agents') },
-                  { icon: Clock, label: 'Scheduled tasks', onClick: () => setDrawer('cron') },
-                  { icon: Settings, label: 'Settings', onClick: openSettings },
-                ].map(({ icon: Icon, label, onClick }) => (
-                  <button
-                    key={label}
-                    onClick={onClick}
-                    title={label}
-                    aria-label={label}
-                    className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors opacity-70 hover:opacity-100 hover:bg-white/5 focus-ring"
-                    style={{ color: 'var(--theme-muted)' }}
+              <div className="relative flex-1" ref={toolsRef}>
+                <button
+                  onClick={() => setToolsOpen((v) => !v)}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[12.5px] transition-colors hover:bg-white/5 focus-ring"
+                  style={{ color: toolsOpen ? 'var(--theme-primary)' : 'var(--theme-muted)' }}
+                >
+                  <BookOpen size={14} />
+                  <span>Tools</span>
+                  <ChevronDown size={11} className={`ml-auto transition-transform ${toolsOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {toolsOpen && (
+                  <div
+                    className="absolute left-0 bottom-full mb-1.5 w-[210px] rounded-xl shadow-xl z-30 overflow-hidden py-1"
+                    style={{ backgroundColor: 'var(--theme-bg-raised, var(--theme-bg-subtle))', border: '1px solid var(--theme-hairline-strong)' }}
                   >
-                    <Icon size={15} />
-                  </button>
-                ))}
+                    {[
+                      { icon: BookOpen, label: 'Cookbook', hint: 'local models', onClick: () => setDrawer('cookbook') },
+                      { icon: GitCompare, label: 'Compare models', hint: 'side by side', onClick: openCompare },
+                      { icon: Search, label: 'Deep Research', hint: 'multi-step', onClick: openResearch },
+                      { icon: BookmarkCheck, label: 'Checkpoints', hint: 'snapshots', onClick: () => setDrawer('checkpoints') },
+                      { icon: Bot, label: 'Background agents', hint: 'headless runs', onClick: () => setDrawer('bg-agents') },
+                      { icon: Clock, label: 'Scheduled tasks', hint: 'cron', onClick: () => setDrawer('cron') },
+                    ].map(({ icon: Icon, label, hint, onClick }) => (
+                      <button
+                        key={label}
+                        onClick={() => { setToolsOpen(false); onClick() }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-[12.5px] hover:bg-white/5 transition-colors text-left"
+                        style={{ color: 'var(--theme-text)' }}
+                      >
+                        <Icon size={14} style={{ color: 'var(--theme-muted)' }} />
+                        <span className="flex-1">{label}</span>
+                        <span className="text-[10px] opacity-40">{hint}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
+              <button
+                onClick={openSettings}
+                title="Settings"
+                aria-label="Settings"
+                className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors opacity-70 hover:opacity-100 hover:bg-white/5 focus-ring shrink-0"
+                style={{ color: 'var(--theme-muted)' }}
+              >
+                <Settings size={15} />
+              </button>
             </div>
           </aside>
         )}
@@ -632,7 +738,7 @@ export function Layout() {
                   )}
                 </>
               )}
-              {!browserView && !isChatSession && (
+              {!isChatSession && (
                 <button
                   onClick={toggleFilesPanel}
                   className="flex items-center gap-1 px-2 py-1 rounded-md hover:bg-white/5 transition-colors focus-ring"
@@ -646,31 +752,17 @@ export function Layout() {
                   <span className="text-[11.5px]">Files</span>
                 </button>
               )}
-              {!browserView && (
-                <button
-                  onClick={togglePreview}
-                  className="flex items-center gap-1 px-2 py-1 rounded-md hover:bg-white/5 transition-colors focus-ring"
-                  style={{
-                    WebkitAppRegion: 'no-drag',
-                    color: previewOpen ? 'var(--theme-primary)' : 'var(--theme-muted)',
-                  } as React.CSSProperties}
-                  title="Toggle preview (⌘P)"
-                >
-                  <PanelRight size={12} />
-                  <span className="text-[11.5px]">Preview</span>
-                </button>
-              )}
               <button
-                onClick={toggleBrowserView}
+                onClick={togglePreview}
                 className="flex items-center gap-1 px-2 py-1 rounded-md hover:bg-white/5 transition-colors focus-ring"
                 style={{
                   WebkitAppRegion: 'no-drag',
-                  color: browserView ? 'var(--theme-primary)' : 'var(--theme-muted)',
+                  color: previewOpen ? 'var(--theme-primary)' : 'var(--theme-muted)',
                 } as React.CSSProperties}
-                title="Browser view — the agent can drive it"
+                title="Toggle preview (⌘P)"
               >
-                <Compass size={12} />
-                <span className="text-[11.5px]">Browser</span>
+                <PanelRight size={12} />
+                <span className="text-[11.5px]">Preview</span>
               </button>
             </div>
           </header>
@@ -701,7 +793,7 @@ export function Layout() {
       <CompareModal />
       <ResearchModal />
       <CommandPalette />
-      <NewSessionModal open={newSessionOpen} onClose={() => setNewSessionOpen(false)} />
+      <NewSessionModal open={newSessionOpen} onClose={() => setNewSessionOpen(false)} initialMode={newSessionMode} />
       <OnboardingOverlay />
     </div>
   )

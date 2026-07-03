@@ -164,6 +164,8 @@ interface AppState {
   // ── Approvals / asks / plans ──
   pendingApproval: PendingApproval | null
   pendingMCPApproval: PendingMCPApproval | null
+  /** Latest status per MCP server name ("connecting", "connected (N tools)", "error: …"). */
+  mcpStatuses: Record<string, string>
   pendingAsk: PendingAsk | null
   pendingPlan: PendingPlan | null
 
@@ -565,6 +567,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   currentTasks: [],
   pendingApproval: null,
   pendingMCPApproval: null,
+  mcpStatuses: {},
   pendingAsk: null,
   pendingPlan: null,
   skills: [],
@@ -813,7 +816,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       }))
 
       sub(window.electron.mcp.onStatus(({ name, status }) => {
-        console.log('[mcp]', name, status)
+        // Keep the latest status per server for the StatusBar indicator —
+        // otherwise "did my MCP server connect?" is answerable only via
+        // devtools console.
+        set((s) => ({ mcpStatuses: { ...s.mcpStatuses, [name]: status } }))
       }))
 
       sub(window.electron.auth.onStatus(({ provider, method, message }) => {

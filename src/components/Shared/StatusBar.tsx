@@ -106,6 +106,7 @@ function Gauge({
 export function StatusBar() {
   const activeSession = useAppStore((s) => s.activeSession)
   const isRunning = useAppStore((s) => s.isRunning)
+  const mcpStatuses = useAppStore((s) => s.mcpStatuses)
   const currentUsage = useAppStore((s) => s.currentUsage)
   const lastPromptTokens = useAppStore((s) => s.lastPromptTokens)
   const currentStats = useAppStore((s) => s.currentStats)
@@ -193,6 +194,22 @@ export function StatusBar() {
             {messageCount} msg{messageCount === 1 ? '' : 's'}
           </span>
         )}
+
+        {/* MCP servers — one compact chip per server so "did Unity connect?"
+            is answerable at a glance. Green dot = connected, amber = working,
+            red = error/denied. Hover for the raw status line. */}
+        {Object.entries(mcpStatuses).map(([name, status]) => {
+          const ok = status.startsWith('connected')
+          const bad = status.startsWith('error') || status === 'denied'
+          const color = ok ? 'var(--theme-success)' : bad ? 'var(--theme-error)' : 'var(--theme-warning)'
+          return (
+            <span key={name} className="flex items-center gap-1 font-mono whitespace-nowrap" title={`MCP ${name}: ${status}`}>
+              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: color }} />
+              <span className="opacity-70">{name}</span>
+              {ok && <span className="opacity-40">{(status.match(/\((\d+) tools?\)/)?.[1]) ?? ''}</span>}
+            </span>
+          )
+        })}
       </div>
 
       {/* ── Right cluster: gauge, tokens, cost, model, tok/s ── */}

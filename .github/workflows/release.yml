@@ -51,22 +51,28 @@ jobs:
       - run: npm run build:app
 
       - name: Package (${{ matrix.platform }} ${{ matrix.arch }})
-        run: npx electron-builder ${{ matrix.args }} --publish never
+        # Signing is OPTIONAL. IMPORTANT: an empty-but-defined CSC_LINK makes
+        # electron-builder treat "" as a certificate path and fail the mac
+        # build with "⨯ <workspace> not a file" — so signing env vars are only
+        # exported when the secrets actually exist. Populate them in repo
+        # Settings → Secrets to get signed + notarized releases with no other
+        # code change. See docs/BUILDING.md → "Code signing & notarization".
+        run: |
+          if [ -n "${{ secrets.CSC_LINK }}" ]; then
+            export CSC_LINK="${{ secrets.CSC_LINK }}"
+            export CSC_KEY_PASSWORD="${{ secrets.CSC_KEY_PASSWORD }}"
+            export APPLE_ID="${{ secrets.APPLE_ID }}"
+            export APPLE_APP_SPECIFIC_PASSWORD="${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}"
+            export APPLE_TEAM_ID="${{ secrets.APPLE_TEAM_ID }}"
+          fi
+          if [ -n "${{ secrets.WIN_CSC_LINK }}" ]; then
+            export WIN_CSC_LINK="${{ secrets.WIN_CSC_LINK }}"
+            export WIN_CSC_KEY_PASSWORD="${{ secrets.WIN_CSC_KEY_PASSWORD }}"
+          fi
+          npx electron-builder ${{ matrix.args }} --publish never
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Signing is OPTIONAL and unset by default: with these secrets empty,
-          # electron-builder falls back to ad-hoc signing (runnable, but
-          # Gatekeeper/SmartScreen still nag) — identical to the manual builds
-          # shipped so far. Populate them in repo Settings → Secrets to get
-          # signed + notarized releases with no other code change. See
-          # docs/BUILDING.md → "Code signing & notarization".
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - name: Collect installers
         uses: actions/upload-artifact@v4

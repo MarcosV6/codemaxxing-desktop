@@ -18,6 +18,8 @@ export interface MCPConfig {
 
 export interface ConnectedServer {
   name: string
+  /** Config-identity hash — a changed command/args/env means reconnect. */
+  hash: string
   client: Client
   transport: StdioClientTransport
   tools: Array<{ name: string; description?: string; inputSchema: Record<string, unknown> }>
@@ -88,6 +90,20 @@ export function approveServer(cwd: string, name: string, cfg: MCPServerConfig): 
 
 const connected: ConnectedServer[] = []
 
+function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`${what} timed out after ${Math.round(ms / 1000)}s`)), ms)),
+  ])
+}
+
+/**
+ * Connect every configured server. Idempotent — called before each agent run,
+ * so already-connected servers with an unchanged config are REUSED, not
+ * respawned (respawning would leak a child process per message and duplicate
+ * every tool in the payload). A changed config disconnects the old instance
+ * and reconnects fresh.
+ */
 export async function connectToServers(
   cwd: string,
   opts: {
@@ -97,6 +113,18 @@ export async function connectToServers(
 ): Promise<ConnectedServer[]> {
   const { servers } = loadMCPConfigWithSources(cwd)
   for (const [name, { config, trusted }] of Object.entries(servers)) {
+    const hash = hashServer(cwd, name, config)
+    const existing = connected.find((s) => s.name === name)
+    if (existing) {
+      if (existing.hash === hash) {
+        opts.onStatus?.(name, `connected (${existing.tools.length} tools)`)
+        continue
+      }
+      // Config changed — tear down the old instance before reconnecting.
+      try { await existing.client.close() } catch { /* ignore */ }
+      connected.splice(connected.indexOf(existing), 1)
+    }
+
     if (!trusted && !isServerApproved(cwd, name, config)) {
       opts.onStatus?.(name, 'awaiting-approval')
       if (!opts.approve) continue
@@ -104,24 +132,41 @@ export async function connectToServers(
       if (!ok) { opts.onStatus?.(name, 'denied'); continue }
       approveServer(cwd, name, config)
     }
+
+    // Windows: `npx` / `uvx` / `uv` etc. are .cmd shims that child_process
+    // can't spawn directly ("spawn npx ENOENT") — route through cmd.exe.
+    // Absolute .exe paths spawn fine as-is.
+    let command = config.command
+    let args = config.args ?? []
+    if (process.platform === 'win32' && !/\.exe$/i.test(command)) {
+      args = ['/c', command, ...args]
+      command = 'cmd.exe'
+    }
+
+    let transport: StdioClientTransport | null = null
     try {
       opts.onStatus?.(name, 'connecting')
-      const transport = new StdioClientTransport({
-        command: config.command,
-        args: config.args ?? [],
+      transport = new StdioClientTransport({
+        command,
+        args,
         env: { ...process.env, ...(config.env ?? {}) } as Record<string, string>,
       })
       const client = new Client({ name: 'codemaxxing-mac', version: '1.0.0' }, { capabilities: {} })
-      await client.connect(transport)
-      const toolList = await client.listTools()
+      // Timeouts: a bad command or a server stuck resolving dependencies
+      // (uvx/npx cold start) must not hang the agent run forever. Generous
+      // because first runs may download packages.
+      await withTimeout(client.connect(transport), 60_000, `connecting to "${name}"`)
+      const toolList = await withTimeout(client.listTools(), 20_000, `listing tools from "${name}"`)
       const tools = (toolList.tools ?? []).map((t) => ({
         name: t.name,
         description: t.description,
         inputSchema: (t.inputSchema as Record<string, unknown>) ?? { type: 'object', properties: {} },
       }))
-      connected.push({ name, client, transport, tools })
+      connected.push({ name, hash, client, transport, tools })
       opts.onStatus?.(name, `connected (${tools.length} tools)`)
     } catch (e: any) {
+      // Kill the spawned child so a timed-out/hung server doesn't linger.
+      try { await transport?.close() } catch { /* ignore */ }
       opts.onStatus?.(name, `error: ${e?.message ?? String(e)}`)
     }
   }

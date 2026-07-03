@@ -371,6 +371,7 @@ app.on('before-quit', () => {
   isQuitting = true
   appQuitting = true
   shutdownAllRuntime('before-quit')
+  void mcp.disconnectAll().catch(() => {}) // kill spawned MCP server processes
   if (powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId)) {
     powerSaveBlocker.stop(powerSaveBlockerId)
     powerSaveBlockerId = null

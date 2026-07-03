@@ -88,6 +88,14 @@ export interface SessionInfo {
   mode: SessionMode
 }
 
+/** Expand a leading ~ — Node never does, and a session cwd of literal "~"
+ *  (the chat/browser-session default) breaks every file tool + shell exec. */
+function expandTilde(p: string): string {
+  if (p === '~') return homedir()
+  if (p.startsWith('~/') || p.startsWith('~\\')) return join(homedir(), p.slice(2))
+  return p
+}
+
 export function createSession(
   cwd: string,
   provider: string,
@@ -98,7 +106,7 @@ export function createSession(
   const id = generateId()
   getDb()
     .prepare(`INSERT INTO sessions (id, title, cwd, provider, model, mode) VALUES (?, ?, ?, ?, ?, ?)`)
-    .run(id, title || null, cwd, provider, model, mode)
+    .run(id, title || null, expandTilde(cwd), provider, model, mode)
   return id
 }
 
@@ -174,7 +182,12 @@ export function loadMessages(sessionId: string): ChatCompletionMessageParam[] {
 }
 
 function normalizeRow(row: any): SessionInfo {
-  return { ...row, mode: (row?.mode === 'chat' ? 'chat' : row?.mode === 'browser' ? 'browser' : 'code') as SessionMode }
+  return {
+    ...row,
+    // Historical rows may carry a literal "~" cwd from before expandTilde.
+    cwd: typeof row?.cwd === 'string' ? expandTilde(row.cwd) : row?.cwd,
+    mode: (row?.mode === 'chat' ? 'chat' : row?.mode === 'browser' ? 'browser' : 'code') as SessionMode,
+  }
 }
 
 export function listSessions(limit = 100): SessionInfo[] {

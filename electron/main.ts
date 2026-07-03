@@ -36,9 +36,10 @@ import { buildSystemPrompt, buildChatModePrompt, buildBrowserModePrompt } from '
 import { diffBitmaps } from './core/pixelmatch.js'
 import * as sessions from './core/sessions.js'
 import * as auth from './core/auth.js'
-import { loginAnthropicOAuth } from './core/anthropicOAuth.js'
-import { loginOpenAICodexOAuth } from './core/openaiOAuth.js'
+import { loginAnthropicOAuth, refreshAnthropicOAuthToken } from './core/anthropicOAuth.js'
+import { loginOpenAICodexOAuth, refreshOpenAICodexToken } from './core/openaiOAuth.js'
 import * as mcp from './core/mcp.js'
+import { killAllBackground, killTree } from './core/backgroundCommands.js'
 import * as memory from './core/memory.js'
 import * as hooksMod from './core/hooks.js'
 import * as gitMod from './core/git.js'
@@ -85,12 +86,15 @@ function shutdownAllRuntime(reason: string): void {
   activeRuns.clear()
   for (const [id, child] of activeChildren) {
     try {
-      child.kill(process.platform === 'win32' ? undefined : 'SIGTERM')
-      // Give it 500ms to exit cleanly; SIGKILL anything still alive.
-      setTimeout(() => { try { child.kill('SIGKILL') } catch { /* swallow */ } }, 500).unref()
+      // Tree-kill: signaling only the shell leaves its dev-server grandchild
+      // alive squatting the port.
+      if (child.pid) killTree(child.pid, false)
+      setTimeout(() => { try { if (child.pid) killTree(child.pid, true) } catch { /* swallow */ } }, 500).unref()
     } catch { /* swallow */ }
     activeChildren.delete(id)
   }
+  // Agent-started background jobs (dev servers etc.) must not outlive the app.
+  try { killAllBackground() } catch { /* swallow */ }
   if (reason && reason !== 'before-quit') {
     console.warn(`[main] runtime cleanup triggered by: ${reason}`)
   }
@@ -153,6 +157,49 @@ interface AppConfig {
 
 const CONFIG_DIR = join(homedir(), '.codemaxxing-mac')
 const APP_CONFIG_PATH = join(CONFIG_DIR, 'config.json')
+
+// ── OAuth auto-refresh ──
+// Access tokens from Claude Pro/Max and ChatGPT OAuth expire in hours; the
+// refresh functions existed but were never called, so every run after expiry
+// 401'd until the user manually re-logged-in. Refresh transparently when a
+// token is within 5 minutes of expiry. In-flight guard: refresh tokens
+// ROTATE, so two concurrent runs must share one refresh instead of racing
+// (the loser's rotated-away token would be rejected).
+const refreshInFlight = new Map<string, Promise<ReturnType<typeof auth.getCredential>>>()
+
+async function getFreshCredential(providerId: string): Promise<ReturnType<typeof auth.getCredential>> {
+  const cred = auth.getCredential(providerId)
+  if (!cred) return cred
+  if (cred.method !== 'oauth' || !cred.refreshToken || !cred.oauthExpires) return cred
+  if (cred.oauthExpires - Date.now() > 5 * 60_000) return cred // still fresh
+
+  const inflight = refreshInFlight.get(providerId)
+  if (inflight) return inflight
+
+  const p = (async () => {
+    try {
+      const r =
+        providerId === 'anthropic'
+          ? await refreshAnthropicOAuthToken(cred.refreshToken!)
+          : providerId === 'openai'
+            ? await refreshOpenAICodexToken(cred.refreshToken!)
+            : null
+      if (!r) return cred
+      const updated = { ...cred, apiKey: r.access, refreshToken: r.refresh, oauthExpires: r.expires }
+      auth.saveCredential(updated)
+      return updated
+    } catch (e) {
+      // Stale token flows through → the run 401s → the error UI offers
+      // re-login. Never block a run on a refresh hiccup.
+      console.warn('[auth] OAuth refresh failed:', auth.scrubSecrets((e as Error)?.message ?? String(e)))
+      return cred
+    } finally {
+      refreshInFlight.delete(providerId)
+    }
+  })()
+  refreshInFlight.set(providerId, p)
+  return p
+}
 
 function loadAppConfig(): AppConfig {
   try {
@@ -1102,7 +1149,7 @@ function setupIPC(): void {
         return { ok: true, models: CLAUDE_MODELS.map(m => ({ name: m, id: m })) }
       }
 
-      const cred = auth.getCredential(providerId)
+      const cred = await getFreshCredential(providerId)
       const route = providerRoute(providerId)
       const apiKey = cred?.apiKey || 'not-needed'
       // LM Studio: probe several address candidates — it may bind IPv4-only,
@@ -1228,7 +1275,7 @@ function setupIPC(): void {
   // ── Anthropic connection test ──
   ipcMain.handle('llm:testConnection', async (_e, providerId: string) => {
     try {
-      const cred = auth.getCredential(providerId)
+      const cred = await getFreshCredential(providerId)
       if (!cred && providerRoute(providerId).needsKey) return { ok: false, error: 'No API key configured' }
       const route = providerRoute(providerId)
       if (route.providerType === 'anthropic') {
@@ -1304,7 +1351,7 @@ function setupIPC(): void {
     }
     const sess = sessions.getSession(opts.sessionId)
     if (!sess) return { ok: false, error: 'Session not found' }
-    const cred = auth.getCredential(sess.provider)
+    const cred = await getFreshCredential(sess.provider)
     const route = providerRoute(sess.provider)
     if (route.needsKey && !cred) return { ok: false, error: 'No credentials configured for ' + sess.provider }
 
@@ -1616,7 +1663,7 @@ function setupIPC(): void {
   ipcMain.handle('subagent:run', async (_e, opts: { sessionId: string; role: string; task: string; customPrompt?: string; context?: string }) => {
     const sess = sessions.getSession(opts.sessionId)
     if (!sess) return { ok: false, error: 'Session not found' }
-    const cred = auth.getCredential(sess.provider)
+    const cred = await getFreshCredential(sess.provider)
     const route = providerRoute(sess.provider)
     if (route.needsKey && !cred) return { ok: false, error: 'No credentials' }
     const appConfig = loadAppConfig()
@@ -1650,7 +1697,7 @@ function setupIPC(): void {
   ipcMain.handle('session:compact', async (_e, sessionId: string, keepRecent?: number) => {
     const sess = sessions.getSession(sessionId)
     if (!sess) return { ok: false, error: 'Session not found' }
-    const cred = auth.getCredential(sess.provider)
+    const cred = await getFreshCredential(sess.provider)
     const route = providerRoute(sess.provider)
     const appConfig = loadAppConfig()
     const systemPrompt = buildSystemPrompt({ cwd: sess.cwd, activeSkillIds: appConfig.activeSkillIds ?? [] })
@@ -1801,7 +1848,7 @@ function setupIPC(): void {
     // so the comparison reflects the models — not destructive side effects.
     const comparePrompt = 'You are a helpful assistant being compared side-by-side with other models. Answer the user as clearly and helpfully as you can.'
     const runOne = async (entry: { provider: string; model: string }) => {
-      const cred = auth.getCredential(entry.provider)
+      const cred = await getFreshCredential(entry.provider)
       const route = providerRoute(entry.provider)
       if (route.needsKey && !cred) {
         return { provider: entry.provider, model: entry.model, ok: false, error: `No credentials for ${entry.provider}` }
@@ -1851,7 +1898,7 @@ function setupIPC(): void {
     const sendProgress = (stage: string) => mainWindow?.webContents.send('council:progress', { stage })
 
     const runChat = async (entry: { provider: string; model: string }, systemPrompt: string, input: string) => {
-      const cred = auth.getCredential(entry.provider)
+      const cred = await getFreshCredential(entry.provider)
       const route = providerRoute(entry.provider)
       if (route.needsKey && !cred) return { ok: false as const, error: `No credentials for ${entry.provider}` }
       const started = Date.now()
@@ -1923,7 +1970,7 @@ function setupIPC(): void {
       if (sess) { provider = provider || sess.provider; model = model || sess.model; cwd = cwd || sess.cwd }
     }
     if (!provider || !model) return { ok: false, error: 'No model selected — open a session first.' }
-    const cred = auth.getCredential(provider)
+    const cred = await getFreshCredential(provider)
     const route = providerRoute(provider)
     if (route.needsKey && !cred) return { ok: false, error: `No credentials for ${provider}` }
     const appConfig = loadAppConfig()
@@ -1999,7 +2046,7 @@ function setupIPC(): void {
     let provider: string | undefined, model: string | undefined, cwd: string | undefined
     if (opts.sessionId) { const s = sessions.getSession(opts.sessionId); if (s) { provider = s.provider; model = s.model; cwd = s.cwd } }
     if (!provider || !model) return { ok: false, error: 'No model — open a session first.' }
-    const cred = auth.getCredential(provider)
+    const cred = await getFreshCredential(provider)
     const route = providerRoute(provider)
     if (route.needsKey && !cred) return { ok: false, error: `No credentials for ${provider}` }
     const sys = 'You are a precise document editor. Apply the user instruction to the document and return ONLY the full revised document in Markdown — no preamble, no explanation, and do not wrap the whole thing in a code fence.'
@@ -2753,6 +2800,10 @@ function setupIPC(): void {
       const child = spawn(command, {
         cwd,
         shell: true,
+        // Own process group on POSIX so stop/shutdown can tree-kill via
+        // killTree(-pid) — otherwise only the shell dies and the dev server
+        // it launched keeps squatting the port.
+        detached: process.platform !== 'win32',
         env: { ...process.env, FORCE_COLOR: '0' },
       })
       activeChildren.set(runId, child)
@@ -2780,10 +2831,9 @@ function setupIPC(): void {
     const child = activeChildren.get(runId)
     if (!child) return { ok: false, error: 'No active run' }
     try {
-      if (process.platform === 'win32') child.kill()
-      else child.kill('SIGTERM')
+      if (child.pid) killTree(child.pid, false)
       setTimeout(() => {
-        if (activeChildren.has(runId)) child.kill('SIGKILL')
+        if (activeChildren.has(runId) && child.pid) killTree(child.pid, true)
       }, 2000)
       return { ok: true }
     } catch (err: any) {
@@ -2798,7 +2848,7 @@ async function runBackgroundAgent(id: string): Promise<void> {
   bgAgents.markRunning(id)
   emit('bgAgents:update', { id, status: 'running' })
   try {
-    const cred = auth.getCredential(job.provider)
+    const cred = await getFreshCredential(job.provider)
     const route = providerRoute(job.provider)
     if (route.needsKey && !cred) throw new Error('No credentials configured for ' + job.provider)
     const appConfig = loadAppConfig()

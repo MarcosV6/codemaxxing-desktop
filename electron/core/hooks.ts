@@ -100,7 +100,12 @@ export async function runHooksForEvent(
     }
     const result = await new Promise<HookRunResult>((resolve) => {
       const timeout = hook.timeout ?? 30_000
-      const child = execFile('sh', ['-c', hook.command], { cwd: context.cwd, env, timeout }, (err, stdout, stderr) => {
+      // Platform shell: `sh` doesn't exist on Windows — spawning it there
+      // failed EVERY hook, and a blocking hook then blocked every tool call.
+      const [shell, shellArgs] = process.platform === 'win32'
+        ? [process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', hook.command]]
+        : ['sh', ['-c', hook.command]]
+      const child = execFile(shell, shellArgs, { cwd: context.cwd, env, timeout }, (err, stdout, stderr) => {
         resolve({
           hookId: hook.id,
           ok: !err,

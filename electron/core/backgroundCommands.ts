@@ -1,5 +1,21 @@
-import { spawn, type ChildProcess } from 'child_process'
+import { spawn, execSync, type ChildProcess } from 'child_process'
 import { randomUUID } from 'crypto'
+
+/**
+ * Kill a spawned command AND everything it started. `child.kill()` only
+ * signals the shell — a `npm run dev` grandchild survives it and squats the
+ * port. POSIX: signal the process group (children are spawned detached, so
+ * the pid IS the group id). Windows: taskkill /T walks the tree.
+ */
+export function killTree(pid: number, force: boolean): void {
+  if (!pid || pid <= 0) return
+  if (process.platform === 'win32') {
+    try { execSync(`taskkill /pid ${pid} /T${force ? ' /F' : ''}`, { stdio: 'ignore' }) } catch { /* already gone */ }
+  } else {
+    const sig = force ? 'SIGKILL' : 'SIGTERM'
+    try { process.kill(-pid, sig) } catch { try { process.kill(pid, sig) } catch { /* already gone */ } }
+  }
+}
 
 export interface BackgroundJob {
   id: string
@@ -55,9 +71,17 @@ export function readBackground(id: string, sinceBytes = 0): { stdout: string; st
 export function killBackground(id: string): boolean {
   const job = jobs.get(id)
   if (!job) return false
-  try { job.child.kill('SIGTERM') } catch { /* ignore */ }
-  setTimeout(() => { try { job.child.kill('SIGKILL') } catch { /* ignore */ } }, 2000).unref()
+  killTree(job.pid, false)
+  setTimeout(() => { if (!job.closed) killTree(job.pid, true) }, 2000).unref()
   return true
+}
+
+/** Kill every still-running job — called on app quit so agent-started dev
+ *  servers don't outlive the app and squat their ports. */
+export function killAllBackground(): void {
+  for (const job of jobs.values()) {
+    if (!job.closed) killTree(job.pid, true)
+  }
 }
 
 export function listBackground(): Array<Pick<BackgroundJob, 'id' | 'pid' | 'command' | 'cwd' | 'startedAt' | 'exitCode' | 'closed'>> {

@@ -343,6 +343,7 @@ const BACKDROP_BY_THEME: Record<string, string> = {
   'cyberpunk-neon': 'grid',
   synthwave: 'grid',
   hacker: 'scanlines',
+  tui: 'scanlines',
   mono: 'none', // monochrome stays flat on purpose
   'high-contrast-light': 'none', // accessibility-first — no decoration
 }
@@ -390,6 +391,9 @@ function applyThemeToDom(theme: Theme) {
   root.setAttribute('data-theme-mode', isLight ? 'light' : 'dark')
   const themeKey = (theme as { key?: string }).key ?? ''
   root.setAttribute('data-backdrop', BACKDROP_BY_THEME[themeKey] ?? (isLight ? 'soft' : 'aurora'))
+  // TUI themes restyle the whole app terminal-style (mono font, square
+  // corners, flat surfaces) via CSS keyed off this class — see globals.css.
+  root.classList.toggle('tui-mode', !!theme.tui)
 }
 
 function convertPersistedMessages(rawMessages: any[]): ChatMessage[] {

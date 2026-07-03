@@ -88,6 +88,10 @@ export interface Theme {
    *  the bg; light themes get a slightly DARKER tint. Without this flag a
    *  light theme would still render dark cards on a light background. */
   isLight?: boolean
+  /** When true the theme renders the whole app terminal-style: monospace
+   *  everywhere, square corners, flat surfaces, scanline backdrop — the GUI
+   *  dressed up as the CLI TUI. Applied via the `tui-mode` root class. */
+  tui?: boolean
   colors: {
     primary: string
     secondary: string

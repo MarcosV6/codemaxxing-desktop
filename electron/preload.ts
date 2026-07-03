@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('electron', {
   agent: {
     send: (opts: { sessionId: string; message: string; images?: Array<{ id?: string; dataUrl: string; mediaType: string; name?: string }>; activeSurfaces?: string[] }) => ipcRenderer.invoke('agent:send', opts),
     abort: (sessionId: string) => ipcRenderer.invoke('agent:abort', sessionId),
+    isRunning: (sessionId: string) => ipcRenderer.invoke('agent:isRunning', sessionId),
     approvalResponse: (sessionId: string, callId: string, decision: 'yes' | 'no' | 'always') =>
       ipcRenderer.invoke('agent:approvalResponse', sessionId, callId, decision),
     askUserResponse: (sessionId: string, askId: string, reply: string) =>

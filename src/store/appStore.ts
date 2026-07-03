@@ -736,7 +736,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       }))
 
       sub(window.electron.agent.onDone(({ sessionId, text, usage, stats }) => {
-        if (sessionId !== get().activeSessionId) return
+        if (sessionId !== get().activeSessionId) {
+          // A background session's run finished — its messages/cost are
+          // already persisted by main; refresh the sidebar so its row
+          // updates. Live-run state belongs to the active session: hands off.
+          void get().loadSessions()
+          return
+        }
         set((s) => {
           if (!s.activeSession) {
             return {
@@ -787,7 +793,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       }))
 
       sub(window.electron.agent.onError(({ sessionId, error }) => {
-        if (sessionId !== get().activeSessionId) return
+        if (sessionId !== get().activeSessionId) {
+          void get().loadSessions()
+          return
+        }
         set((s) => {
           if (!s.activeSession) return { isRunning: false }
           const kind = classifyAgentError(error)
@@ -1075,6 +1084,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       activeSession: newSession,
       activeSessionId: newSession.id,
       appConfig: newConfig,
+      // A brand-new session has no run — never inherit a previous session's
+      // in-flight flag (it would freeze the composer on "working").
+      isRunning: false,
       currentAssistantText: '',
       currentThinkingText: '',
       currentToolCalls: [],
@@ -1119,11 +1131,20 @@ export const useAppStore = create<AppState>((set, get) => ({
         pendingAsk: null,
         pendingPlan: null,
         lastPromptTokens: 0,
-        // isRunning is intentionally NOT cleared here — if the user switches
-        // away during a run and back before it finishes, the StatusBar should
-        // still show "running". onDone for the now-active session will flip
-        // it false. (We rely on the main process serializing per-session.)
       })
+      // isRunning tracks the ACTIVE session's run only, so derive it for the
+      // TARGET from main. Previously it was left untouched on switch: leaving
+      // a running agent session for another one stranded isRunning=true on a
+      // session with no run (composer frozen on "working"), and when the
+      // background run finished, onDone's session guard returned early so the
+      // flag NEVER cleared. Switching back into a still-running session now
+      // correctly shows working/abort again too.
+      try {
+        const r = await window.electron.agent.isRunning(sessionId)
+        if (get().activeSessionId === sessionId) set({ isRunning: !!r.running })
+      } catch {
+        if (get().activeSessionId === sessionId) set({ isRunning: false })
+      }
     } finally {
       set({ loading: false })
     }
@@ -1135,6 +1156,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       sessionList: s.sessionList.filter(x => x.id !== sessionId),
       activeSessionId: s.activeSessionId === sessionId ? null : s.activeSessionId,
       activeSession: s.activeSessionId === sessionId ? null : s.activeSession,
+      // Deleting the active session drops any run it had with it.
+      ...(s.activeSessionId === sessionId ? { isRunning: false } : {}),
     }))
   },
 

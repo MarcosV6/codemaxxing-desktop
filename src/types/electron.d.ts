@@ -140,6 +140,7 @@ export interface ElectronAPI {
   agent: {
     send: (opts: { sessionId: string; message: string; images?: Array<{ id?: string; dataUrl: string; mediaType: string; name?: string }>; activeSurfaces?: string[] }) => Promise<{ ok: boolean; text?: string; aborted?: boolean; error?: string }>
     abort: (sessionId: string) => Promise<{ ok: boolean; error?: string }>
+    isRunning: (sessionId: string) => Promise<{ ok: boolean; running: boolean }>
     approvalResponse: (sessionId: string, callId: string, decision: ApprovalDecision) => Promise<{ ok: boolean; error?: string }>
     askUserResponse: (sessionId: string, askId: string, reply: string) => Promise<{ ok: boolean; error?: string }>
 

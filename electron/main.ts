@@ -1558,6 +1558,11 @@ function setupIPC(): void {
     return { ok: true }
   })
 
+  // Whether a session has a run in flight — the renderer's isRunning tracks
+  // only the ACTIVE session, so switching into a still-running session needs
+  // to ask (and switching away must not strand the flag).
+  registerInvoke('agent:isRunning', async (sessionId: string) => ({ ok: true, running: activeRuns.has(sessionId) }))
+
   registerInvoke('agent:approvalResponse', async (sessionId: string, callId: string, decision: ApprovalResult) => {
     const run = activeRuns.get(sessionId)
     if (!run) return { ok: false, error: 'No active run' }

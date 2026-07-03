@@ -344,6 +344,7 @@ export function installBrowserMock(): void {
         return ok()
       },
       abort: (sessionId?: string) => { stopDemoStream(sessionId ?? DEMO_META.id, '(aborted)'); return ok() },
+      isRunning: () => ok({ running: false }),
       approvalResponse: () => ok(),
       askUserResponse: () => ok(),
       onStarted: noop,

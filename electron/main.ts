@@ -23,7 +23,7 @@ import {
 import { join, dirname, basename, relative, extname } from 'path'
 import { fileURLToPath } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { existsSync, readFileSync, mkdirSync, writeFileSync, readdirSync, statSync } from 'fs'
+import { existsSync, readFileSync, mkdirSync, writeFileSync, readdirSync, statSync, renameSync } from 'fs'
 import { homedir, totalmem, cpus } from 'os'
 import { spawn, execFile, type ChildProcess } from 'child_process'
 import { randomBytes } from 'crypto'
@@ -69,6 +69,11 @@ interface ActiveRun {
   abortController: AbortController
   pendingApprovals: Map<string, (decision: ApprovalResult) => void>
   pendingAsks: Map<string, (reply: string) => void>
+  // Last emitted-but-unanswered prompt payloads. The renderer drops its modal
+  // when the user switches sessions; these let agent:isRunning re-deliver the
+  // prompt on switch-back instead of leaving the run stuck invisibly.
+  lastApprovalRequest?: { call: unknown } | null
+  lastAskRequest?: { askId: string; question: string; options?: string[] } | null
 }
 const activeRuns = new Map<string, ActiveRun>()
 
@@ -270,7 +275,11 @@ function loadAppConfig(): AppConfig {
 
 function saveAppConfig(config: AppConfig): void {
   if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 })
-  writeFileSync(APP_CONFIG_PATH, JSON.stringify(config, null, 2))
+  // Atomic write (tmp + rename) — a crash mid-write would corrupt config.json
+  // and silently wipe every setting incl. paired devices. Mirrors auth.ts.
+  const tmp = APP_CONFIG_PATH + '.tmp'
+  writeFileSync(tmp, JSON.stringify(config, null, 2))
+  renameSync(tmp, APP_CONFIG_PATH)
 }
 
 // ── Provider routing ──
@@ -865,8 +874,12 @@ function waitForBrowserReady(timeoutMs = 4000): Promise<void> {
 
 async function browserCommand(
   cmd: { action: 'navigate' | 'read' | 'screenshot' | 'click' | 'type' | 'scroll'; url?: string; selector?: string; text?: string; submit?: boolean; direction?: string },
+  sessionId?: string,
 ): Promise<BrowserResult> {
-  emit('browser:open') // open the Preview panel + select Browser tab (idempotent)
+  // Ask the renderer to make the browser surface usable. Carries the
+  // commanding session's id so a BACKGROUND run can't hijack the screen —
+  // the renderer only reacts when that session is the active one.
+  emit('browser:open', { sessionId: sessionId ?? null })
   await waitForBrowserReady()
   const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
   // navigate (and type-then-submit, which can trigger navigation) get longer.
@@ -1470,10 +1483,11 @@ function setupIPC(): void {
           // while an approval prompt is up would leave the run frozen
           // forever waiting on a button that no longer exists.
           return await new Promise<ApprovalResult>((resolve) => {
-            run.pendingApprovals.set(call.id, resolve)
+            run.pendingApprovals.set(call.id, (decision) => { run.lastApprovalRequest = null; resolve(decision) })
+            run.lastApprovalRequest = { call } // survives a session switch — re-delivered by agent:isRunning
             emit('agent:approvalRequest', { sessionId: opts.sessionId, call })
             const onAbort = () => {
-              if (run.pendingApprovals.delete(call.id)) resolve('no')
+              if (run.pendingApprovals.delete(call.id)) { run.lastApprovalRequest = null; resolve('no') }
             }
             if (abort.signal.aborted) onAbort()
             else abort.signal.addEventListener('abort', onAbort, { once: true })
@@ -1482,10 +1496,11 @@ function setupIPC(): void {
         onAskUser: async (question, options) => {
           const askId = `ask_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
           return await new Promise<string>((resolve) => {
-            run.pendingAsks.set(askId, resolve)
+            run.pendingAsks.set(askId, (reply) => { run.lastAskRequest = null; resolve(reply) })
+            run.lastAskRequest = { askId, question, options }
             emit('agent:askUser', { sessionId: opts.sessionId, askId, question, options })
             const onAbort = () => {
-              if (run.pendingAsks.delete(askId)) resolve('') // empty = treated as no answer
+              if (run.pendingAsks.delete(askId)) { run.lastAskRequest = null; resolve('') } // empty = treated as no answer
             }
             if (abort.signal.aborted) onAbort()
             else abort.signal.addEventListener('abort', onAbort, { once: true })
@@ -1502,7 +1517,7 @@ function setupIPC(): void {
           emit('preview:open', target) // show the user the same page the agent is capturing
           return await captureUrlOffscreen(target)
         },
-        onBrowserCommand: browserCommand,
+        onBrowserCommand: (cmd) => browserCommand(cmd, opts.sessionId),
         onPixelMatch: pixelMatch,
         onDocumentOp: documentOp,
         onNotesOp: notesOp,
@@ -1560,8 +1575,18 @@ function setupIPC(): void {
 
   // Whether a session has a run in flight — the renderer's isRunning tracks
   // only the ACTIVE session, so switching into a still-running session needs
-  // to ask (and switching away must not strand the flag).
-  registerInvoke('agent:isRunning', async (sessionId: string) => ({ ok: true, running: activeRuns.has(sessionId) }))
+  // to ask (and switching away must not strand the flag). Also re-delivers
+  // any unanswered approval/ask prompt: the renderer dropped its modal on
+  // switch-away, and without this the run waits forever, invisibly.
+  registerInvoke('agent:isRunning', async (sessionId: string) => {
+    const run = activeRuns.get(sessionId)
+    return {
+      ok: true,
+      running: !!run,
+      pendingApproval: run?.lastApprovalRequest ?? null,
+      pendingAsk: run?.lastAskRequest ?? null,
+    }
+  })
 
   registerInvoke('agent:approvalResponse', async (sessionId: string, callId: string, decision: ApprovalResult) => {
     const run = activeRuns.get(sessionId)
@@ -1633,7 +1658,22 @@ function setupIPC(): void {
   ipcMain.handle('checkpoints:restore', async (_e, checkpointId: number) => {
     const cp = checkpoints.loadCheckpoint(checkpointId)
     if (!cp) return { ok: false, error: 'Checkpoint not found' }
-    return { ok: true, session_id: cp.checkpoint.session_id, messages: cp.messages }
+    const sessionId = cp.checkpoint.session_id
+    // Refuse to rewrite history under a live run — the agent is mid-loop on
+    // the current messages and would append to a rug-pulled history.
+    if (activeRuns.has(sessionId)) return { ok: false, error: 'Stop the running agent before restoring a checkpoint.' }
+    // Restore used to be a no-op (returned the messages, persisted nothing) —
+    // the next run silently continued from the UNRESTORED history. Now it
+    // actually rewrites the session, with a safety checkpoint of the current
+    // state first so a restore is always reversible.
+    try {
+      const current = sessions.loadMessages(sessionId)
+      if (current.length > 0) checkpoints.saveCheckpoint(sessionId, current, 'pre-restore (auto)')
+      sessions.replaceMessages(sessionId, cp.messages)
+      return { ok: true, session_id: sessionId, messages: cp.messages }
+    } catch (err: any) {
+      return { ok: false, error: err?.message ?? String(err) }
+    }
   })
   ipcMain.handle('checkpoints:delete', async (_e, id: number) =>
     ({ ok: checkpoints.deleteCheckpoint(id) }))

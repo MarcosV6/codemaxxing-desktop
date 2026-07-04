@@ -274,8 +274,9 @@ contextBridge.exposeInMainWorld('electron', {
     onCommand: (
       cb: (cmd: { id: string; action: 'navigate' | 'read' | 'screenshot' | 'click' | 'type' | 'scroll'; url?: string; selector?: string; text?: string; submit?: boolean; direction?: string }) => void,
     ) => on('browser:command', cb),
-    // main → renderer: open/focus the Browser tab (idempotent).
-    onOpen: (cb: () => void) => on('browser:open', cb),
+    // main → renderer: the agent wants the browser surface usable; carries
+    // the commanding session so background runs can't hijack the screen.
+    onOpen: (cb: (data: { sessionId: string | null }) => void) => on('browser:open', cb),
     // renderer → main: result for a command, plus readiness lifecycle.
     sendResult: (id: string, result: { ok: boolean; error?: string; title?: string; url?: string; text?: string; base64?: string }) =>
       ipcRenderer.send('browser:result', id, result),

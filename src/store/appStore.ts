@@ -828,6 +828,17 @@ export const useAppStore = create<AppState>((set, get) => ({
         set({ pendingMCPApproval: data })
       }))
 
+      sub(window.electron.browser.onOpen(({ sessionId }) => {
+        // The agent asked for the browser surface. Two rules: (1) a
+        // BACKGROUND session's run never hijacks the screen; (2) only
+        // auto-open when the surface has never been mounted (no tabs yet) —
+        // otherwise it's already drivable while hidden, so don't yank the
+        // user out of what they're doing.
+        const s = get()
+        if (!sessionId || sessionId !== s.activeSessionId) return
+        if (s.browserTabs.length === 0) s.openBrowserPanel()
+      }))
+
       sub(window.electron.mcp.onStatus(({ name, status }) => {
         // Keep the latest status per server for the StatusBar indicator —
         // otherwise "did my MCP server connect?" is answerable only via
@@ -1131,6 +1142,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         pendingAsk: null,
         pendingPlan: null,
         lastPromptTokens: 0,
+        // Session-scoped extras that used to leak across the boundary: the
+        // old session's task checklist stayed visible, and its last prompt
+        // could get attached as the retry for ANOTHER session's error.
+        currentTasks: [],
+        lastUserPrompt: null,
       })
       // isRunning tracks the ACTIVE session's run only, so derive it for the
       // TARGET from main. Previously it was left untouched on switch: leaving
@@ -1138,10 +1154,22 @@ export const useAppStore = create<AppState>((set, get) => ({
       // session with no run (composer frozen on "working"), and when the
       // background run finished, onDone's session guard returned early so the
       // flag NEVER cleared. Switching back into a still-running session now
-      // correctly shows working/abort again too.
+      // correctly shows working/abort again too — including re-delivering an
+      // unanswered approval/ask prompt (the modal was dropped on switch-away;
+      // without this the run waits forever, invisibly).
       try {
         const r = await window.electron.agent.isRunning(sessionId)
-        if (get().activeSessionId === sessionId) set({ isRunning: !!r.running })
+        if (get().activeSessionId === sessionId) {
+          set({
+            isRunning: !!r.running,
+            ...(r.running && r.pendingApproval
+              ? { pendingApproval: { sessionId, call: r.pendingApproval.call as PendingApproval['call'] } }
+              : {}),
+            ...(r.running && r.pendingAsk
+              ? { pendingAsk: { sessionId, askId: r.pendingAsk.askId, question: r.pendingAsk.question, options: r.pendingAsk.options } }
+              : {}),
+          })
+        }
       } catch {
         if (get().activeSessionId === sessionId) set({ isRunning: false })
       }
@@ -1384,9 +1412,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   restoreCheckpoint: async (checkpointId: number) => {
     const res = await window.electron.checkpoints.restore(checkpointId)
     if (!res.ok || !res.session_id) return
+    // Main rewrote the session's history to the checkpoint (auto-saving a
+    // 'pre-restore' checkpoint first); switchSession reloads it from the DB.
     await get().switchSession(res.session_id)
-    // The renderer re-renders from persisted messages via switchSession — main-process
-    // restore does not actually mutate the session store; we show the frozen view.
+    await get().loadCheckpoints(res.session_id)
   },
 
   deleteCheckpoint: async (checkpointId: number) => {

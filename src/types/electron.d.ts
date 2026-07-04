@@ -140,7 +140,13 @@ export interface ElectronAPI {
   agent: {
     send: (opts: { sessionId: string; message: string; images?: Array<{ id?: string; dataUrl: string; mediaType: string; name?: string }>; activeSurfaces?: string[] }) => Promise<{ ok: boolean; text?: string; aborted?: boolean; error?: string }>
     abort: (sessionId: string) => Promise<{ ok: boolean; error?: string }>
-    isRunning: (sessionId: string) => Promise<{ ok: boolean; running: boolean }>
+    isRunning: (sessionId: string) => Promise<{
+      ok: boolean
+      running: boolean
+      /** Unanswered prompts from the session's run — re-delivered on switch-back. */
+      pendingApproval?: { call: unknown } | null
+      pendingAsk?: { askId: string; question: string; options?: string[] } | null
+    }>
     approvalResponse: (sessionId: string, callId: string, decision: ApprovalDecision) => Promise<{ ok: boolean; error?: string }>
     askUserResponse: (sessionId: string, askId: string, reply: string) => Promise<{ ok: boolean; error?: string }>
 
@@ -331,7 +337,7 @@ export interface ElectronAPI {
     onCommand: (
       cb: (cmd: { id: string; action: 'navigate' | 'read' | 'screenshot' | 'click' | 'type' | 'scroll'; url?: string; selector?: string; text?: string; submit?: boolean; direction?: string }) => void,
     ) => () => void
-    onOpen: (cb: () => void) => () => void
+    onOpen: (cb: (data: { sessionId: string | null }) => void) => () => void
     sendResult: (id: string, result: { ok: boolean; error?: string; title?: string; url?: string; text?: string; base64?: string }) => void
     ready: () => void
     closed: () => void

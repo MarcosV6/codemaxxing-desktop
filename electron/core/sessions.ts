@@ -163,6 +163,25 @@ export function saveMessage(sessionId: string, message: ChatCompletionMessagePar
   _stmtSaveMessageTx!({ sessionId, role: message.role, content, toolCalls, toolCallId })
 }
 
+/** Atomically replace a session's entire message history — the checkpoint
+ *  restore primitive. Transactional so a crash can't leave a half-restored
+ *  session; message_count is recomputed to match. */
+export function replaceMessages(sessionId: string, messages: ChatCompletionMessageParam[]): void {
+  ensureSaveMessageStatements()
+  const d = getDb()
+  const insert = _stmtInsertMessage!
+  d.transaction(() => {
+    d.prepare(`DELETE FROM messages WHERE session_id = ?`).run(sessionId)
+    for (const m of messages) {
+      const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
+      const toolCalls = 'tool_calls' in m && m.tool_calls ? JSON.stringify(m.tool_calls) : null
+      const toolCallId = 'tool_call_id' in m ? (m as any).tool_call_id : null
+      insert.run(sessionId, m.role, content, toolCalls, toolCallId)
+    }
+    d.prepare(`UPDATE sessions SET updated_at = datetime('now'), message_count = ? WHERE id = ?`).run(messages.length, sessionId)
+  })()
+}
+
 export function loadMessages(sessionId: string): ChatCompletionMessageParam[] {
   const rows = getDb().prepare(
     `SELECT role, content, tool_calls, tool_call_id FROM messages WHERE session_id = ? ORDER BY id ASC`,

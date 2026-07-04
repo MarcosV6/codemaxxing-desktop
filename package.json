@@ -1,6 +1,6 @@
 {
   "name": "codemaxxing-desktop",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "Native desktop app for Codemaxxing — the open-source coding agent. Connect any LLM, drive a real agent loop, on macOS, Windows, and Linux.",
   "homepage": "https://github.com/MarcosV6/codemaxxing-desktop",
   "repository": {

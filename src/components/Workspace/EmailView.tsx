@@ -116,7 +116,43 @@ export function EmailView({ onNewSession }: { onNewSession: () => void }) {
         {view === 'setup' ? (
           <div className="flex-1 overflow-y-auto p-6">
             <div className="max-w-[460px] mx-auto space-y-3">
-              <div className="text-[12.5px] mb-1" style={{ color: 'var(--theme-muted)' }}>Connect an IMAP/SMTP mailbox. For Gmail/Outlook use an app password.</div>
+              <div className="text-[12.5px] mb-1" style={{ color: 'var(--theme-muted)' }}>Connect your mailbox — pick your provider and the servers fill in. You'll need an app password (links below), not your normal login password.</div>
+              {/* provider presets — one click fills the server plumbing */}
+              <div className="grid grid-cols-3 gap-2">
+                {([
+                  { name: 'Gmail', imapHost: 'imap.gmail.com', imapPort: 993, smtpHost: 'smtp.gmail.com', smtpPort: 465, help: 'https://myaccount.google.com/apppasswords', helpLabel: 'Create a Google app password (needs 2-step verification)' },
+                  { name: 'Outlook', imapHost: 'outlook.office365.com', imapPort: 993, smtpHost: 'smtp-mail.outlook.com', smtpPort: 587, help: 'https://account.microsoft.com/security', helpLabel: 'Create a Microsoft app password (Security → advanced options)' },
+                  { name: 'iCloud', imapHost: 'imap.mail.me.com', imapPort: 993, smtpHost: 'smtp.mail.me.com', smtpPort: 587, help: 'https://appleid.apple.com/account/manage', helpLabel: 'Create an Apple app-specific password' },
+                ] as const).map((p) => {
+                  const active = f.imapHost === p.imapHost
+                  return (
+                    <button
+                      key={p.name}
+                      onClick={() => setF({ ...f, imapHost: p.imapHost, imapPort: p.imapPort, smtpHost: p.smtpHost, smtpPort: p.smtpPort })}
+                      className="px-2 py-2 rounded-lg text-[12px] font-medium transition-colors"
+                      style={{
+                        border: active ? '1px solid var(--theme-primary)' : '1px solid var(--theme-border)',
+                        backgroundColor: active ? 'color-mix(in srgb, var(--theme-primary) 10%, transparent)' : 'transparent',
+                        color: active ? 'var(--theme-primary)' : 'var(--theme-text)',
+                      }}
+                    >
+                      {p.name}
+                    </button>
+                  )
+                })}
+              </div>
+              {(() => {
+                const preset = [
+                  { imapHost: 'imap.gmail.com', help: 'https://myaccount.google.com/apppasswords', label: 'Gmail needs an app password — create one here (requires 2-step verification)' },
+                  { imapHost: 'outlook.office365.com', help: 'https://account.microsoft.com/security', label: 'Outlook needs an app password — Security → advanced security options' },
+                  { imapHost: 'imap.mail.me.com', help: 'https://appleid.apple.com/account/manage', label: 'iCloud needs an app-specific password — create one here' },
+                ].find((p) => p.imapHost === f.imapHost)
+                return preset ? (
+                  <a href={preset.help} target="_blank" rel="noreferrer" className="block text-[11.5px] underline underline-offset-2" style={{ color: 'var(--theme-primary)' }}>
+                    {preset.label} ↗
+                  </a>
+                ) : null
+              })()}
               {field('Email address', f.email, (v) => setF({ ...f, email: v }), 'email', 'you@example.com')}
               {field(account?.passwordSet ? 'Password (leave blank to keep current)' : 'Password / app password', f.password, (v) => setF({ ...f, password: v }), 'password', '••••••••')}
               <div className="grid grid-cols-2 gap-3">

@@ -81,7 +81,43 @@ export function CalendarView({ onNewSession }: { onNewSession: () => void }) {
         {view === 'setup' ? (
           <div className="flex-1 overflow-y-auto p-6">
             <div className="max-w-[460px] mx-auto space-y-3">
-              <div className="text-[12.5px] mb-1" style={{ color: 'var(--theme-muted)' }}>Connect a CalDAV server (Radicale, Nextcloud, Apple iCloud, Fastmail…).</div>
+              <div className="text-[12.5px] mb-1" style={{ color: 'var(--theme-muted)' }}>Connect a CalDAV calendar — pick a provider or enter any CalDAV URL (Radicale, Nextcloud…). Apple/Fastmail need an app password, links below.</div>
+              {/* provider presets. Google Calendar is OAuth-only over CalDAV,
+                  so it can't be offered here — iCloud/Fastmail work great with
+                  app passwords. */}
+              <div className="grid grid-cols-2 gap-2">
+                {([
+                  { name: 'iCloud', url: 'https://caldav.icloud.com/', help: 'https://appleid.apple.com/account/manage', label: 'Create an Apple app-specific password' },
+                  { name: 'Fastmail', url: 'https://caldav.fastmail.com/dav/', help: 'https://app.fastmail.com/settings/security/devicekeys', label: 'Create a Fastmail app password' },
+                ] as const).map((p) => {
+                  const active = f.url === p.url
+                  return (
+                    <button
+                      key={p.name}
+                      onClick={() => setF({ ...f, url: p.url })}
+                      className="px-2 py-2 rounded-lg text-[12px] font-medium transition-colors"
+                      style={{
+                        border: active ? '1px solid var(--theme-primary)' : '1px solid var(--theme-border)',
+                        backgroundColor: active ? 'color-mix(in srgb, var(--theme-primary) 10%, transparent)' : 'transparent',
+                        color: active ? 'var(--theme-primary)' : 'var(--theme-text)',
+                      }}
+                    >
+                      {p.name}
+                    </button>
+                  )
+                })}
+              </div>
+              {(() => {
+                const preset = [
+                  { url: 'https://caldav.icloud.com/', help: 'https://appleid.apple.com/account/manage', label: 'iCloud needs an app-specific password — create one here' },
+                  { url: 'https://caldav.fastmail.com/dav/', help: 'https://app.fastmail.com/settings/security/devicekeys', label: 'Fastmail needs an app password — create one here' },
+                ].find((p) => p.url === f.url)
+                return preset ? (
+                  <a href={preset.help} target="_blank" rel="noreferrer" className="block text-[11.5px] underline underline-offset-2" style={{ color: 'var(--theme-primary)' }}>
+                    {preset.label} ↗
+                  </a>
+                ) : null
+              })()}
               {field('CalDAV URL', f.url, (v) => setF({ ...f, url: v }), 'text', 'https://caldav.example.com/')}
               {field('Username', f.username, (v) => setF({ ...f, username: v }), 'text', 'you@example.com')}
               {field(account?.passwordSet ? 'Password (leave blank to keep current)' : 'Password / app password', f.password, (v) => setF({ ...f, password: v }), 'password', '••••••••')}

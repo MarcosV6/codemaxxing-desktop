@@ -38,13 +38,19 @@ function normalizeUrl(raw: string): string {
 export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
   const tabs = useAppStore((s) => s.browserTabs)
   const activeId = useAppStore((s) => s.activeBrowserTabId)
+  const activeSessionId = useAppStore((s) => s.activeSessionId)
+  // Per-session ownership: the rail lists only THIS session's tabs, but every
+  // session's webviews stay mounted below (unmounting reloads pages).
+  const sessionKey = activeSessionId ?? 'transient'
+  const sessionTabs = tabs.filter((t) => t.sessionId === sessionKey)
   const addBrowserTab = useAppStore((s) => s.addBrowserTab)
   const closeBrowserTab = useAppStore((s) => s.closeBrowserTab)
   const setActiveBrowserTab = useAppStore((s) => s.setActiveBrowserTab)
   const updateBrowserTab = useAppStore((s) => s.updateBrowserTab)
   const exitBrowser = useAppStore((s) => s.exitBrowser)
 
-  const left = useResizablePanel({ storageKey: 'browser-left', defaultWidth: 288, min: 240, max: 480, dock: 'left' })
+  // Default to the thinnest rail — users who widen it keep their saved width.
+  const left = useResizablePanel({ storageKey: 'browser-left', defaultWidth: 240, min: 240, max: 480, dock: 'left' })
   const right = useResizablePanel({ storageKey: 'browser-assistant-right', defaultWidth: 400, min: 320, max: 680, dock: 'right' })
   const browserSpaces = useBrowserSpaces()
   // Assistant placement: floating over the page (default) or docked to the
@@ -70,7 +76,13 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
   const [assistantOpen, setAssistantOpen] = useState(false)
   // Entering the browser via a browser-type session bypasses the openBrowserPanel
   // path that seeds a tab, so make sure there's always at least one tab open.
-  useEffect(() => { if (tabs.length === 0) addBrowserTab() }, [tabs.length, addBrowserTab])
+  useEffect(() => {
+    // Fresh read (not the render-scope list): StrictMode double-fires effects
+    // and the stale closure would seed TWO tabs.
+    const fresh = useAppStore.getState()
+    const key = fresh.activeSessionId ?? 'transient'
+    if (!fresh.browserTabs.some((t) => t.sessionId === key)) addBrowserTab()
+  }, [sessionTabs.length, sessionKey, addBrowserTab])
   const activeTab = tabs.find((t) => t.id === activeId) || null
   useEffect(() => { setUrlDraft(activeTab?.url || '') }, [activeTab?.url, activeId])
   // The active tab as a saveable site (null on a blank tab) — used by the
@@ -276,7 +288,7 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
                 <Plus size={12} />
               </button>
             </div>
-            {tabs.map((t) => {
+            {sessionTabs.map((t) => {
               const active = t.id === activeId
               return (
                 <div
@@ -314,24 +326,25 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
 
       {/* ── Main: the active tab's page ── */}
       <div className="flex-1 relative" style={{ backgroundColor: '#ffffff' }}>
-        {tabs.length === 0 ? (
+        {/* ALL sessions' webviews stay mounted (state survives session
+            switches); only the active session's active tab is visible. */}
+        {tabs.map((t) => (
+          <div key={t.id} style={{ position: 'absolute', inset: 0, display: t.id === activeId ? 'block' : 'none' }}>
+            <BrowserTabView tab={t} onUpdate={(p) => updateBrowserTab(t.id, p)} registerEl={registerEl} onDomReady={onDomReady} />
+          </div>
+        ))}
+        {sessionTabs.length === 0 && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3" style={{ backgroundColor: 'var(--theme-bg)' }}>
             <Compass size={34} style={{ color: 'var(--theme-muted)', opacity: 0.5 }} />
             <button onClick={() => addBrowserTab()} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-medium" style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-bg)' }}>
               <Plus size={13} /> New tab
             </button>
           </div>
-        ) : (
-          tabs.map((t) => (
-            <div key={t.id} style={{ position: 'absolute', inset: 0, display: t.id === activeId ? 'block' : 'none' }}>
-              <BrowserTabView tab={t} onUpdate={(p) => updateBrowserTab(t.id, p)} registerEl={registerEl} onDomReady={onDomReady} />
-            </div>
-          ))
         )}
 
-        {/* Arc-style new-tab page over the (blank) active tab's webview. */}
+        {/* Start page over the (blank) active tab's webview. */}
         {activeTab && !activeTab.url && (
-          <NewTabPage spaces={browserSpaces.spaces} onOpen={(u) => navigateActive(u)} />
+          <NewTabPage spaces={browserSpaces.spaces} onOpen={(u) => navigateActive(u)} onAddShortcut={browserSpaces.pinSite} />
         )}
 
         {/* Floating assistant — overlays the page bottom-right. */}

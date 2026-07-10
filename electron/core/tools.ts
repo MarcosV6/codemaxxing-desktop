@@ -932,7 +932,11 @@ export async function executeTool(
 
     case 'run_command': {
       try {
-        const { execSync } = await import('child_process')
+        // ASYNC exec, never execSync: a synchronous child blocks the entire
+        // main process (all IPC, every click) for up to the timeout — with a
+        // background agent running `npm install`, the whole app froze for
+        // minutes. exec() keeps identical shell semantics without the block.
+        const { exec } = await import('child_process')
         const original = String(args.command ?? '')
         const blocked = getShellFileWriteGuardReason(original)
         if (blocked) return blocked
@@ -944,22 +948,23 @@ export async function executeTool(
         const timeout = isLongRunning ? 300000 : 30000
         const maxBuffer = isLongRunning ? 10 * 1024 * 1024 : 1024 * 1024
 
-        const output = execSync(original, {
-          cwd,
-          encoding: 'utf-8',
-          timeout,
-          maxBuffer,
+        return await new Promise<string>((resolve) => {
+          exec(original, { cwd, encoding: 'utf-8', timeout, maxBuffer }, (err, stdout, stderr) => {
+            if (err) {
+              if ((err as { killed?: boolean }).killed) {
+                resolve(
+                  `Command timed out after ${isLongRunning ? 300 : 30}s: ${original}\nHint: Use run_background_command for long-running processes.`,
+                )
+              } else {
+                resolve(`Command failed: ${stderr || err.message || String(err)}`)
+              }
+            } else {
+              resolve(stdout || '(no output)')
+            }
+          })
         })
-        return output || '(no output)'
       } catch (e: any) {
-        if (e.killed) {
-          const original = String(args.command ?? '')
-          const isLongRunning =
-            /\b(npm|yarn|pnpm|bun|pip|cargo|go|mvn|gradle)\b/i.test(original)
-          const limitSecs = isLongRunning ? 300 : 30
-          return `Command timed out after ${limitSecs}s: ${original}\nHint: Use run_background_command for long-running processes.`
-        }
-        return `Command failed: ${e.stderr || e.message || String(e)}`
+        return `Command failed: ${e?.message ?? String(e)}`
       }
     }
 

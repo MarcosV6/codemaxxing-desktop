@@ -163,6 +163,14 @@ interface AppConfig {
 const CONFIG_DIR = join(homedir(), '.codemaxxing-mac')
 const APP_CONFIG_PATH = join(CONFIG_DIR, 'config.json')
 
+/** The ChatGPT-subscription Codex backend enforces a ~32k effective context
+ *  regardless of the model's advertised window (observed: rejection at ~31k
+ *  on gpt-5.5 "400k"). Cap the agent's window so auto-compact fires BEFORE
+ *  the backend 400s — API-key OpenAI keeps the real model window. */
+function codexContextCap(provider: string, cred?: { method?: string } | null): number | undefined {
+  return provider === 'openai' && cred?.method === 'oauth' ? 32_000 : undefined
+}
+
 // ── OAuth auto-refresh ──
 // Access tokens from Claude Pro/Max and ChatGPT OAuth expire in hours; the
 // refresh functions existed but were never called, so every run after expiry
@@ -1470,6 +1478,7 @@ function setupIPC(): void {
         // touch files); only chat sessions use the stripped conversational mode.
         mode: sess.mode === 'chat' ? 'chat' : 'code',
         activeSurfaces: opts.activeSurfaces,
+        contextWindowCap: codexContextCap(sess.provider, cred),
       },
       {
         onText: (delta) => emit('agent:text', { sessionId: opts.sessionId, delta }),
@@ -2086,6 +2095,22 @@ function setupIPC(): void {
   })
   ipcMain.handle('documents:delete', async (_e, id: string) => {
     writeDocs(readDocs().filter((d) => d.id !== id)); return { ok: true }
+  })
+  // Export a doc to a real file on disk — answers "where is my document?"
+  // with a file the user chose, instead of the invisible JSON store.
+  ipcMain.handle('documents:export', async (_e, opts: { title: string; content: string }) => {
+    const safe = (opts.title || 'Untitled').replace(/[/\\:*?"<>|]/g, '-').slice(0, 80)
+    const res = await dialog.showSaveDialog({
+      defaultPath: join(app.getPath('documents'), `${safe}.md`),
+      filters: [{ name: 'Markdown', extensions: ['md'] }, { name: 'Plain text', extensions: ['txt'] }],
+    })
+    if (res.canceled || !res.filePath) return { ok: false, canceled: true }
+    try {
+      writeFileSync(res.filePath, opts.content ?? '', 'utf-8')
+      return { ok: true, path: res.filePath }
+    } catch (err: any) {
+      return { ok: false, error: err?.message ?? String(err) }
+    }
   })
   ipcMain.handle('documents:assist', async (_e, opts: { sessionId?: string; content: string; instruction: string }) => {
     let provider: string | undefined, model: string | undefined, cwd: string | undefined
@@ -2910,6 +2935,7 @@ async function runBackgroundAgent(id: string): Promise<void> {
         approvalMode: 'full-auto',
         reasoningEffort: appConfig.reasoningEffort ?? 'off',
         scope: job.cwd,
+        contextWindowCap: codexContextCap(job.provider, cred),
       },
       {
         onText: (delta) => emit('bgAgents:text', { id, delta }),

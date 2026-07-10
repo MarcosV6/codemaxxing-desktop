@@ -9,29 +9,10 @@ export interface BrowserSpaces { pins: BrowserSite[]; folders: BrowserFolder[] }
 const KEY = 'browser-spaces-v1'
 const uid = () => Math.random().toString(36).slice(2, 9)
 
-/** First-run seed so the rail + new-tab page aren't empty. */
+/** New users start with a CLEAN browser — no canned pins or folders. The
+ *  start page invites them to add their own shortcuts. */
 function defaults(): BrowserSpaces {
-  return {
-    pins: [
-      { id: uid(), title: 'Google', url: 'https://www.google.com' },
-      { id: uid(), title: 'YouTube', url: 'https://www.youtube.com' },
-      { id: uid(), title: 'GitHub', url: 'https://github.com' },
-      { id: uid(), title: 'Gmail', url: 'https://mail.google.com' },
-      { id: uid(), title: 'Wikipedia', url: 'https://en.wikipedia.org' },
-    ],
-    folders: [
-      {
-        id: uid(),
-        name: 'Coding',
-        sites: [
-          { id: uid(), title: 'GitHub', url: 'https://github.com' },
-          { id: uid(), title: 'OpenRouter', url: 'https://openrouter.ai' },
-          { id: uid(), title: 'MDN', url: 'https://developer.mozilla.org' },
-          { id: uid(), title: 'Stack Overflow', url: 'https://stackoverflow.com' },
-        ],
-      },
-    ],
-  }
+  return { pins: [], folders: [] }
 }
 
 function load(): BrowserSpaces {

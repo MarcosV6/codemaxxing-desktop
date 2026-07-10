@@ -289,6 +289,7 @@ export function installBrowserMock(): void {
       save: (doc: { id?: string; title: string; content: string }) => ok({ doc: { id: doc.id || 'mock', title: doc.title, content: doc.content, updatedAt: Date.now() } }),
       delete: () => ok(),
       assist: (opts: { content?: string }) => ok({ content: opts?.content ?? '' }),
+      export: () => ok({ path: '/mock/Documents/export.md' }),
       setActive: () => { /* noop in browser */ },
       onChanged: () => () => { /* noop in browser */ },
     },

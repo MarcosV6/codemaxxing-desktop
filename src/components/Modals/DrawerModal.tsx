@@ -536,6 +536,7 @@ function CheckpointsPane() {
 // ── Background Agents ──────────────────────────────────────────────────────
 function BgAgentsPane() {
   const bgAgentList = useAppStore((s) => s.bgAgentList)
+  const bgAgentLiveText = useAppStore((s) => s.bgAgentLiveText)
   const loadBgAgents = useAppStore((s) => s.loadBgAgents)
   const createBgAgent = useAppStore((s) => s.createBgAgent)
   const deleteBgAgent = useAppStore((s) => s.deleteBgAgent)
@@ -658,6 +659,15 @@ function BgAgentsPane() {
                   {a.error || a.result}
                 </div>
               )}
+              {a.status === 'running' && bgAgentLiveText[a.id] && (
+                <div
+                  className="mt-2 text-[11.5px] whitespace-pre-wrap max-h-[140px] overflow-y-auto font-mono rounded p-2 opacity-80"
+                  style={{ backgroundColor: 'var(--theme-bg)', color: 'var(--theme-muted)', border: '1px solid var(--theme-border)' }}
+                >
+                  {bgAgentLiveText[a.id]}
+                  <span className="animate-pulse">▌</span>
+                </div>
+              )}
               <div className="flex items-center justify-between mt-2 text-[11px] opacity-60">
                 <span>{formatDate(a.created_at)}</span>
                 <span>{a.iterations} iter · {(a.prompt_tokens + a.completion_tokens).toLocaleString()} tok</span>
@@ -681,15 +691,94 @@ function StatusIcon({ status }: { status: string }) {
 }
 
 // ── Scheduled tasks ────────────────────────────────────────────────────────
+// ── Cron helpers (renderer-side mirror of electron/core/cron.ts semantics:
+//    *, integers, comma lists, ranges, /steps — keep in sync!) ──
+function cronFieldMatches(field: string, value: number, lo: number, hi: number): boolean {
+  if (field === '*') return true
+  for (const piece of field.split(',')) {
+    if (piece === '*') return true
+    let step = 1
+    let rangeStr = piece
+    if (piece.includes('/')) {
+      const [r, s] = piece.split('/')
+      rangeStr = r
+      step = parseInt(s, 10) || 1
+    }
+    let from = lo, to = hi
+    if (rangeStr !== '*') {
+      if (rangeStr.includes('-')) {
+        const [a, b] = rangeStr.split('-').map((v) => parseInt(v, 10))
+        if (Number.isNaN(a) || Number.isNaN(b)) continue
+        from = a; to = b
+      } else {
+        const v = parseInt(rangeStr, 10)
+        if (Number.isNaN(v)) continue
+        from = v; to = v
+      }
+    }
+    for (let v = from; v <= to; v += step) if (v === value) return true
+  }
+  return false
+}
+
+/** Next fire time for a 5-field cron expression, or null if it never matches
+ *  within a year / is invalid. Minute-resolution scan — fast enough (<0.5s
+ *  worst case, typically instant). */
+function nextCronRun(expr: string): Date | null {
+  const parts = expr.trim().split(/\s+/)
+  if (parts.length !== 5) return null
+  const [min, hour, dom, mon, dow] = parts
+  const d = new Date()
+  d.setSeconds(0, 0)
+  d.setMinutes(d.getMinutes() + 1)
+  for (let i = 0; i < 366 * 24 * 60; i++) {
+    if (
+      cronFieldMatches(min, d.getMinutes(), 0, 59) &&
+      cronFieldMatches(hour, d.getHours(), 0, 23) &&
+      cronFieldMatches(dom, d.getDate(), 1, 31) &&
+      cronFieldMatches(mon, d.getMonth() + 1, 1, 12) &&
+      cronFieldMatches(dow, d.getDay(), 0, 6)
+    ) return d
+    d.setMinutes(d.getMinutes() + 1)
+  }
+  return null
+}
+
+function formatNextRun(d: Date | null): string {
+  if (!d) return 'never (invalid schedule?)'
+  const mins = Math.round((d.getTime() - Date.now()) / 60_000)
+  const rel = mins < 60 ? `in ${mins}m` : mins < 48 * 60 ? `in ${Math.round(mins / 60)}h` : `in ${Math.round(mins / (24 * 60))}d`
+  return `${rel} · ${d.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`
+}
+
+const CRON_PRESETS: Array<{ label: string; expr: string }> = [
+  { label: 'Every 15 minutes', expr: '*/15 * * * *' },
+  { label: 'Hourly', expr: '0 * * * *' },
+  { label: 'Daily at 9:00', expr: '0 9 * * *' },
+  { label: 'Weekdays at 9:00', expr: '0 9 * * 1-5' },
+  { label: 'Mondays at 9:00', expr: '0 9 * * 1' },
+]
+
 function CronPane() {
   const cronTasks = useAppStore((s) => s.cronTasks)
   const loadCronTasks = useAppStore((s) => s.loadCronTasks)
   const createCronTask = useAppStore((s) => s.createCronTask)
   const updateCronTask = useAppStore((s) => s.updateCronTask)
   const deleteCronTask = useAppStore((s) => s.deleteCronTask)
+  const createBgAgent = useAppStore((s) => s.createBgAgent)
+  const setDrawer = useAppStore((s) => s.setDrawer)
   const activeSession = useAppStore((s) => s.activeSession)
   const [form, setForm] = useState({ name: '', schedule: '0 9 * * *', prompt: '' })
   const [open, setOpen] = useState(false)
+  // Recomputed on schedule edits — shows the user exactly when it'll fire.
+  const formNextRun = useMemo(() => nextCronRun(form.schedule), [form.schedule])
+
+  /** Run a task's prompt immediately as a background agent (same plumbing the
+   *  ticker uses) and jump to the BG Agents pane to watch it. */
+  const runNow = async (t: { name: string; cwd: string; provider: string; model: string; prompt: string }) => {
+    await createBgAgent({ name: `cron: ${t.name} (manual)`, cwd: t.cwd, provider: t.provider, model: t.model, prompt: t.prompt })
+    setDrawer('bg-agents')
+  }
 
   useEffect(() => { void loadCronTasks() }, [loadCronTasks])
 
@@ -735,13 +824,27 @@ function CronPane() {
             className="w-full text-[12.5px] px-3 py-2 rounded-md outline-none"
             style={{ backgroundColor: 'var(--theme-bg)', color: 'var(--theme-text)', border: '1px solid var(--theme-border)' }}
           />
-          <input
-            placeholder="Schedule (cron: 0 9 * * *)"
-            value={form.schedule}
-            onChange={(e) => setForm({ ...form, schedule: e.target.value })}
-            className="w-full text-[12.5px] font-mono px-3 py-2 rounded-md outline-none"
-            style={{ backgroundColor: 'var(--theme-bg)', color: 'var(--theme-text)', border: '1px solid var(--theme-border)' }}
-          />
+          <div className="flex gap-2">
+            <select
+              value={CRON_PRESETS.find((p) => p.expr === form.schedule)?.expr ?? 'custom'}
+              onChange={(e) => { if (e.target.value !== 'custom') setForm({ ...form, schedule: e.target.value }) }}
+              className="text-[12px] px-2 py-2 rounded-md outline-none shrink-0"
+              style={{ backgroundColor: 'var(--theme-bg)', color: 'var(--theme-text)', border: '1px solid var(--theme-border)' }}
+            >
+              {CRON_PRESETS.map((p) => <option key={p.expr} value={p.expr}>{p.label}</option>)}
+              <option value="custom">Custom…</option>
+            </select>
+            <input
+              placeholder="Schedule (cron: 0 9 * * *)"
+              value={form.schedule}
+              onChange={(e) => setForm({ ...form, schedule: e.target.value })}
+              className="flex-1 text-[12.5px] font-mono px-3 py-2 rounded-md outline-none"
+              style={{ backgroundColor: 'var(--theme-bg)', color: 'var(--theme-text)', border: '1px solid var(--theme-border)' }}
+            />
+          </div>
+          <div className="text-[11px] px-1" style={{ color: formNextRun ? 'var(--theme-muted)' : 'var(--theme-error)' }}>
+            Next run: {formatNextRun(formNextRun)}
+          </div>
           <textarea
             placeholder="Prompt"
             value={form.prompt}
@@ -788,6 +891,14 @@ function CronPane() {
                   <div className="text-[11px] opacity-70 mt-0.5 font-mono">{t.schedule}</div>
                 </div>
                 <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => void runNow(t)}
+                    className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] hover:bg-white/5"
+                    style={{ border: '1px solid var(--theme-border)', color: 'var(--theme-muted)' }}
+                    title="Run this task right now (as a background agent)"
+                  >
+                    <PlayCircle size={11} /> Run now
+                  </button>
                   <label className="flex items-center gap-1 text-[11px] opacity-70">
                     <input
                       type="checkbox"
@@ -812,8 +923,9 @@ function CronPane() {
               >
                 {t.prompt}
               </div>
-              <div className="text-[11px] opacity-60 mt-2">
-                {t.last_run ? `Last run: ${formatDate(t.last_run)}${t.last_status ? ` — ${t.last_status}` : ''}` : 'Never run'}
+              <div className="text-[11px] opacity-60 mt-2 flex items-center justify-between gap-2">
+                <span>{t.last_run ? `Last run: ${formatDate(t.last_run)}${t.last_status ? ` — ${t.last_status}` : ''}` : 'Never run'}</span>
+                {!!t.enabled && <span className="shrink-0">next: {formatNextRun(nextCronRun(t.schedule))}</span>}
               </div>
             </div>
           ))}

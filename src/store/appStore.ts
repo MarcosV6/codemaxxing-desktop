@@ -31,9 +31,29 @@ export interface BrowserTabState {
   url: string
   title: string
   loading?: boolean
+  /** Owning session — each browser session gets its own tab set. Tabs stay in
+   *  ONE flat list so every webview remains mounted across session switches
+   *  (unmounting reloads the page — quality-bar violation); the rail simply
+   *  filters to the active session's tabs. */
+  sessionId: string
 }
-function freshTab(): BrowserTabState {
-  return { id: 'tab_' + Math.random().toString(36).slice(2, 9), url: '', title: 'New tab' }
+function freshTab(sessionId: string): BrowserTabState {
+  return { id: 'tab_' + Math.random().toString(36).slice(2, 9), url: '', title: 'New tab', sessionId }
+}
+
+/** Open the browser surface for the CURRENT session: reuse its own tabs if it
+ *  has any (never another session's), otherwise seed a fresh one. Shared by
+ *  openBrowserPanel / toggleBrowserView / setBrowserView. */
+function openBrowserState(s: { activeSessionId: string | null; browserTabs: BrowserTabState[]; activeBrowserTabId: string | null }) {
+  const off = { documentsOpen: false, emailOpen: false, calendarOpen: false, activeDrawer: null as null }
+  const key = s.activeSessionId ?? 'transient'
+  const mine = s.browserTabs.filter((t) => t.sessionId === key)
+  if (mine.length) {
+    const active = mine.some((t) => t.id === s.activeBrowserTabId) ? s.activeBrowserTabId : mine[0].id
+    return { browserView: true, activeBrowserTabId: active, ...off }
+  }
+  const t = freshTab(key)
+  return { browserView: true, browserTabs: [...s.browserTabs, t], activeBrowserTabId: t.id, ...off }
 }
 
 interface ProviderInfo {
@@ -174,6 +194,8 @@ interface AppState {
   hooks: HookRecord[]
   checkpoints: CheckpointRecord[]
   bgAgentList: BackgroundAgentRecord[]
+  /** Rolling live-output tail per running background agent (drawer display). */
+  bgAgentLiveText: Record<string, string>
   cronTasks: ScheduledTaskRecord[]
 
   // ── Themes ──
@@ -578,6 +600,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   hooks: [],
   checkpoints: [],
   bgAgentList: [],
+  bgAgentLiveText: {},
   cronTasks: [],
   themes: [],
   activeTheme: null,
@@ -836,7 +859,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         // user out of what they're doing.
         const s = get()
         if (!sessionId || sessionId !== s.activeSessionId) return
-        if (s.browserTabs.length === 0) s.openBrowserPanel()
+        if (!s.browserTabs.some((t) => t.sessionId === sessionId)) s.openBrowserPanel()
       }))
 
       sub(window.electron.mcp.onStatus(({ name, status }) => {
@@ -856,7 +879,24 @@ export const useAppStore = create<AppState>((set, get) => ({
       }))
 
       // Live updates for background agents and cron
-      sub(window.electron.bgAgents.onUpdate(() => { void get().loadBgAgents() }))
+      sub(window.electron.bgAgents.onUpdate(({ id }) => {
+        // Status changed (running/done/error) — refresh the list and drop the
+        // live tail; the persisted result replaces it.
+        set((s) => {
+          if (!(id in s.bgAgentLiveText)) return {}
+          const next = { ...s.bgAgentLiveText }
+          delete next[id]
+          return { bgAgentLiveText: next }
+        })
+        void get().loadBgAgents()
+      }))
+      sub(window.electron.bgAgents.onText(({ id, delta }) => {
+        // Rolling tail of live output per agent so the drawer shows progress
+        // while a run is going (capped so long runs can't bloat the store).
+        set((s) => ({
+          bgAgentLiveText: { ...s.bgAgentLiveText, [id]: ((s.bgAgentLiveText[id] ?? '') + delta).slice(-2000) },
+        }))
+      }))
       sub(window.electron.cron.onFired(() => { void get().loadCronTasks() }))
 
       await get().refreshProvidersAndCredentials()
@@ -1123,6 +1163,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       // dangling, which caused stale prompts from the OLD session's run to
       // pop up on the NEW session and the StatusBar to show the wrong
       // context-fill number for the first frame after switching.
+      // Per-session tabs: the target session sees ITS tabs (webviews for
+      // every session stay mounted; only the visible/active one changes).
+      const targetTabs = get().browserTabs.filter((t) => t.sessionId === sessionId)
+      const prevActive = get().activeBrowserTabId
       set({
         activeSession: toSessionFromMeta(meta, messages),
         activeSessionId: sessionId,
@@ -1130,6 +1174,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         // to it on switch so a stuck transient/agent-opened browser can't keep
         // showing over a chat/code session (and a browser session shows it).
         browserView: meta.mode === 'browser',
+        activeBrowserTabId: targetTabs.some((t) => t.id === prevActive) ? prevActive : (targetTabs[0]?.id ?? null),
         currentAssistantText: '',
         currentThinkingText: '',
         currentToolCalls: [],
@@ -1180,13 +1225,20 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   deleteSession: async (sessionId: string) => {
     await window.electron.session.delete(sessionId)
-    set((s) => ({
-      sessionList: s.sessionList.filter(x => x.id !== sessionId),
-      activeSessionId: s.activeSessionId === sessionId ? null : s.activeSessionId,
-      activeSession: s.activeSessionId === sessionId ? null : s.activeSession,
-      // Deleting the active session drops any run it had with it.
-      ...(s.activeSessionId === sessionId ? { isRunning: false } : {}),
-    }))
+    set((s) => {
+      // Close the deleted session's browser tabs (unmounts its webviews).
+      const tabs = s.browserTabs.filter((t) => t.sessionId !== sessionId)
+      const activeTabGone = s.activeBrowserTabId !== null && !tabs.some((t) => t.id === s.activeBrowserTabId)
+      return {
+        sessionList: s.sessionList.filter(x => x.id !== sessionId),
+        activeSessionId: s.activeSessionId === sessionId ? null : s.activeSessionId,
+        activeSession: s.activeSessionId === sessionId ? null : s.activeSession,
+        browserTabs: tabs,
+        ...(activeTabGone ? { activeBrowserTabId: null } : {}),
+        // Deleting the active session drops any run it had with it.
+        ...(s.activeSessionId === sessionId ? { isRunning: false } : {}),
+      }
+    })
   },
 
   updateSessionCwd: async (sessionId: string, cwd: string) => {
@@ -1740,26 +1792,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   setPreviewOpen: (open: boolean) => set({ previewOpen: open }),
   openPreview: (url: string) => set({ previewOpen: true, previewUrl: url }),
   setPreviewTab: (tab) => set({ previewTab: tab }),
-  openBrowserPanel: () => set((s) => {
-    const off = { documentsOpen: false, emailOpen: false, calendarOpen: false, activeDrawer: null }
-    if (s.browserTabs.length) return { browserView: true, ...off }
-    const t = freshTab()
-    return { browserView: true, browserTabs: [t], activeBrowserTabId: t.id, ...off }
-  }),
-  toggleBrowserView: () => set((s) => {
-    if (s.browserView) return { browserView: false }
-    const off = { documentsOpen: false, emailOpen: false, calendarOpen: false, activeDrawer: null }
-    if (s.browserTabs.length) return { browserView: true, ...off }
-    const t = freshTab()
-    return { browserView: true, browserTabs: [t], activeBrowserTabId: t.id, ...off }
-  }),
-  setBrowserView: (open: boolean) => set((s) => {
-    if (!open) return { browserView: false }
-    const off = { documentsOpen: false, emailOpen: false, calendarOpen: false, activeDrawer: null }
-    if (s.browserTabs.length) return { browserView: true, ...off }
-    const t = freshTab()
-    return { browserView: true, browserTabs: [t], activeBrowserTabId: t.id, ...off }
-  }),
+  openBrowserPanel: () => set((s) => openBrowserState(s)),
+  toggleBrowserView: () => set((s) => (s.browserView ? { browserView: false } : openBrowserState(s))),
+  setBrowserView: (open: boolean) => set((s) => (open ? openBrowserState(s) : { browserView: false })),
   exitBrowser: async () => {
     set({ browserView: false })
     const s = get()
@@ -1773,14 +1808,21 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
   addBrowserTab: (url) => set((s) => {
-    const t: BrowserTabState = { id: 'tab_' + Math.random().toString(36).slice(2, 9), url: url ?? '', title: url ? '' : 'New tab', loading: !!url }
+    const key = s.activeSessionId ?? 'transient'
+    const t: BrowserTabState = { id: 'tab_' + Math.random().toString(36).slice(2, 9), url: url ?? '', title: url ? '' : 'New tab', loading: !!url, sessionId: key }
     return { browserTabs: [...s.browserTabs, t], activeBrowserTabId: t.id }
   }),
   closeBrowserTab: (id) => set((s) => {
-    const idx = s.browserTabs.findIndex((t) => t.id === id)
+    const closing = s.browserTabs.find((t) => t.id === id)
     const tabs = s.browserTabs.filter((t) => t.id !== id)
     let active = s.activeBrowserTabId
-    if (active === id) active = tabs.length ? tabs[Math.max(0, idx - 1)].id : null
+    if (active === id && closing) {
+      // Pick the neighbor within the SAME session's tab list.
+      const siblings = s.browserTabs.filter((t) => t.sessionId === closing.sessionId)
+      const idx = siblings.findIndex((t) => t.id === id)
+      const remaining = siblings.filter((t) => t.id !== id)
+      active = remaining.length ? remaining[Math.max(0, idx - 1)].id : null
+    }
     return { browserTabs: tabs, activeBrowserTabId: active }
   }),
   setActiveBrowserTab: (id) => set({ activeBrowserTabId: id }),

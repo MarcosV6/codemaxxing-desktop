@@ -1,10 +1,84 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useAppStore } from '../../store/appStore'
-import { X, Play, Loader2, Plus, Trash2, Eye, EyeOff, Trophy, Zap, Gavel } from 'lucide-react'
+import { X, Play, Loader2, Plus, Trash2, Eye, EyeOff, Trophy, Zap, Gavel, Copy, Check } from 'lucide-react'
 import type { CompareResult } from '../../types'
 import { MarkdownText } from '../Chat/MessageBubble'
 
 interface Column { provider: string; model: string }
+
+/** Pull a renderable HTML document/snippet out of a model answer — a ```html
+ *  fence, a raw <!DOCTYPE>/<html> document, or any fence that contains one. */
+function extractHtml(text: string): string | null {
+  const fence = text.match(/```html\s*([\s\S]*?)```/i)
+  if (fence && fence[1].trim()) return fence[1]
+  const anyFence = text.match(/```(?:\w+)?\s*((?:<!DOCTYPE|<html)[\s\S]*?)```/i)
+  if (anyFence && anyFence[1].trim()) return anyFence[1]
+  const start = text.search(/<!DOCTYPE html|<html[\s>]/i)
+  if (start >= 0) {
+    const end = text.lastIndexOf('</html>')
+    return end > start ? text.slice(start, end + 7) : text.slice(start)
+  }
+  return null
+}
+
+/** A candidate's answer: live sandboxed preview when it contains HTML (so
+ *  "which model builds the better site" is judged by LOOKING, not reading
+ *  code walls), markdown otherwise, with a Preview/Code toggle. */
+function ResultBody({ text }: { text: string }) {
+  const html = useMemo(() => extractHtml(text), [text])
+  const [view, setView] = useState<'preview' | 'text'>('preview')
+  const showPreview = html !== null && view === 'preview'
+  return (
+    <div className="flex-1 min-h-0 flex flex-col">
+      {html !== null && (
+        <div className="flex items-center gap-1 mb-2 shrink-0">
+          {(['preview', 'text'] as const).map((v) => (
+            <button
+              key={v}
+              onClick={() => setView(v)}
+              className="px-2 py-0.5 rounded text-[10.5px] transition-colors"
+              style={{
+                backgroundColor: view === v ? 'color-mix(in srgb, var(--theme-primary) 15%, transparent)' : 'transparent',
+                color: view === v ? 'var(--theme-primary)' : 'var(--theme-muted)',
+                border: '1px solid var(--theme-border)',
+              }}
+            >
+              {v === 'preview' ? 'Preview' : 'Code'}
+            </button>
+          ))}
+        </div>
+      )}
+      {showPreview ? (
+        <iframe
+          sandbox="allow-scripts"
+          srcDoc={html!}
+          title="candidate preview"
+          className="flex-1 w-full rounded-lg"
+          style={{ border: '1px solid var(--theme-border)', backgroundColor: '#ffffff', minHeight: 280 }}
+        />
+      ) : (
+        <div className="flex-1 overflow-y-auto text-[12.5px] leading-[1.55] pr-1" style={{ color: 'var(--theme-text)' }}>
+          <MarkdownText text={text} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Copy-to-clipboard with a brief confirmation flash. */
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      onClick={() => { void navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500) }}
+      className="flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-medium transition-colors"
+      style={{ color: copied ? 'var(--theme-success)' : 'var(--theme-muted)', border: '1px solid var(--theme-border)' }}
+      title="Copy this answer"
+    >
+      {copied ? <Check size={11} /> : <Copy size={11} />} {copied ? 'Copied' : 'Copy'}
+    </button>
+  )
+}
 
 /**
  * Compare — send one prompt to 2–3 models and view answers side-by-side, with
@@ -261,9 +335,11 @@ export function CompareModal() {
                 <Gavel size={13} style={{ color: 'var(--theme-primary)' }} />
                 <span className="text-[12px] font-semibold" style={{ color: 'var(--theme-primary)' }}>Council verdict</span>
                 <span className="text-[10.5px] font-mono opacity-60" style={{ color: 'var(--theme-muted)' }}>chair · {verdict.model}</span>
+                <span className="flex-1" />
+                <CopyButton text={verdict.text} />
               </div>
-              <div className="text-[13px] leading-[1.6]" style={{ color: 'var(--theme-text)' }}>
-                <MarkdownText text={verdict.text} />
+              <div className="text-[13px] leading-[1.6] flex flex-col" style={{ color: 'var(--theme-text)', minHeight: 60 }}>
+                <ResultBody text={verdict.text} />
               </div>
             </div>
           )}
@@ -294,27 +370,30 @@ export function CompareModal() {
                         </span>
                       )}
                     </div>
-                    <div className="flex-1 overflow-y-auto text-[12.5px] leading-[1.55] whitespace-pre-wrap pr-1" style={{ color: 'var(--theme-text)' }}>
-                      {running && !results ? (
-                        <span className="opacity-50 flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" /> thinking…</span>
-                      ) : r?.ok ? (
-                        r.text
-                      ) : (
-                        <span style={{ color: 'var(--theme-error)' }}>{r?.error || 'No response'}</span>
-                      )}
-                    </div>
+                    {running && !results ? (
+                      <div className="flex-1 text-[12.5px]">
+                        <span className="opacity-50 flex items-center gap-1.5" style={{ color: 'var(--theme-text)' }}><Loader2 size={12} className="animate-spin" /> thinking…</span>
+                      </div>
+                    ) : r?.ok ? (
+                      <ResultBody text={r.text ?? ''} />
+                    ) : (
+                      <div className="flex-1 text-[12.5px]" style={{ color: 'var(--theme-error)' }}>{r?.error || 'No response'}</div>
+                    )}
                     {results && (
-                      <button
-                        onClick={() => setVote(i)}
-                        className="mt-2 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-medium transition-colors"
-                        style={{
-                          backgroundColor: won ? 'color-mix(in srgb, var(--theme-primary) 18%, transparent)' : 'transparent',
-                          color: won ? 'var(--theme-primary)' : 'var(--theme-muted)',
-                          border: '1px solid var(--theme-border)',
-                        }}
-                      >
-                        <Trophy size={11} /> {won ? 'Winner' : 'Vote'}
-                      </button>
+                      <div className="mt-2 flex items-center gap-1.5">
+                        {r?.ok && <CopyButton text={r.text ?? ''} />}
+                        <button
+                          onClick={() => setVote(i)}
+                          className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-medium transition-colors"
+                          style={{
+                            backgroundColor: won ? 'color-mix(in srgb, var(--theme-primary) 18%, transparent)' : 'transparent',
+                            color: won ? 'var(--theme-primary)' : 'var(--theme-muted)',
+                            border: '1px solid var(--theme-border)',
+                          }}
+                        >
+                          <Trophy size={11} /> {won ? 'Winner' : 'Vote'}
+                        </button>
+                      </div>
                     )}
                   </div>
                 )

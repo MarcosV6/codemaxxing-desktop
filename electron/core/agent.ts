@@ -140,6 +140,10 @@ export interface AgentConfig {
    * `undefined` = include every tool (back-compat).
    */
   activeSurfaces?: string[]
+  /** Hard ceiling on the effective context window, when the backend enforces
+   *  less than the model advertises (e.g. ChatGPT-subscription Codex ≈32k
+   *  despite gpt-5.5's 400k). Applied over both static and detected values. */
+  contextWindowCap?: number
 }
 
 export interface RunResult {
@@ -300,8 +304,19 @@ export class CodingAgent {
     this.events = events
     this.approvalMode = deriveApprovalMode(config)
     // Seed with static guess so callers get a sane number even before detection finishes.
-    this.contextWindow = getStaticContextWindow(config.model) ?? (config.provider === 'anthropic' ? 200_000 : 128_000)
+    this.contextWindow = this.capWindow(
+      getStaticContextWindow(config.model) ?? (config.provider === 'anthropic' ? 200_000 : 128_000),
+    )
     this.contextWindowReady = this.initContextWindow()
+  }
+
+  /** Backends can enforce a smaller window than the model advertises — the
+   *  ChatGPT-subscription Codex backend rejects around ~32k even though
+   *  gpt-5.5 claims 400k. The cap makes stats (and therefore the renderer's
+   *  auto-compact pre-flight) honest about the REAL ceiling. */
+  private capWindow(w: number): number {
+    const cap = this.config.contextWindowCap
+    return cap && cap > 0 ? Math.min(w, cap) : w
   }
 
   private async initContextWindow(): Promise<void> {
@@ -311,7 +326,7 @@ export class CodingAgent {
         baseUrl: this.config.baseUrl ?? '',
         providerType: this.config.provider,
       })
-      if (detected && detected > 0) this.contextWindow = detected
+      if (detected && detected > 0) this.contextWindow = this.capWindow(detected)
       this.emitStats()
     } catch { /* keep static fallback */ }
   }

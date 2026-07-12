@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { useAppStore } from '../../store/appStore'
 import { WorkspaceAssistant } from './WorkspaceAssistant'
+import { GoogleConnectCard } from './GoogleConnectCard'
 import { ArrowLeft, Loader2, RefreshCw, Settings as Cog, MapPin } from 'lucide-react'
 
 interface Ev { summary: string; start: number; end: number; location: string; calendar: string }
@@ -81,10 +82,19 @@ export function CalendarView({ onNewSession }: { onNewSession: () => void }) {
         {view === 'setup' ? (
           <div className="flex-1 overflow-y-auto p-6">
             <div className="max-w-[460px] mx-auto space-y-3">
-              <div className="text-[12.5px] mb-1" style={{ color: 'var(--theme-muted)' }}>Connect a CalDAV calendar — pick a provider or enter any CalDAV URL (Radicale, Nextcloud…). Apple/Fastmail need an app password, links below.</div>
-              {/* provider presets. Google Calendar is OAuth-only over CalDAV,
-                  so it can't be offered here — iCloud/Fastmail work great with
-                  app passwords. */}
+              {/* The easy path: one Google sign-in connects calendar AND email. */}
+              <GoogleConnectCard onConnected={() => { void (async () => {
+                const r = await window.electron.calendar.getAccount()
+                const acct = r.ok ? r.account : null
+                setAccount(acct)
+                if (acct) { setView('list'); void loadEvents() }
+              })() }} />
+              <div className="flex items-center gap-3 py-1">
+                <span className="flex-1 h-px" style={{ backgroundColor: 'var(--theme-hairline)' }} />
+                <span className="text-[10.5px] uppercase tracking-wider" style={{ color: 'var(--theme-muted)' }}>or connect via CalDAV</span>
+                <span className="flex-1 h-px" style={{ backgroundColor: 'var(--theme-hairline)' }} />
+              </div>
+              <div className="text-[12.5px] mb-1" style={{ color: 'var(--theme-muted)' }}>Pick a provider or enter any CalDAV URL (Radicale, Nextcloud…). Apple/Fastmail need an app password, links below.</div>
               <div className="grid grid-cols-2 gap-2">
                 {([
                   { name: 'iCloud', url: 'https://caldav.icloud.com/', help: 'https://appleid.apple.com/account/manage', label: 'Create an Apple app-specific password' },

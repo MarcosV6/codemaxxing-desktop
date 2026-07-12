@@ -296,6 +296,13 @@ contextBridge.exposeInMainWorld('electron', {
   },
 
   // ── Documents ──
+  // One Google sign-in connects Gmail (IMAP/SMTP) + Google Calendar.
+  google: {
+    status: () => ipcRenderer.invoke('google:status'),
+    connect: (opts?: { clientId?: string; clientSecret?: string }) => ipcRenderer.invoke('google:connect', opts),
+    disconnect: () => ipcRenderer.invoke('google:disconnect'),
+  },
+
   documents: {
     list: () => ipcRenderer.invoke('documents:list'),
     save: (doc: { id?: string; title: string; content: string }) => ipcRenderer.invoke('documents:save', doc),

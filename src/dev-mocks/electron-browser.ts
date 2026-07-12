@@ -281,6 +281,11 @@ export function installBrowserMock(): void {
       deleteTask: () => ok(),
       onChanged: () => () => { /* noop in browser */ },
     },
+    google: {
+      status: () => ok({ connected: false, email: null, hasClient: false }),
+      connect: () => ok({ email: 'mock@gmail.com' }),
+      disconnect: () => ok(),
+    },
     documents: {
       list: () => ok({ documents: [
         { id: 'doc1', title: 'Welcome', content: '# Welcome\n\nThis is a demo document so the editor shows content in the browser preview.', updatedAt: Date.now() },

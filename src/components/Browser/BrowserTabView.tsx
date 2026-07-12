@@ -24,10 +24,18 @@ export function BrowserTabView({ tab, onUpdate, registerEl, onDomReady }: {
     const wv = webviewRef.current
     if (!wv) return
     registerEl(tab.id, wv)
+    // The webview boots on about:blank and fires real navigation/title events
+    // for it. Letting those through writes "about:blank" into the tab, which
+    // dismisses the start page (it shows only while tab.url is empty) and
+    // reads as a junk tab. Blank-page events are never user-meaningful — drop.
+    const isBlank = (v?: string) => !v || v === 'about:blank'
     const onStart = () => onUpdate({ loading: true })
-    const onStop = () => onUpdate({ loading: false, title: wv.getTitle?.() || '' })
-    const onNav = (e: { url?: string }) => { if (e?.url) onUpdate({ url: e.url }) }
-    const onTitle = (e: { title?: string }) => { if (e?.title) onUpdate({ title: e.title }) }
+    const onStop = () => {
+      const t = wv.getTitle?.() || ''
+      onUpdate({ loading: false, ...(isBlank(t) ? {} : { title: t }) })
+    }
+    const onNav = (e: { url?: string }) => { if (!isBlank(e?.url)) onUpdate({ url: e!.url! }) }
+    const onTitle = (e: { title?: string }) => { if (!isBlank(e?.title)) onUpdate({ title: e!.title! }) }
     const onReady = () => {
       // about:blank fires dom-ready first; then load the tab's real URL once.
       if (!loadedRef.current && initialUrl.current) {

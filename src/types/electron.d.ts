@@ -355,6 +355,11 @@ export interface ElectronAPI {
   }
 
   // Documents — JSON-backed, AI-assisted editor
+  google: {
+    status: () => Promise<{ ok: boolean; connected: boolean; email: string | null; hasClient: boolean }>
+    connect: (opts?: { clientId?: string; clientSecret?: string }) => Promise<{ ok: boolean; email?: string; error?: string }>
+    disconnect: () => Promise<{ ok: boolean }>
+  }
   documents: {
     list: () => Promise<{ ok: boolean; documents: Array<{ id: string; title: string; content: string; updatedAt: number }> }>
     save: (doc: { id?: string; title: string; content: string }) => Promise<{ ok: boolean; doc?: { id: string; title: string; content: string; updatedAt: number }; error?: string }>

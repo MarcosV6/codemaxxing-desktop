@@ -23,7 +23,7 @@ import {
 import { join, dirname, basename, relative, extname } from 'path'
 import { fileURLToPath } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { existsSync, readFileSync, mkdirSync, writeFileSync, readdirSync, statSync, renameSync } from 'fs'
+import { existsSync, readFileSync, mkdirSync, writeFileSync, readdirSync, statSync, renameSync, unlinkSync } from 'fs'
 import { homedir, totalmem, cpus } from 'os'
 import { spawn, execFile, type ChildProcess } from 'child_process'
 import { randomBytes } from 'crypto'
@@ -38,6 +38,7 @@ import * as sessions from './core/sessions.js'
 import * as auth from './core/auth.js'
 import { loginAnthropicOAuth, refreshAnthropicOAuthToken } from './core/anthropicOAuth.js'
 import { loginOpenAICodexOAuth, refreshOpenAICodexToken } from './core/openaiOAuth.js'
+import { loginGoogleOAuth, refreshGoogleToken, revokeGoogleToken } from './core/googleOAuth.js'
 import * as mcp from './core/mcp.js'
 import { killAllBackground, killTree } from './core/backgroundCommands.js'
 import * as memory from './core/memory.js'
@@ -989,10 +990,54 @@ async function notesOp(op: { action: 'list' | 'add_note' | 'add_task' | 'toggle_
   return { ok: false, error: 'unknown action' }
 }
 
+// ─── Google account (one sign-in → Gmail IMAP/SMTP + Google Calendar) ────────
+// The user pastes their own Desktop-app OAuth client (id/secret) once; tokens
+// live here, encrypted like the email password. Both the workspace IPC
+// handlers and the agent-tool paths authenticate through getGoogleAccessToken.
+const GOOGLE_PATH = join(CONFIG_DIR, 'google.json')
+type GoogleAccount = { clientId: string; clientSecret: string; email: string; refreshToken: string; accessToken: string; expiresAt: number }
+function readGoogleAccount(): GoogleAccount | null {
+  try {
+    if (existsSync(GOOGLE_PATH)) {
+      const a = JSON.parse(readFileSync(GOOGLE_PATH, 'utf-8'))
+      return { ...a, clientSecret: auth.decryptSecret(a.clientSecret || ''), refreshToken: auth.decryptSecret(a.refreshToken || '') }
+    }
+  } catch { /* corrupt → none */ }
+  return null
+}
+function writeGoogleAccount(a: GoogleAccount): void {
+  if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 })
+  const tmp = GOOGLE_PATH + '.tmp'
+  writeFileSync(tmp, JSON.stringify({ ...a, clientSecret: auth.encryptSecret(a.clientSecret), refreshToken: auth.encryptSecret(a.refreshToken) }, null, 2), { mode: 0o600 })
+  renameSync(tmp, GOOGLE_PATH)
+}
+let googleTokenInFlight: Promise<string> | null = null
+/** Fresh access token for the connected Google account — refreshes within
+ *  5 min of expiry, with an in-flight guard so concurrent IMAP/SMTP/Calendar
+ *  calls share one refresh. Throws when no account is connected. */
+async function getGoogleAccessToken(): Promise<{ user: string; accessToken: string }> {
+  const g = readGoogleAccount()
+  if (!g) throw new Error('Google account not connected — use "Sign in with Google" in the Email workspace.')
+  if (g.expiresAt - Date.now() > 5 * 60_000) return { user: g.email, accessToken: g.accessToken }
+  if (!googleTokenInFlight) {
+    googleTokenInFlight = (async () => {
+      try {
+        const r = await refreshGoogleToken(g.clientId, g.clientSecret, g.refreshToken)
+        writeGoogleAccount({ ...g, accessToken: r.accessToken, expiresAt: r.expiresAt })
+        return r.accessToken
+      } finally {
+        googleTokenInFlight = null
+      }
+    })()
+  }
+  const accessToken = await googleTokenInFlight
+  return { user: g.email, accessToken }
+}
+
 // ─── Email agent tools ───────────────────────────────────────────────────────
 // The Email workspace reports the open message here so email_read targets it;
 // email_send reuses the configured SMTP account (password decrypted via auth).
-type EmailAcctRec = { email: string; smtpHost: string; smtpPort: number; password: string }
+type EmailAcctRec = { email: string; smtpHost: string; smtpPort: number; password: string; authType?: 'password' | 'google' }
 let activeEmailContext: { uid?: number; from?: string; to?: string; subject?: string; text?: string } | null = null
 ipcMain.on('email:setActive', (_e, ctx: { uid?: number; from?: string; to?: string; subject?: string; text?: string } | null) => { activeEmailContext = ctx })
 function readEmailAcctFile(): EmailAcctRec | null {
@@ -1014,7 +1059,10 @@ async function emailOp(op: { action: 'read' | 'send'; to?: string; subject?: str
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const nm: any = await import('nodemailer')
     const createTransport = nm.createTransport || nm.default?.createTransport
-    const transport = createTransport({ host: a.smtpHost, port: a.smtpPort, secure: a.smtpPort === 465, auth: { user: a.email, pass: a.password }, connectionTimeout: 15000, greetingTimeout: 10000, socketTimeout: 20000 })
+    const smtpAuth = a.authType === 'google'
+      ? { type: 'OAuth2', user: a.email, accessToken: (await getGoogleAccessToken()).accessToken }
+      : { user: a.email, pass: a.password }
+    const transport = createTransport({ host: a.smtpHost, port: a.smtpPort, secure: a.smtpPort === 465, auth: smtpAuth, connectionTimeout: 15000, greetingTimeout: 10000, socketTimeout: 20000 })
     await transport.sendMail({ from: a.email, to: op.to, subject: op.subject || '(no subject)', text: op.text || '' })
     return { ok: true }
   } catch (err: unknown) { return { ok: false, error: auth.scrubSecrets((err as Error)?.message ?? String(err)) } }
@@ -1026,18 +1074,40 @@ async function emailOp(op: { action: 'read' | 'send'; to?: string; subject?: str
 type CalEvt = { summary: string; start: number; end: number; location?: string }
 let activeCalEvents: CalEvt[] = []
 ipcMain.on('calendar:setEvents', (_e, events: CalEvt[]) => { activeCalEvents = Array.isArray(events) ? events : [] })
-function readCalAcctFile(): { url: string; username: string; password: string } | null {
+function readCalAcctFile(): { url: string; username: string; password: string; authType?: 'caldav' | 'google' } | null {
   try {
     const f = join(CONFIG_DIR, 'calendar.json')
     if (existsSync(f)) { const a = JSON.parse(readFileSync(f, 'utf-8')); return { ...a, password: auth.decryptSecret(a.password || '') } }
   } catch { /* corrupt → none */ }
   return null
 }
+/** Insert an event into the primary Google Calendar via REST v3. */
+async function googleCalendarInsert(op: { summary: string; start: number; end?: number; location?: string }): Promise<void> {
+  const { accessToken } = await getGoogleAccessToken()
+  const res = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      summary: op.summary,
+      ...(op.location ? { location: op.location } : {}),
+      start: { dateTime: new Date(op.start).toISOString() },
+      end: { dateTime: new Date(op.end || op.start + 3600000).toISOString() },
+    }),
+  })
+  if (!res.ok) throw new Error(`Google Calendar insert failed (${res.status}): ${await res.text()}`)
+}
 async function calendarOp(op: { action: 'list' | 'add'; summary?: string; start?: number; end?: number; location?: string }): Promise<{ ok: boolean; events?: CalEvt[]; error?: string }> {
   if (op.action === 'list') return { ok: true, events: activeCalEvents }
   const a = readCalAcctFile()
   if (!a) return { ok: false, error: 'No calendar account configured (set one up in the Calendar workspace).' }
   if (!op.summary || !op.start) return { ok: false, error: "calendar_add needs 'summary' and 'start'." }
+  if (a.authType === 'google') {
+    try {
+      await googleCalendarInsert({ summary: op.summary, start: op.start, end: op.end, location: op.location })
+      emit('calendar:changed')
+      return { ok: true }
+    } catch (err: unknown) { return { ok: false, error: auth.scrubSecrets((err as Error)?.message ?? String(err)) } }
+  }
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const dav: any = await import('tsdav')
@@ -2184,7 +2254,7 @@ function setupIPC(): void {
 
   // ── Email (IMAP fetch + SMTP send) ──
   const EMAIL_PATH = join(CONFIG_DIR, 'email.json')
-  type EmailAccount = { email: string; password: string; imapHost: string; imapPort: number; smtpHost: string; smtpPort: number }
+  type EmailAccount = { email: string; password: string; imapHost: string; imapPort: number; smtpHost: string; smtpPort: number; authType?: 'password' | 'google' }
   const readEmailAccount = (): EmailAccount | null => {
     try {
       if (existsSync(EMAIL_PATH)) {
@@ -2201,13 +2271,18 @@ function setupIPC(): void {
   const makeImap = async (a: EmailAccount): Promise<any> => {
     const mod: any = await import('imapflow')
     const ImapFlow = mod.ImapFlow || mod.default?.ImapFlow
-    return new ImapFlow({ host: a.imapHost, port: a.imapPort, secure: a.imapPort === 993, auth: { user: a.email, pass: a.password }, logger: false, socketTimeout: 30000 })
+    // Google accounts authenticate with XOAUTH2 (fresh access token) instead
+    // of a password — imapflow handles the SASL exchange given accessToken.
+    const imapAuth = a.authType === 'google'
+      ? { user: a.email, accessToken: (await getGoogleAccessToken()).accessToken }
+      : { user: a.email, pass: a.password }
+    return new ImapFlow({ host: a.imapHost, port: a.imapPort, secure: a.imapPort === 993, auth: imapAuth, logger: false, socketTimeout: 30000 })
   }
 
   ipcMain.handle('email:getAccount', async () => {
     const a = readEmailAccount()
     if (!a) return { ok: true, account: null }
-    return { ok: true, account: { email: a.email, imapHost: a.imapHost, imapPort: a.imapPort, smtpHost: a.smtpHost, smtpPort: a.smtpPort, passwordSet: !!a.password } }
+    return { ok: true, account: { email: a.email, imapHost: a.imapHost, imapPort: a.imapPort, smtpHost: a.smtpHost, smtpPort: a.smtpPort, passwordSet: !!a.password, authType: a.authType ?? 'password' } }
   })
   ipcMain.handle('email:saveAccount', async (_e, input: { email: string; password?: string; imapHost: string; imapPort: number; smtpHost: string; smtpPort: number }) => {
     const prev = readEmailAccount()
@@ -2283,7 +2358,10 @@ function setupIPC(): void {
     try {
       const nm: any = await import('nodemailer')
       const createTransport = nm.createTransport || nm.default?.createTransport
-      const transport = createTransport({ host: a.smtpHost, port: a.smtpPort, secure: a.smtpPort === 465, auth: { user: a.email, pass: a.password }, connectionTimeout: 15000, greetingTimeout: 10000, socketTimeout: 20000 })
+      const smtpAuth = a.authType === 'google'
+        ? { type: 'OAuth2', user: a.email, accessToken: (await getGoogleAccessToken()).accessToken }
+        : { user: a.email, pass: a.password }
+      const transport = createTransport({ host: a.smtpHost, port: a.smtpPort, secure: a.smtpPort === 465, auth: smtpAuth, connectionTimeout: 15000, greetingTimeout: 10000, socketTimeout: 20000 })
       await withTimeout(transport.sendMail({ from: a.email, to: opts.to, subject: opts.subject, text: opts.text }), 30000, 'Mail send')
       return { ok: true }
     } catch (err: any) { return { ok: false, error: auth.scrubSecrets(err?.message ?? String(err)) } }
@@ -2291,7 +2369,7 @@ function setupIPC(): void {
 
   // ── Calendar (CalDAV via tsdav) ──
   const CAL_PATH = join(CONFIG_DIR, 'calendar.json')
-  type CalAccount = { url: string; username: string; password: string }
+  type CalAccount = { url: string; username: string; password: string; authType?: 'caldav' | 'google' }
   const readCalAccount = (): CalAccount | null => {
     try {
       if (existsSync(CAL_PATH)) {
@@ -2325,7 +2403,7 @@ function setupIPC(): void {
   ipcMain.handle('calendar:getAccount', async () => {
     const a = readCalAccount()
     if (!a) return { ok: true, account: null }
-    return { ok: true, account: { url: a.url, username: a.username, passwordSet: !!a.password } }
+    return { ok: true, account: { url: a.url, username: a.username, passwordSet: !!a.password, authType: a.authType ?? 'caldav' } }
   })
   ipcMain.handle('calendar:saveAccount', async (_e, input: { url: string; username: string; password?: string }) => {
     const prev = readCalAccount()
@@ -2336,6 +2414,34 @@ function setupIPC(): void {
     const a = readCalAccount(); if (!a) return { ok: false, error: 'No calendar account configured' }
     const start = opts?.start ?? Date.now()
     const end = opts?.end ?? (Date.now() + 30 * 24 * 60 * 60 * 1000)
+    if (a.authType === 'google') {
+      try {
+        const { accessToken } = await getGoogleAccessToken()
+        const params = new URLSearchParams({
+          timeMin: new Date(start).toISOString(),
+          timeMax: new Date(end).toISOString(),
+          singleEvents: 'true',
+          orderBy: 'startTime',
+          maxResults: '100',
+        })
+        const res = await withTimeout(
+          fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          }),
+          15000, 'Google Calendar',
+        )
+        if (!res.ok) return { ok: false, error: `Google Calendar error (${res.status}): ${await res.text()}` }
+        const data = (await res.json()) as { items?: Array<{ summary?: string; location?: string; start?: { dateTime?: string; date?: string }; end?: { dateTime?: string; date?: string } }> }
+        const events = (data.items ?? []).map((it) => ({
+          summary: it.summary || '(untitled)',
+          start: Date.parse(it.start?.dateTime ?? it.start?.date ?? '') || 0,
+          end: Date.parse(it.end?.dateTime ?? it.end?.date ?? '') || 0,
+          location: it.location || '',
+          calendar: 'Google',
+        }))
+        return { ok: true, events }
+      } catch (err: any) { return { ok: false, error: auth.scrubSecrets(err?.message ?? String(err)) } }
+    }
     try {
       const dav: any = await import('tsdav')
       const createDAVClient = dav.createDAVClient || dav.default?.createDAVClient
@@ -2355,6 +2461,40 @@ function setupIPC(): void {
       events.sort((x, y) => x.start - y.start)
       return { ok: true, events }
     } catch (err: any) { return { ok: false, error: auth.scrubSecrets(err?.message ?? String(err)) } }
+  })
+
+  // ── Google (one sign-in → Gmail + Google Calendar) ──
+  ipcMain.handle('google:status', async () => {
+    const g = readGoogleAccount()
+    return { ok: true, connected: !!g, email: g?.email ?? null, hasClient: !!(g?.clientId && g?.clientSecret) }
+  })
+  ipcMain.handle('google:connect', async (_e, opts?: { clientId?: string; clientSecret?: string }) => {
+    const prev = readGoogleAccount()
+    const clientId = (opts?.clientId || prev?.clientId || '').trim()
+    const clientSecret = (opts?.clientSecret || prev?.clientSecret || '').trim()
+    if (!clientId || !clientSecret) {
+      return { ok: false, error: 'Paste your Google OAuth Client ID and Secret first (Google Cloud Console → Credentials → OAuth client ID → Desktop app).' }
+    }
+    try {
+      const t = await loginGoogleOAuth(clientId, clientSecret, (m) => emitAuthStatus('google', 'oauth', m))
+      writeGoogleAccount({ clientId, clientSecret, email: t.email, refreshToken: t.refreshToken, accessToken: t.accessToken, expiresAt: t.expiresAt })
+      // ONE sign-in lights up both workspaces: Gmail over XOAUTH2 + Google
+      // Calendar over REST — no servers or app passwords to configure.
+      writeEmailAccount({ authType: 'google', email: t.email, password: '', imapHost: 'imap.gmail.com', imapPort: 993, smtpHost: 'smtp.gmail.com', smtpPort: 465 })
+      writeCalAccount({ authType: 'google', url: '', username: t.email, password: '' })
+      return { ok: true, email: t.email }
+    } catch (err: any) {
+      return { ok: false, error: auth.scrubSecrets(err?.message ?? String(err)) }
+    }
+  })
+  ipcMain.handle('google:disconnect', async () => {
+    const g = readGoogleAccount()
+    if (g?.refreshToken) void revokeGoogleToken(g.refreshToken)
+    try { unlinkSync(GOOGLE_PATH) } catch { /* already gone */ }
+    // Only clear email/calendar if they were the Google-backed ones.
+    const em = readEmailAccount(); if (em?.authType === 'google') { try { unlinkSync(EMAIL_PATH) } catch { /* ignore */ } }
+    const ca = readCalAccount(); if (ca?.authType === 'google') { try { unlinkSync(CAL_PATH) } catch { /* ignore */ } }
+    return { ok: true }
   })
 
   // ── Auth / credentials ──

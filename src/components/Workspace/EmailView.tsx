@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { useAppStore } from '../../store/appStore'
 import { WorkspaceAssistant } from './WorkspaceAssistant'
+import { GoogleConnectCard } from './GoogleConnectCard'
 import { useResizablePanel, ResizeHandle } from '../Shared/Resizable'
 import { ArrowLeft, Loader2, RefreshCw, Send, Settings as Cog, PenSquare } from 'lucide-react'
 
@@ -116,7 +117,19 @@ export function EmailView({ onNewSession }: { onNewSession: () => void }) {
         {view === 'setup' ? (
           <div className="flex-1 overflow-y-auto p-6">
             <div className="max-w-[460px] mx-auto space-y-3">
-              <div className="text-[12.5px] mb-1" style={{ color: 'var(--theme-muted)' }}>Connect your mailbox — pick your provider and the servers fill in. You'll need an app password (links below), not your normal login password.</div>
+              {/* The easy path: one Google sign-in connects email AND calendar. */}
+              <GoogleConnectCard onConnected={() => { void (async () => {
+                const r = await window.electron.email.getAccount()
+                const acct = r.ok ? r.account : null
+                setAccount(acct)
+                if (acct) { setView('inbox'); void loadList() }
+              })() }} />
+              <div className="flex items-center gap-3 py-1">
+                <span className="flex-1 h-px" style={{ backgroundColor: 'var(--theme-hairline)' }} />
+                <span className="text-[10.5px] uppercase tracking-wider" style={{ color: 'var(--theme-muted)' }}>or connect manually</span>
+                <span className="flex-1 h-px" style={{ backgroundColor: 'var(--theme-hairline)' }} />
+              </div>
+              <div className="text-[12.5px] mb-1" style={{ color: 'var(--theme-muted)' }}>Pick your provider and the servers fill in. You'll need an app password (links below), not your normal login password.</div>
               {/* provider presets — one click fills the server plumbing */}
               <div className="grid grid-cols-3 gap-2">
                 {([

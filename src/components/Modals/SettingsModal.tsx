@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { MOD } from '../../utils/platform'
 import { useAppStore } from '../../store/appStore'
 import type { AuthMethod } from '../../store/appStore'
 import type { ApprovalMode, ReasoningEffort, HookRecord } from '../../types/electron'
@@ -117,7 +118,7 @@ export function SettingsModal() {
                     <span className="text-[11.5px] opacity-60">per session — the status-bar dial turns amber near it, red over.</span>
                   </div>
                   <div className="text-[11.5px] opacity-60">
-                    Want $0? Use <span className="font-mono">/local</span> or ⌘K → “Go Fully Local” to run an on-device model.
+                    Want $0? Use <span className="font-mono">/local</span> or {MOD}K → “Go Fully Local” to run an on-device model.
                   </div>
                 </section>
               </div>

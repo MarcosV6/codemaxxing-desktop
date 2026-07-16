@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { useAppStore } from '../../store/appStore'
 import { WorkspaceAssistant } from './WorkspaceAssistant'
+import { PAD_TRAFFIC_80 } from '../../utils/platform'
 import { GoogleConnectCard } from './GoogleConnectCard'
 import { ArrowLeft, Loader2, RefreshCw, Settings as Cog, MapPin } from 'lucide-react'
 
@@ -69,7 +70,7 @@ export function CalendarView({ onNewSession }: { onNewSession: () => void }) {
   return (
     <div className="flex-1 flex overflow-hidden">
       <div className="flex-1 flex flex-col min-w-0" style={{ minWidth: 340 }}>
-        <div className="h-12 flex items-center gap-1 pl-[80px] pr-2 shrink-0" style={{ WebkitAppRegion: 'drag', borderBottom: '1px solid var(--theme-hairline)' } as React.CSSProperties}>
+        <div className={`h-12 flex items-center gap-1 ${PAD_TRAFFIC_80} pr-2 shrink-0`} style={{ WebkitAppRegion: 'drag', borderBottom: '1px solid var(--theme-hairline)' } as React.CSSProperties}>
           <button onClick={() => close()} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11.5px] hover:bg-white/5 transition-colors" style={{ WebkitAppRegion: 'no-drag', color: 'var(--theme-muted)' } as React.CSSProperties} title="Exit Calendar"><ArrowLeft size={13} /> exit</button>
           <span className="text-[13px] font-medium" style={{ color: 'var(--theme-text)' }}>Calendar</span>
           <span className="flex-1" />

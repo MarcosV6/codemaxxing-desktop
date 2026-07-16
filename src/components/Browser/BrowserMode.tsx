@@ -7,6 +7,7 @@ import { NewTabPage } from './NewTabPage'
 import { SiteIcon } from './SiteIcon'
 import { useBrowserSpaces } from './useBrowserSpaces'
 import { useResizablePanel, ResizeHandle } from '../Shared/Resizable'
+import { PAD_TRAFFIC_80 } from '../../utils/platform'
 import {
   ArrowLeft, Plus, ChevronLeft, ChevronRight, RotateCw, X, Search, Globe, Loader2,
   MessageSquare, Compass,
@@ -226,7 +227,7 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
         <ResizeHandle handleProps={left.handleProps} label="browser sidebar" />
 
         {/* top row — traffic lights | nav arrows + assistant | back-to-sessions (Arc-style) */}
-        <div className="h-12 flex items-center gap-0.5 pl-[80px] pr-1.5 shrink-0" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+        <div className={`h-12 flex items-center gap-0.5 ${PAD_TRAFFIC_80} pr-1.5 shrink-0`} style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
           <span className="flex-1" />
           <button onClick={() => getActiveEl()?.goBack?.()} className={iconBtn} style={{ WebkitAppRegion: 'no-drag', color: 'var(--theme-muted)' } as React.CSSProperties} title="Back"><ChevronLeft size={17} /></button>
           <button onClick={() => getActiveEl()?.goForward?.()} className={iconBtn} style={{ WebkitAppRegion: 'no-drag', color: 'var(--theme-muted)' } as React.CSSProperties} title="Forward"><ChevronRight size={17} /></button>

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { MOD } from '../../utils/platform'
 import { useAppStore } from '../../store/appStore'
 import { AlertTriangle, Check, X, Zap, FileText, Terminal, Rows2, Rows3, Copy } from 'lucide-react'
 
@@ -306,7 +307,7 @@ export function ApprovalModal() {
             Approve <span className="font-mono" style={{ color: 'var(--theme-primary)' }}>{call.name}</span>?
           </span>
           <span className="ml-auto text-[10.5px] font-mono opacity-60" style={{ color: 'var(--theme-muted)' }}>
-            ⏎ allow · ⌘A always · ⎋ deny
+            ⏎ allow · {MOD}A always · ⎋ deny
           </span>
         </div>
 

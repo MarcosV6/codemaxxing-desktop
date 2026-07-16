@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { MOD } from '../../utils/platform'
 import { useAppStore } from '../../store/appStore'
 import { useResizablePanel, ResizeHandle } from '../Shared/Resizable'
 import {
@@ -508,7 +509,7 @@ function CodeViewer({ selectedPath, cwd, onDirtyChange }: ViewerProps) {
                 title={
                   !canEdit
                     ? (binary ? 'Binary files cannot be edited' : 'Truncated files cannot be edited')
-                    : 'Edit (⌘E) — ⌘S to save, Esc to discard'
+                    : `Edit (${MOD}E) — ${MOD}S to save, Esc to discard`
                 }
                 style={{ color: 'var(--theme-text)' }}
               >
@@ -533,7 +534,7 @@ function CodeViewer({ selectedPath, cwd, onDirtyChange }: ViewerProps) {
                 onClick={() => void save()}
                 disabled={saving || !dirty}
                 className="flex items-center gap-1 px-1.5 py-1 rounded hover:bg-white/5 transition-colors disabled:opacity-40"
-                title="Save (⌘S)"
+                title={`Save (${MOD}S)`}
                 style={{ color: dirty ? 'var(--theme-primary)' : 'var(--theme-muted)' }}
               >
                 {saving ? <Loader2 size={10} className="animate-spin" /> : <Save size={10} />}

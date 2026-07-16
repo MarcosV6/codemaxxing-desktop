@@ -1,4 +1,5 @@
 import React from 'react'
+import { IS_MAC } from '../../utils/platform'
 import { useAppStore } from '../../store/appStore'
 import { getModelContextWindow } from '../../utils/modelContext'
 
@@ -26,11 +27,14 @@ function formatTps(tps: number): string {
   return `${tps.toFixed(1)} tok/s`
 }
 
-/** basename without trailing slash. "/Users/foo/bar/" → "bar". "~/" → "~". */
+/** basename without trailing slash, handling BOTH separators —
+ *  "/Users/foo/bar/" → "bar", "C:\\Users\\foo\\bar" → "bar". Without the
+ *  backslash case, Windows paths never shortened and the status bar showed
+ *  the entire "C:\Users\…" string. */
 function basename(p: string): string {
   if (!p) return ''
-  const trimmed = p.replace(/\/+$/, '')
-  const idx = trimmed.lastIndexOf('/')
+  const trimmed = p.replace(/[\\/]+$/, '')
+  const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
   if (idx < 0) return trimmed
   return trimmed.slice(idx + 1) || trimmed
 }
@@ -185,7 +189,8 @@ export function StatusBar() {
 
         {activeSession.cwd && (
           <span className="font-mono truncate opacity-70" title={activeSession.cwd}>
-            <span className="opacity-50">~/</span>{basename(activeSession.cwd)}
+            {/* "~/" is a Unix-ism — on Windows just show the folder name. */}
+            {IS_MAC && <span className="opacity-50">~/</span>}{basename(activeSession.cwd)}
           </span>
         )}
 

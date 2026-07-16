@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { useAppStore } from '../../store/appStore'
 import { WorkspaceAssistant } from './WorkspaceAssistant'
+import { PAD_TRAFFIC_80 } from '../../utils/platform'
 import { ArrowLeft, Plus, Trash2, CheckSquare, Square } from 'lucide-react'
 
 interface Note { id: string; text: string; createdAt: number }
@@ -35,7 +36,7 @@ export function NotesView({ onNewSession }: { onNewSession: () => void }) {
   return (
     <div className="flex-1 flex overflow-hidden">
       <div className="flex-1 flex flex-col min-w-0" style={{ minWidth: 340 }}>
-        <div className="h-12 flex items-center gap-2 pl-[80px] pr-3 shrink-0" style={{ WebkitAppRegion: 'drag', borderBottom: '1px solid var(--theme-hairline)' } as React.CSSProperties}>
+        <div className={`h-12 flex items-center gap-2 ${PAD_TRAFFIC_80} pr-3 shrink-0`} style={{ WebkitAppRegion: 'drag', borderBottom: '1px solid var(--theme-hairline)' } as React.CSSProperties}>
           <button onClick={() => setDrawer(null)} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11.5px] hover:bg-white/5 transition-colors" style={{ WebkitAppRegion: 'no-drag', color: 'var(--theme-muted)' } as React.CSSProperties} title="Exit Notes">
             <ArrowLeft size={13} /> exit
           </button>

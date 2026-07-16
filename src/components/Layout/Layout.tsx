@@ -4,6 +4,7 @@ import { StatusBar } from '../Shared/StatusBar'
 import { PreviewPanel } from '../Preview/PreviewPanel'
 import { BrowserMode } from '../Browser/BrowserMode'
 import { useAppStore, type ModelInfo } from '../../store/appStore'
+import { MOD, MOD_SHIFT, PAD_TRAFFIC_84, PAD_TRAFFIC_92 } from '../../utils/platform'
 import type { SessionMode } from '../../types'
 import { Plus, MessageSquare, MessageCircle, PanelLeftClose, PanelLeft, PanelRight, Settings, Trash2, Folder, BookmarkCheck, Bot, Clock, BookOpen, GitCompare, StickyNote, FileText, Mail, CalendarDays, ChevronDown, FolderTree, Loader2, Search, Compass } from 'lucide-react'
 import { ApprovalModal, MCPApprovalModal } from '../Modals/ApprovalModal'
@@ -285,9 +286,10 @@ export function Layout() {
             }}
           >
             <ResizeHandle handleProps={sidebarResize.handleProps} label="sidebar" />
-            {/* Top: app identity — left space reserved for macOS traffic lights via drag region */}
+            {/* Top: app identity — Mac reserves traffic-light space; Windows/
+                Linux have a native title bar, so no dead padding there. */}
             <div
-              className="h-12 flex items-center justify-between pl-[92px] pr-3"
+              className={`h-12 flex items-center justify-between ${PAD_TRAFFIC_92} pr-3`}
               style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
             >
               <span className="text-[13px] font-medium tracking-tight">codemaxxing</span>
@@ -310,7 +312,7 @@ export function Layout() {
               >
                 <Plus size={14} />
                 <span>New session</span>
-                <span className="ml-auto text-[10.5px] opacity-40 font-mono">⌘N</span>
+                <span className="ml-auto text-[10.5px] opacity-40 font-mono">{MOD}N</span>
               </button>
             </div>
 
@@ -514,7 +516,7 @@ export function Layout() {
         <div className="flex-1 flex flex-col overflow-hidden relative min-w-[360px]">
           {/* Top bar */}
           <header
-            className={`h-12 flex items-center justify-between pr-3 shrink-0 ${sidebarOpen ? 'pl-4' : 'pl-[84px]'}`}
+            className={`h-12 flex items-center justify-between pr-3 shrink-0 ${sidebarOpen ? 'pl-4' : PAD_TRAFFIC_84}`}
             style={{
               WebkitAppRegion: 'drag',
             } as React.CSSProperties}
@@ -746,7 +748,7 @@ export function Layout() {
                     WebkitAppRegion: 'no-drag',
                     color: filesPanelOpen ? 'var(--theme-primary)' : 'var(--theme-muted)',
                   } as React.CSSProperties}
-                  title="Toggle files (⌘⇧E)"
+                  title={`Toggle files (${MOD_SHIFT}E)`}
                 >
                   <FolderTree size={12} />
                   <span className="text-[11.5px]">Files</span>
@@ -759,7 +761,7 @@ export function Layout() {
                   WebkitAppRegion: 'no-drag',
                   color: previewOpen ? 'var(--theme-primary)' : 'var(--theme-muted)',
                 } as React.CSSProperties}
-                title="Toggle preview (⌘P)"
+                title={`Toggle preview (${MOD}P)`}
               >
                 <PanelRight size={12} />
                 <span className="text-[11.5px]">Preview</span>
@@ -843,7 +845,7 @@ function EmptyState({ onNewSession }: { onNewSession: () => void }) {
           className="flex items-center justify-center gap-4 mt-7 text-[10.5px] font-mono opacity-40"
           style={{ color: 'var(--theme-muted)' }}
         >
-          <span><kbd>⌘N</kbd> new session</span>
+          <span><kbd>{MOD}N</kbd> new session</span>
           <span>·</span>
           <span><kbd>/</kbd> commands</span>
           <span>·</span>

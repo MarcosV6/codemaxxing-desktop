@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { MOD } from '../../utils/platform'
 import { useAppStore } from '../../store/appStore'
 import {
   Command, MessageSquare, Settings, FileText, Folder, Search, ArrowRight,
@@ -300,7 +301,7 @@ export function CommandPalette() {
             style={{ color: 'var(--theme-text)' }}
           />
           <span className="text-[10.5px] font-mono opacity-50" style={{ color: 'var(--theme-muted)' }}>
-            ⌘K
+            {MOD}K
           </span>
         </div>
 

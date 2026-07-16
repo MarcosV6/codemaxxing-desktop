@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { MOD } from '../../utils/platform'
 import { useAppStore } from '../../store/appStore'
 import {
   Terminal, ArrowRight, ArrowLeft, Check, KeyRound, Cpu, Globe, Users, CircleDollarSign,
@@ -259,7 +260,7 @@ export function OnboardingOverlay() {
 
               <div className="space-y-2">
                 {[
-                  { icon: Command, text: 'Press ⌘K anytime for the command palette — every action + workspace.' },
+                  { icon: Command, text: `Press ${MOD}K anytime for the command palette — every action + workspace.` },
                   { icon: Terminal, text: 'Type / in the message box for slash commands (/help, /local, /context…).' },
                   { icon: Globe, text: 'Open the Preview panel for a live browser the agent can drive.' },
                 ].map(({ icon: Icon, text }, i) => (

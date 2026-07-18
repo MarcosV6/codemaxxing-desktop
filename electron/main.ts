@@ -1232,6 +1232,28 @@ function setupIPC(): void {
     'o4-mini',
     'gpt-4o',
   ]
+
+  // ChatGPT-OAuth tokens can't call /v1/models, so the curated list above
+  // goes stale the day OpenAI ships something new. OpenRouter's PUBLIC
+  // catalog (no auth) tracks new OpenAI model ids within hours — use it to
+  // keep the picker current, newest first, with the curated list as both
+  // merge-tail and offline fallback. Cached for an hour.
+  let openaiCatalogCache: { at: number; ids: string[] } | null = null
+  const fetchOpenAICatalog = async (): Promise<string[]> => {
+    if (openaiCatalogCache && Date.now() - openaiCatalogCache.at < 3_600_000) return openaiCatalogCache.ids
+    const res = await fetch('https://openrouter.ai/api/v1/models', { signal: AbortSignal.timeout(4000) })
+    if (!res.ok) throw new Error(`openrouter catalog ${res.status}`)
+    const data = (await res.json()) as { data?: Array<{ id: string; created?: number }> }
+    const fresh = (data.data ?? [])
+      .filter((m) => typeof m.id === 'string' && m.id.startsWith('openai/'))
+      .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
+      .map((m) => m.id.slice('openai/'.length).split(':')[0])
+      // chat models only — drop audio/image/embedding/etc. side-catalog
+      .filter((id) => !/embed|whisper|tts|dall-e|moderation|audio|realtime|transcribe|image|search-preview/i.test(id))
+    const ids = [...new Set([...fresh, ...OPENAI_MODELS])]
+    openaiCatalogCache = { at: Date.now(), ids }
+    return ids
+  }
   const QWEN_MODELS = ['qwen-max', 'qwen-plus', 'qwen-turbo']
 
   ipcMain.handle('llm:listModels', async (_e, providerId: string) => {
@@ -1288,7 +1310,8 @@ function setupIPC(): void {
           (typeof cred.apiKey === 'string' && !cred.apiKey.startsWith('sk-') && !cred.apiKey.startsWith('sess-'))
         )
         if (isOAuthToken) {
-          return { ok: true, models: OPENAI_MODELS.map(m => ({ name: m, id: m })) }
+          const ids = await fetchOpenAICatalog().catch(() => OPENAI_MODELS)
+          return { ok: true, models: ids.map(m => ({ name: m, id: m })) }
         }
       }
 
@@ -1832,13 +1855,17 @@ function setupIPC(): void {
         baseUrl: cred?.baseUrl || route.baseUrl,
         apiKey: cred?.apiKey || 'not-needed',
         cwd: sess.cwd, systemPrompt, messages: history,
+        // Compaction must respect the backend's REAL window too — the
+        // summarize request sizes its input from this.
+        contextWindowCap: codexContextCap(sess.provider, cred),
       },
       {},
     )
     const compacted = await agent.compact(keepRecent ?? 6)
     sessions.deleteSession(sessionId) // fresh slate — then re-create with same id not trivial; alternative: replace messages
-    // Recreate session
-    const newId = sessions.createSession(sess.cwd, sess.provider, sess.model, sess.title || undefined)
+    // Recreate session — keep the MODE (compacting a chat/browser session
+    // must not fork it back into a code session).
+    const newId = sessions.createSession(sess.cwd, sess.provider, sess.model, sess.title || undefined, sess.mode)
     for (const m of compacted) sessions.saveMessage(newId, m)
     return { ok: true, newSessionId: newId, messageCount: compacted.length }
   })

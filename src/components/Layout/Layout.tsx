@@ -583,6 +583,23 @@ export function Layout() {
                             Active provider's section is rendered first so the
                             current model is at the top of the list. */}
                         <div className="max-h-[420px] overflow-y-auto pb-1">
+                          {/* Escape hatch for models newer than any list —
+                              the typed id is always usable on the current
+                              session's provider. */}
+                          {modelFilter.trim() && (
+                            <button
+                              onClick={async () => {
+                                await updateSessionModel(activeSession.id, activeSession.provider, modelFilter.trim())
+                                setModelPickerOpen(false)
+                                setModelFilter('')
+                              }}
+                              className="w-full text-left px-3 py-2 text-[12px] font-mono hover:bg-white/5 truncate"
+                              style={{ color: 'var(--theme-primary)' }}
+                              title={`Use this exact model id on ${activeSession.provider} even if it isn't listed`}
+                            >
+                              Use “{modelFilter.trim()}” on {activeSession.provider}
+                            </button>
+                          )}
                           {(() => {
                             const authed = providers.filter((p) => p.authed)
                             if (authed.length === 0) {

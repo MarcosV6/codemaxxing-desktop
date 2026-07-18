@@ -61,9 +61,21 @@ export function AssistantModelPicker() {
             />
           </div>
           <div className="max-h-[300px] overflow-y-auto py-1">
-            {models.length === 0 ? (
+            {/* Escape hatch for brand-new models the lists don't know yet:
+                whatever you typed is always usable as a model id. */}
+            {filter.trim() && !models.some((m) => m.name === filter.trim()) && (
+              <button
+                onClick={() => { void updateSessionModel(activeSession.id, activeSession.provider, filter.trim()); setOpen(false); setFilter('') }}
+                className="w-full text-left px-3 py-1.5 text-[11.5px] font-mono hover:bg-white/5 truncate"
+                style={{ color: 'var(--theme-primary)' }}
+                title="Use this exact model id even though it isn't in the list"
+              >
+                Use “{filter.trim()}”
+              </button>
+            )}
+            {models.length === 0 && !filter.trim() ? (
               <div className="px-3 py-3 text-[11.5px] opacity-60 text-center" style={{ color: 'var(--theme-muted)' }}>
-                No models for {activeSession.provider}
+                No models for {activeSession.provider} — type an id above
               </div>
             ) : models.map((m) => {
               const active = m.name === activeSession.model

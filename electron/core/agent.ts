@@ -660,33 +660,72 @@ export class CodingAgent {
     if (msgs.length <= keepRecent + 2) return msgs
     const toSummarize = msgs.slice(0, msgs.length - keepRecent)
     const recent = msgs.slice(msgs.length - keepRecent)
-    const summaryPrompt: ChatCompletionMessageParam = {
-      role: 'user',
-      content: `You are summarizing a prior conversation. Produce a compact bullet list of: (1) what the user asked, (2) what you did, (3) open questions and next steps. Be specific with file paths and decisions. Do NOT narrate. Under 400 words.\n\n--- Conversation to summarize ---\n${toSummarize.map(m => `[${m.role}] ${typeof m.content === 'string' ? m.content.slice(0, 800) : '[structured content]'}`).join('\n\n')}`,
+
+    // Budget the summarize INPUT to the model's REAL window. Without this a
+    // long history made the summarize request itself bigger than the window
+    // (fatal on the ~32k Codex backend — "Compact & retry" failed exactly
+    // when it was needed). ~55% of the window for input at ~4 chars/token.
+    try { await this.contextWindowReady } catch { /* static fallback is fine */ }
+    const budgetChars = Math.max(8_000, Math.floor(this.contextWindow * 0.55 * 4))
+    let convo = toSummarize
+      .map(m => `[${m.role}] ${typeof m.content === 'string' ? m.content.slice(0, 800) : '[structured content]'}`)
+      .join('\n\n')
+    if (convo.length > budgetChars) {
+      convo = '(earliest turns omitted to fit the model context)\n\n' + convo.slice(convo.length - budgetChars)
     }
-    const client = this.config.provider === 'openai'
-      ? new OpenAI({ apiKey: this.config.apiKey || 'not-needed', baseURL: this.config.baseUrl })
-      : null
-    let summary = '(summary unavailable)'
+    const instruction = `You are summarizing a prior conversation. Produce a compact bullet list of: (1) what the user asked, (2) what you did, (3) open questions and next steps. Be specific with file paths and decisions. Do NOT narrate. Under 400 words.\n\n--- Conversation to summarize ---\n${convo}`
+
+    let summary = ''
     try {
-      if (client) {
+      if (this.shouldUseResponsesAPIForCurrent()) {
+        // ChatGPT-OAuth (Codex backend) rejects raw chat/completions — the
+        // summarize call must ride the same Responses API as the main loop.
+        // Compaction was silently failing here before, leaving
+        // "(summary unavailable)" as the entire compacted history.
+        const r = await chatWithResponsesAPI({
+          baseUrl: this.config.baseUrl ?? '',
+          apiKey: this.config.apiKey,
+          model: this.config.model,
+          maxTokens: 1024,
+          systemPrompt: 'You compress conversation history.',
+          messages: [{ role: 'user', content: instruction }],
+          tools: [],
+        })
+        summary = (r.contentText || '').trim()
+      } else if (this.config.provider === 'openai') {
+        const client = new OpenAI({ apiKey: this.config.apiKey || 'not-needed', baseURL: this.config.baseUrl })
         const res = await client.chat.completions.create({
           model: this.config.model,
-          messages: [{ role: 'system', content: 'You compress conversation history.' }, summaryPrompt],
+          messages: [
+            { role: 'system', content: 'You compress conversation history.' },
+            { role: 'user', content: instruction },
+          ],
         })
-        summary = res.choices[0]?.message?.content ?? summary
+        summary = (res.choices[0]?.message?.content ?? '').trim()
       } else {
         const ant = new Anthropic({ apiKey: this.config.apiKey, baseURL: this.config.baseUrl })
         const res = await ant.messages.create({
           model: this.config.model,
           max_tokens: 1024,
           system: 'You compress conversation history.',
-          messages: [{ role: 'user', content: String(summaryPrompt.content) }],
+          messages: [{ role: 'user', content: instruction }],
         })
         const block = res.content?.[0]
-        if (block && block.type === 'text') summary = block.text
+        if (block && block.type === 'text') summary = block.text.trim()
       }
-    } catch { /* fallthrough */ }
+    } catch { /* fall through to the local digest */ }
+
+    if (!summary) {
+      // Model-free extractive digest — always better than losing the whole
+      // history to a "(summary unavailable)" placeholder.
+      const firstUser = toSummarize.find(m => m.role === 'user')
+      const firstAsk = firstUser && typeof firstUser.content === 'string' ? firstUser.content.slice(0, 400) : '(unknown)'
+      const tail = toSummarize.slice(-6)
+        .map(m => `- [${m.role}] ${typeof m.content === 'string' ? m.content.slice(0, 200) : '[structured content]'}`)
+        .join('\n')
+      summary = `(auto-digest — summarizer unavailable)\nOriginal request: ${firstAsk}\n\nMost recent turns before compaction:\n${tail}`
+    }
+
     const compactMessage: ChatCompletionMessageParam = {
       role: 'user', content: `[Context-compaction summary]\n${summary}`,
     }

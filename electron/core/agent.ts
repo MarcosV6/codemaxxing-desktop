@@ -25,6 +25,25 @@ import {
 /** Refresh OAuth tokens N ms before expiry (matches CLI behavior). */
 const OAUTH_REFRESH_SKEW_MS = 60_000
 
+/**
+ * Pick the split index for compaction so the kept tail NEVER starts with
+ * orphaned `role:'tool'` replies — providers reject histories where a tool
+ * message has no preceding assistant tool_calls (and compaction now fires
+ * automatically mid-run, so a naive fixed-count cut would land inside a
+ * tool-call pair sooner or later). Prefer sliding the cut forward (the whole
+ * pair falls into the summarized side); if that would empty the tail, slide
+ * backward to include the owning assistant message instead.
+ */
+export function cleanCompactCut(msgs: ChatCompletionMessageParam[], keepRecent: number): number {
+  let cut = Math.max(0, msgs.length - keepRecent)
+  let fwd = cut
+  while (fwd < msgs.length && msgs[fwd].role === 'tool') fwd++
+  if (fwd < msgs.length) return fwd
+  // Whole tail was tool replies (degenerate) — back up to their assistant.
+  while (cut > 0 && msgs[cut].role === 'tool') cut--
+  return cut
+}
+
 const EDIT_TOOLS = new Set(['write_file', 'edit_file', 'notebook_edit'])
 const SHELL_TOOLS = new Set(['run_command', 'run_background_command', 'kill_bash'])
 const GIT_WRITE_TOOLS = new Set(['git_commit'])
@@ -679,8 +698,9 @@ export class CodingAgent {
   async compact(keepRecent = 6): Promise<ChatCompletionMessageParam[]> {
     const msgs = this.config.messages
     if (msgs.length <= keepRecent + 2) return msgs
-    const toSummarize = msgs.slice(0, msgs.length - keepRecent)
-    const recent = msgs.slice(msgs.length - keepRecent)
+    const cut = cleanCompactCut(msgs, keepRecent)
+    const toSummarize = msgs.slice(0, cut)
+    const recent = msgs.slice(cut)
 
     // Budget the summarize INPUT to the model's REAL window. Without this a
     // long history made the summarize request itself bigger than the window

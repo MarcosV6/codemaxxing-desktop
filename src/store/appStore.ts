@@ -186,6 +186,8 @@ interface AppState {
   pendingMCPApproval: PendingMCPApproval | null
   /** Latest status per MCP server name ("connecting", "connected (N tools)", "error: …"). */
   mcpStatuses: Record<string, string>
+  /** A newer release exists on GitHub (notify-only updater — see GH issue #2). */
+  updateAvailable: { version: string; url: string } | null
   pendingAsk: PendingAsk | null
   pendingPlan: PendingPlan | null
 
@@ -594,6 +596,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   pendingApproval: null,
   pendingMCPApproval: null,
   mcpStatuses: {},
+  updateAvailable: null,
   pendingAsk: null,
   pendingPlan: null,
   skills: [],
@@ -860,6 +863,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         const s = get()
         if (!sessionId || sessionId !== s.activeSessionId) return
         if (!s.browserTabs.some((t) => t.sessionId === sessionId)) s.openBrowserPanel()
+      }))
+
+      sub(window.electron.updates.onAvailable((data) => {
+        set({ updateAvailable: data })
       }))
 
       sub(window.electron.mcp.onStatus(({ name, status }) => {

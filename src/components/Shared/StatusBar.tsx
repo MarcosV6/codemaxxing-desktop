@@ -111,6 +111,7 @@ export function StatusBar() {
   const activeSession = useAppStore((s) => s.activeSession)
   const isRunning = useAppStore((s) => s.isRunning)
   const mcpStatuses = useAppStore((s) => s.mcpStatuses)
+  const updateAvailable = useAppStore((s) => s.updateAvailable)
   const currentUsage = useAppStore((s) => s.currentUsage)
   const lastPromptTokens = useAppStore((s) => s.lastPromptTokens)
   const currentStats = useAppStore((s) => s.currentStats)
@@ -198,6 +199,19 @@ export function StatusBar() {
           <span className="font-mono opacity-60 whitespace-nowrap" title="Messages in this session">
             {messageCount} msg{messageCount === 1 ? '' : 's'}
           </span>
+        )}
+
+        {/* Update chip — the notify-only updater (ad-hoc signing blocks real
+            auto-update on macOS; see GH issue #2). Click → release page. */}
+        {updateAvailable && (
+          <button
+            onClick={() => window.open(updateAvailable.url)}
+            className="flex items-center gap-1 px-1.5 rounded font-mono whitespace-nowrap hover:bg-white/10 transition-colors"
+            style={{ color: 'var(--theme-primary)', backgroundColor: 'color-mix(in srgb, var(--theme-primary) 12%, transparent)' }}
+            title={`Version ${updateAvailable.version} is available — click to download`}
+          >
+            ↑ update v{updateAvailable.version}
+          </button>
         )}
 
         {/* MCP servers — one compact chip per server so "did Unity connect?"

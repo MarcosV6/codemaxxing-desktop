@@ -181,6 +181,10 @@ contextBridge.exposeInMainWorld('electron', {
   },
 
   // ── MCP ──
+  updates: {
+    onAvailable: (cb: (data: { version: string; url: string }) => void) => on('update:available', cb),
+  },
+
   mcp: {
     approvalResponse: (token: string, decision: boolean) =>
       ipcRenderer.send('mcp:approvalResponse', token, decision),

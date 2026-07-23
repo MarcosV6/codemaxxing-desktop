@@ -368,6 +368,7 @@ export function installBrowserMock(): void {
       onError: onAgentEvent('error'),
     },
 
+    updates: { onAvailable: noop },
     mcp: { approvalResponse: () => {}, onStatus: noop, onApprovalRequest: noop },
 
     auth: {

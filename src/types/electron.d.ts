@@ -238,6 +238,9 @@ export interface ElectronAPI {
   }
 
   // MCP
+  updates: {
+    onAvailable: (cb: (data: { version: string; url: string }) => void) => () => void
+  }
   mcp: {
     approvalResponse: (token: string, decision: boolean) => void
     onStatus: (cb: (data: { name: string; status: string }) => void) => () => void

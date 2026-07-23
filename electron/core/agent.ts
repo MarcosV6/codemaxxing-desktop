@@ -469,6 +469,27 @@ export class CodingAgent {
       // before each iteration since long sessions can outlive token TTLs.
       await this.maybeRefreshOAuth()
 
+      // Mid-run context guard. Tool results can balloon the history past the
+      // window WITHIN one run — the renderer's auto-compact pre-flight only
+      // runs before a user message, so long agent runs died with provider
+      // context errors (fatal at the ~32k Codex ceiling). Estimate ~4 chars/
+      // token and compact in place at 80% fill; the summary keeps the run
+      // coherent and the loop continues on the compacted history.
+      if (messages.length > 10) {
+        try { await this.contextWindowReady } catch { /* static is fine */ }
+        const approxTokens = JSON.stringify(messages).length / 4
+        if (approxTokens > this.contextWindow * 0.8) {
+          // The loop works on a COPY of config.messages — hand the live
+          // history to compact(), then splice the compacted result back into
+          // the same array the loop is iterating with.
+          this.config.messages = messages
+          const compacted = await this.compact(8)
+          messages.length = 0
+          messages.push(...compacted)
+          this.events.onText?.('\n\n*(auto-compacted mid-run to stay within the model context window)*\n\n')
+        }
+      }
+
       let assistantText = ''
       let toolCalls: ChatCompletionMessageToolCall[] = []
 

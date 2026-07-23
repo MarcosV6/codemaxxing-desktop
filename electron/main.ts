@@ -319,6 +319,12 @@ const MODEL_COSTS: Record<string, { input: number; output: number }> = {
   'claude-opus-4-6': { input: 15 / 1e6, output: 75 / 1e6 },
   'claude-sonnet-4-6': { input: 3 / 1e6, output: 15 / 1e6 },
   'claude-haiku-4-5-20251001': { input: 1 / 1e6, output: 5 / 1e6 },
+  // Family-tier fallbacks (substring-matched LAST) so newly shipped models
+  // don't show $0 forever — approximate until exact pricing is added.
+  'claude-fable': { input: 25 / 1e6, output: 125 / 1e6 },
+  'claude-opus': { input: 15 / 1e6, output: 75 / 1e6 },
+  'claude-sonnet': { input: 3 / 1e6, output: 15 / 1e6 },
+  'claude-haiku': { input: 1 / 1e6, output: 5 / 1e6 },
   'gpt-5.5-pro': { input: 30 / 1e6, output: 90 / 1e6 },
   'gpt-5.5': { input: 10 / 1e6, output: 30 / 1e6 },
   'gpt-5.4-pro': { input: 30 / 1e6, output: 90 / 1e6 },
@@ -430,6 +436,34 @@ app.whenReady().then(() => {
       cron.markRun(task.id, `error: ${err?.message ?? String(err)}`)
     })
   })
+
+  // ── Update check (notify-only) ── GH issue #2: there was NO updater at
+  // all, so users sat on old versions with "no prompt, no error, nothing".
+  // Real auto-update on macOS additionally needs a Developer ID (Squirrel
+  // silently refuses to apply updates to ad-hoc-signed apps), so until the
+  // app is signed we check GitHub's latest release and surface a chip that
+  // links to the download. On launch + every 6 hours.
+  const cmpSemver = (a: string, b: string): number => {
+    const pa = a.split('.').map(Number); const pb = b.split('.').map(Number)
+    for (let i = 0; i < 3; i++) { const d = (pa[i] ?? 0) - (pb[i] ?? 0); if (d !== 0) return d }
+    return 0
+  }
+  const checkForUpdate = async () => {
+    try {
+      const res = await fetch('https://api.github.com/repos/MarcosV6/codemaxxing-desktop/releases/latest', {
+        signal: AbortSignal.timeout(6000),
+        headers: { 'user-agent': 'codemaxxing-desktop' },
+      })
+      if (!res.ok) return
+      const rel = (await res.json()) as { tag_name?: string; html_url?: string }
+      const latest = (rel.tag_name ?? '').replace(/^v/, '')
+      if (latest && cmpSemver(latest, app.getVersion()) > 0) {
+        emit('update:available', { version: latest, url: rel.html_url ?? 'https://github.com/MarcosV6/codemaxxing-desktop/releases/latest' })
+      }
+    } catch { /* offline is fine — try again next interval */ }
+  }
+  setTimeout(() => void checkForUpdate(), 5_000)
+  setInterval(() => void checkForUpdate(), 6 * 3_600_000)
 })
 
 app.on('before-quit', () => {
@@ -1214,6 +1248,9 @@ function setupIPC(): void {
   // doesn't return the current frontier model set; Qwen's listing is noisy).
   // These are kept in sync with ~/Projects/codemaxxing/src/index.tsx.
   const CLAUDE_MODELS = [
+    'claude-fable-5',          // Claude 5 generation
+    'claude-sonnet-5',
+    'claude-opus-4-8',
     'claude-opus-4-7',         // released 2026-04-16
     'claude-opus-4-6',
     'claude-sonnet-4-6',       // released 2026-02-17
@@ -1233,33 +1270,44 @@ function setupIPC(): void {
     'gpt-4o',
   ]
 
-  // ChatGPT-OAuth tokens can't call /v1/models, so the curated list above
-  // goes stale the day OpenAI ships something new. OpenRouter's PUBLIC
-  // catalog (no auth) tracks new OpenAI model ids within hours — use it to
-  // keep the picker current, newest first, with the curated list as both
-  // merge-tail and offline fallback. Cached for an hour.
-  let openaiCatalogCache: { at: number; ids: string[] } | null = null
-  const fetchOpenAICatalog = async (): Promise<string[]> => {
-    if (openaiCatalogCache && Date.now() - openaiCatalogCache.at < 3_600_000) return openaiCatalogCache.ids
+  // OAuth tokens can't call the providers' model-list endpoints, so curated
+  // lists go stale the day something new ships (this bit twice: gpt-5.6 and
+  // the Claude 5 generation). OpenRouter's PUBLIC catalog (no auth) tracks
+  // new model ids within hours — use it to keep pickers current, newest
+  // first, with the curated list as merge-tail and offline fallback. 1h cache.
+  const catalogCache = new Map<string, { at: number; ids: string[] }>()
+  const fetchProviderCatalog = async (
+    prefix: string,
+    fallback: string[],
+    normalize: (id: string) => string = (s) => s,
+  ): Promise<string[]> => {
+    const hit = catalogCache.get(prefix)
+    if (hit && Date.now() - hit.at < 3_600_000) return hit.ids
     const res = await fetch('https://openrouter.ai/api/v1/models', { signal: AbortSignal.timeout(4000) })
     if (!res.ok) throw new Error(`openrouter catalog ${res.status}`)
     const data = (await res.json()) as { data?: Array<{ id: string; created?: number }> }
     const fresh = (data.data ?? [])
-      .filter((m) => typeof m.id === 'string' && m.id.startsWith('openai/'))
+      .filter((m) => typeof m.id === 'string' && m.id.startsWith(prefix))
       .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
-      .map((m) => m.id.slice('openai/'.length).split(':')[0])
+      .map((m) => normalize(m.id.slice(prefix.length).split(':')[0]))
       // chat models only — drop audio/image/embedding/etc. side-catalog
       .filter((id) => !/embed|whisper|tts|dall-e|moderation|audio|realtime|transcribe|image|search-preview/i.test(id))
-    const ids = [...new Set([...fresh, ...OPENAI_MODELS])]
-    openaiCatalogCache = { at: Date.now(), ids }
+    const ids = [...new Set([...fresh, ...fallback])]
+    catalogCache.set(prefix, { at: Date.now(), ids })
     return ids
   }
+  // Anthropic API ids use dashes in version numbers (claude-opus-4-8);
+  // OpenRouter lists them with dots (claude-opus-4.8).
+  const anthropicId = (id: string) => id.replace(/(\d)\.(\d)/g, '$1-$2')
   const QWEN_MODELS = ['qwen-max', 'qwen-plus', 'qwen-turbo']
 
   ipcMain.handle('llm:listModels', async (_e, providerId: string) => {
     try {
       if (providerId === 'anthropic') {
-        return { ok: true, models: CLAUDE_MODELS.map(m => ({ name: m, id: m })) }
+        // Live catalog with dot→dash id normalization — the hardcoded list
+        // was a full generation stale (missing Claude 5 / Opus 4.8).
+        const ids = await fetchProviderCatalog('anthropic/', CLAUDE_MODELS, anthropicId).catch(() => CLAUDE_MODELS)
+        return { ok: true, models: ids.map(m => ({ name: m, id: m })) }
       }
 
       const cred = await getFreshCredential(providerId)
@@ -1310,7 +1358,7 @@ function setupIPC(): void {
           (typeof cred.apiKey === 'string' && !cred.apiKey.startsWith('sk-') && !cred.apiKey.startsWith('sess-'))
         )
         if (isOAuthToken) {
-          const ids = await fetchOpenAICatalog().catch(() => OPENAI_MODELS)
+          const ids = await fetchProviderCatalog('openai/', OPENAI_MODELS).catch(() => OPENAI_MODELS)
           return { ok: true, models: ids.map(m => ({ name: m, id: m })) }
         }
       }

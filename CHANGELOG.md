@@ -6,6 +6,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [1.3.9] — 2026-07-24
+
+### Fixed
+
+- Terminate the complete Xvfb/Electron process group after the Linux packaged
+  launch smoke window, preventing an otherwise successful CI smoke test from
+  waiting indefinitely on child processes.
+
 ## [1.3.8] — 2026-07-24
 
 ### Fixed
@@ -79,7 +87,8 @@ First public release. macOS arm64 zip ships from GitHub Releases; Windows + Linu
 - Cosmetic: traffic-light padding in the renderer is currently macOS-tuned. Windows/Linux users see a small gap on the top-left of the sidebar header. Tracked in [WINDOWS_RELEASE.md](WINDOWS_RELEASE.md).
 - macOS may suspend the agent loop on battery when the lid is closed — `powerSaveBlocker` prevents app suspension but not system sleep.
 
-[Unreleased]: https://github.com/MarcosV6/codemaxxing-desktop/compare/v1.3.8...HEAD
+[Unreleased]: https://github.com/MarcosV6/codemaxxing-desktop/compare/v1.3.9...HEAD
+[1.3.9]: https://github.com/MarcosV6/codemaxxing-desktop/compare/v1.3.8...v1.3.9
 [1.3.8]: https://github.com/MarcosV6/codemaxxing-desktop/compare/v1.3.7...v1.3.8
 [1.3.7]: https://github.com/MarcosV6/codemaxxing-desktop/compare/v1.3.6...v1.3.7
 [1.0.0]: https://github.com/MarcosV6/codemaxxing-desktop/releases/tag/v1.0.0

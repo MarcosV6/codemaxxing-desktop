@@ -1,7 +1,7 @@
 name: Release
 
 # Builds installers for every supported platform and attaches them to the
-# GitHub Release for the pushed tag. Push a tag like `v1.3.8` to trigger.
+# GitHub Release for the pushed tag. Push a tag like `v1.3.9` to trigger.
 # `workflow_dispatch` lets you exercise the build matrix without releasing.
 
 on:

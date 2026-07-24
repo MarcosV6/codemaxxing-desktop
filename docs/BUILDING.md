@@ -197,7 +197,7 @@ gh auth login
 
 # Add to an existing release (replace the example tag and filenames)
 cd codemaxxing-desktop
-gh release upload v1.3.8 release/<file-1> release/<file-2> --repo MarcosV6/codemaxxing-desktop
+gh release upload v1.3.9 release/<file-1> release/<file-2> --repo MarcosV6/codemaxxing-desktop
 ```
 
 If you'd rather use the web UI, open the matching entry under GitHub
@@ -209,7 +209,7 @@ CI builds every platform for you. Two workflows live in [`.github/workflows`](..
 
 - **`ci.yml`** — runs typecheck, lint, and unit tests on native macOS, Windows,
   and Linux runners for every push/PR to `main`.
-- **`release.yml`** — runs when you push a tag like `v1.3.8`. It packages in
+- **`release.yml`** — runs when you push a tag like `v1.3.9`. It packages in
   parallel on macOS arm64, Windows x64, and Linux x64 runners, then attaches
   all installers and `SHA256SUMS.txt` to the GitHub Release. No release is
   published if any platform build fails.
@@ -218,8 +218,8 @@ CI builds every platform for you. Two workflows live in [`.github/workflows`](..
 
 ```bash
 # bump "version" in package.json first, commit, then use the same version:
-git tag v1.3.8
-git push origin v1.3.8
+git tag v1.3.9
+git push origin v1.3.9
 ```
 
 Watch it under the repo's **Actions** tab. When the matrix finishes, the **Publish GitHub Release** job creates/updates the release and uploads:

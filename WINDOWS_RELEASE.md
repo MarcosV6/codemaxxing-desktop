@@ -130,7 +130,7 @@ Fusion) to copy the artifact into.
 
 The checked-in `.github/workflows/release.yml` builds macOS arm64, Windows
 x64, and Linux x64 on native runners. Push a version tag matching
-`package.json` (for example `v1.3.8`) to package all three platforms and attach
+`package.json` (for example `v1.3.9`) to package all three platforms and attach
 the assets plus checksums to the GitHub Release. A failure on any platform
 prevents publication.
 

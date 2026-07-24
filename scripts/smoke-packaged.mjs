@@ -49,6 +49,9 @@ const command = platform === 'linux' ? 'xvfb-run' : executable
 const args = platform === 'linux' ? ['-a', executable, '--no-sandbox'] : []
 const output = []
 const child = spawn(command, args, {
+  // xvfb-run starts both Xvfb and Electron. Give the wrapper its own process
+  // group so cleanup can terminate the entire tree after the healthy window.
+  detached: platform === 'linux',
   env: { ...process.env, ELECTRON_ENABLE_LOGGING: '1' },
   stdio: ['ignore', 'pipe', 'pipe'],
 })
@@ -74,12 +77,21 @@ if (result.early) {
   process.exit(1)
 }
 
-child.kill('SIGTERM')
+const stopChildTree = (signal) => {
+  try {
+    if (platform === 'linux' && child.pid) process.kill(-child.pid, signal)
+    else child.kill(signal)
+  } catch {
+    child.kill(signal)
+  }
+}
+
+stopChildTree('SIGTERM')
 await Promise.race([
   exitResult,
   new Promise((resolveWait) => setTimeout(resolveWait, 5_000)),
 ])
-if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+if (child.exitCode === null && child.signalCode === null) stopChildTree('SIGKILL')
 
 process.stdout.write(output.join(''))
 console.log(`Packaged launch smoke passed: ${platform} ${arch}`)

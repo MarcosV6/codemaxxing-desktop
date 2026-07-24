@@ -9,16 +9,18 @@ import {
   realpathSync,
 } from 'fs'
 import { homedir } from 'os'
-import { join, relative, dirname, resolve, extname } from 'path'
+import { join, relative, dirname, resolve, extname, isAbsolute } from 'path'
 import type { ChatCompletionTool } from 'openai/resources/chat/completions'
 import * as memoryStore from './memory.js'
 import * as bg from './backgroundCommands.js'
 import * as gitOps from './git.js'
 
 function isInsideRoot(resolved: string, root: string): boolean {
-  if (resolved === root) return true
-  if (resolved.startsWith(root + '/')) return true
-  if (process.platform === 'win32' && resolved.startsWith(root + '\\')) return true
+  const candidate = process.platform === 'win32' ? resolved.toLowerCase() : resolved
+  const projectRoot = process.platform === 'win32' ? root.toLowerCase() : root
+  if (candidate === projectRoot) return true
+  if (candidate.startsWith(projectRoot + '/')) return true
+  if (process.platform === 'win32' && candidate.startsWith(projectRoot + '\\')) return true
   return false
 }
 
@@ -988,7 +990,7 @@ export async function executeTool(
     case 'view_image': {
       try {
         const userPath = String(args.path ?? '')
-        const filePath = userPath.startsWith('/') ? userPath : safePath(cwd, userPath)
+        const filePath = isAbsolute(userPath) ? userPath : safePath(cwd, userPath)
         if (!filePath) return pathError(userPath)
         if (!existsSync(filePath)) return `Error: Image not found: ${userPath}`
         const ext = extname(filePath).toLowerCase()
@@ -1204,7 +1206,7 @@ export async function executeTool(
         const pattern = String(args.pattern ?? '')
         const baseDir = safePath(cwd, (args.path as string) || '.') || cwd
         const matches = fsGlobSync(pattern, { cwd: baseDir })
-          .map((f: string) => relative(cwd, join(baseDir, f)))
+          .map((f: string) => relative(cwd, join(baseDir, f)).replace(/\\/g, '/'))
           .filter((f: string) => !IGNORE_DIRS.some(d => f.startsWith(d + '/') || f.includes('/' + d + '/')))
           .sort()
         if (matches.length === 0) return `No files matching: ${pattern}`

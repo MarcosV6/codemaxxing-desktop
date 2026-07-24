@@ -1,12 +1,13 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react'
 import { useAppStore } from '../../store/appStore'
-import { BrowserTabView } from './BrowserTabView'
+import { BrowserTabView, type BrowserWebview } from './BrowserTabView'
 import { BrowserSpaces } from './BrowserSpaces'
 import { BrowserAssistant } from './BrowserAssistant'
 import { NewTabPage } from './NewTabPage'
 import { SiteIcon } from './SiteIcon'
 import { useBrowserSpaces } from './useBrowserSpaces'
-import { useResizablePanel, ResizeHandle } from '../Shared/Resizable'
+import { ResizeHandle } from '../Shared/Resizable'
+import { useResizablePanel } from '../Shared/useResizablePanel'
 import { PAD_TRAFFIC_80 } from '../../utils/platform'
 import {
   ArrowLeft, Plus, ChevronLeft, ChevronRight, RotateCw, X, Search, Globe, Loader2,
@@ -67,8 +68,7 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
     })
   }, [])
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const els = useRef(new Map<string, any>())
+  const els = useRef(new Map<string, BrowserWebview>())
   const domReady = useRef(new Set<string>())
   const activeIdRef = useRef(activeId)
   useEffect(() => { activeIdRef.current = activeId }, [activeId])
@@ -92,8 +92,7 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
 
   const getActiveEl = () => (activeIdRef.current ? els.current.get(activeIdRef.current) : undefined)
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const registerEl = useCallback((id: string, el: any | null) => {
+  const registerEl = useCallback((id: string, el: BrowserWebview | null) => {
     if (el) els.current.set(id, el)
     else { els.current.delete(id); domReady.current.delete(id) }
   }, [])
@@ -154,14 +153,12 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
     }
     // Wait for a navigation that an action (e.g. type+submit) may trigger —
     // resolves on the next did-stop-loading or after a short timeout.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const waitForSettle = (wv: any, ms: number) => new Promise<void>((resolve) => {
+    const waitForSettle = (wv: BrowserWebview, ms: number) => new Promise<void>((resolve) => {
       const done = () => { wv.removeEventListener('did-stop-loading', done); clearTimeout(t); resolve() }
       const t = setTimeout(() => { wv.removeEventListener('did-stop-loading', done); resolve() }, ms)
       wv.addEventListener('did-stop-loading', done)
     })
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const loadAndWait = (wv: any, target: string) => new Promise<void>((resolve) => {
+    const loadAndWait = (wv: BrowserWebview, target: string) => new Promise<void>((resolve) => {
       const done = () => {
         wv.removeEventListener('did-stop-loading', done)
         wv.removeEventListener('did-fail-load', done)

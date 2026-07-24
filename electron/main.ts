@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, clipboard, powerSaveBlocker, Tray, Menu, nativeImage } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell, clipboard, powerSaveBlocker, Tray, Menu, nativeImage, session as electronSession } from 'electron'
 import dns from 'node:dns'
 
 // Prefer IPv4 when resolving hostnames. Node 22 / undici default to IPv6
@@ -21,7 +21,7 @@ import {
   localAddresses, type RemoteServerHandle,
 } from './core/remoteServer'
 import { join, dirname, basename, relative, extname } from 'path'
-import { fileURLToPath } from 'url'
+import { fileURLToPath, pathToFileURL } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { existsSync, readFileSync, mkdirSync, writeFileSync, readdirSync, statSync, renameSync, unlinkSync } from 'fs'
 import { homedir, totalmem, cpus } from 'os'
@@ -62,7 +62,6 @@ let appQuitting = false
 let tray: Tray | null = null
 let powerSaveBlockerId: number | null = null
 let remoteServer: RemoteServerHandle | null = null
-let isQuitting = false
 
 // ── In-flight agent runs ──
 interface ActiveRun {
@@ -119,16 +118,6 @@ interface PairedDevice {
   token: string      // Long-lived bearer; presented as `Authorization: Bearer <token>`
   createdAt: number  // Pairing time, unix ms
   lastSeenAt: number | null  // Updated by the auth middleware on every authed call
-}
-
-/** A short-lived code presented by the desktop, redeemed by the client to
- *  obtain a permanent per-device token. Codes self-expire so a code shoulder-
- *  surfed off the screen 10 minutes ago can't be redeemed. One pairing code
- *  is good for one device; the desktop generates a new one for each pair. */
-interface PendingPairing {
-  code: string       // 6-char URL-safe (avoids ambiguous 0/O 1/l etc.)
-  createdAt: number
-  expiresAt: number  // Hard cutoff: 5 minutes from creation by default
 }
 
 interface RemoteAccessConfig {
@@ -341,7 +330,32 @@ function estimateCost(model: string, promptT: number, completionT: number): numb
 }
 
 // ── Window ──
+const EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:'])
+
+function safeExternalUrl(raw: string): string | null {
+  try {
+    const parsed = new URL(raw)
+    return EXTERNAL_PROTOCOLS.has(parsed.protocol) ? parsed.toString() : null
+  } catch {
+    return null
+  }
+}
+
+function openExternalSafely(raw: string): boolean {
+  const safe = safeExternalUrl(raw)
+  if (!safe) return false
+  void shell.openExternal(safe)
+  return true
+}
+
 function createWindow(): void {
+  // The built-in browser intentionally renders arbitrary sites, but those
+  // sites never need OS permissions. Deny camera/mic/location/notifications
+  // (and future permission types) by default in its isolated partition.
+  const browserSession = electronSession.fromPartition('persist:cmx-browser')
+  browserSession.setPermissionCheckHandler(() => false)
+  browserSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
+
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 840,
@@ -349,8 +363,15 @@ function createWindow(): void {
     minHeight: 600,
     show: false,
     autoHideMenuBar: true,
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 18, y: 18 },
+    // Keep the custom inset title bar only where macOS traffic lights exist.
+    // Windows and Linux retain their native title bars, window controls,
+    // snapping, and task-switcher behavior.
+    ...(process.platform === 'darwin'
+      ? {
+          titleBarStyle: 'hiddenInset' as const,
+          trafficLightPosition: { x: 18, y: 18 },
+        }
+      : {}),
     backgroundColor: '#1a1814',
     webPreferences: {
       // .cjs (not .js) — package.json `"type": "module"` would force ESM
@@ -406,8 +427,48 @@ function createWindow(): void {
   mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
     console.error('[did-fail-load]', code, desc, url)
   })
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' } })
   const devUrl = process.env['ELECTRON_RENDERER_URL'] || (is.dev ? 'http://localhost:5173' : null)
+  const trustedRendererUrl = devUrl
+    ? new URL(devUrl)
+    : new URL(pathToFileURL(join(__dirname, '../dist/index.html')).toString())
+  const isTrustedRendererNavigation = (raw: string): boolean => {
+    try {
+      const target = new URL(raw)
+      if (devUrl) return target.origin === trustedRendererUrl.origin
+      return target.protocol === 'file:' && target.pathname === trustedRendererUrl.pathname
+    } catch {
+      return false
+    }
+  }
+
+  // Never let a normal link replace the privileged app shell with a remote
+  // page. The preload runs on every top-level navigation, so failing closed
+  // here is a critical part of the renderer/main trust boundary.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (isTrustedRendererNavigation(url)) return
+    event.preventDefault()
+    openExternalSafely(url)
+  })
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    openExternalSafely(url)
+    return { action: 'deny' }
+  })
+  mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+    const initialUrl = params.src || 'about:blank'
+    const protocol = (() => {
+      try { return new URL(initialUrl).protocol } catch { return '' }
+    })()
+    if (initialUrl !== 'about:blank' && protocol !== 'http:' && protocol !== 'https:') {
+      event.preventDefault()
+      return
+    }
+    delete webPreferences.preload
+    webPreferences.nodeIntegration = false
+    webPreferences.nodeIntegrationInWorker = false
+    webPreferences.contextIsolation = true
+    webPreferences.sandbox = true
+    webPreferences.webSecurity = true
+  })
   if (devUrl) {
     mainWindow.loadURL(devUrl)
   } else {
@@ -467,7 +528,6 @@ app.whenReady().then(() => {
 })
 
 app.on('before-quit', () => {
-  isQuitting = true
   appQuitting = true
   shutdownAllRuntime('before-quit')
   void mcp.disconnectAll().catch(() => {}) // kill spawned MCP server processes
@@ -1090,7 +1150,6 @@ async function emailOp(op: { action: 'read' | 'send'; to?: string; subject?: str
   if (!a) return { ok: false, error: 'No email account configured (set one up in the Email workspace).' }
   if (!op.to) return { ok: false, error: "email_send needs a recipient ('to')." }
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const nm: any = await import('nodemailer')
     const createTransport = nm.createTransport || nm.default?.createTransport
     const smtpAuth = a.authType === 'google'
@@ -1143,10 +1202,9 @@ async function calendarOp(op: { action: 'list' | 'add'; summary?: string; start?
     } catch (err: unknown) { return { ok: false, error: auth.scrubSecrets((err as Error)?.message ?? String(err)) } }
   }
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const dav: any = await import('tsdav')
     const createDAVClient = dav.createDAVClient || dav.default?.createDAVClient
-    const client: any = await createDAVClient({ serverUrl: a.url, credentials: { username: a.username, password: a.password }, authMethod: 'Basic', defaultAccountType: 'caldav' }) // eslint-disable-line @typescript-eslint/no-explicit-any
+    const client: any = await createDAVClient({ serverUrl: a.url, credentials: { username: a.username, password: a.password }, authMethod: 'Basic', defaultAccountType: 'caldav' })
     const calendars: unknown[] = await client.fetchCalendars()
     const cal = calendars[0]
     if (!cal) return { ok: false, error: 'No calendar found on the server.' }
@@ -1219,16 +1277,9 @@ function setupIPC(): void {
     // Only allow well-known web/mail schemes. Without this, a renderer that
     // got XSS'd by an OAuth response could call this IPC with `file://` or
     // a custom protocol and trigger arbitrary handlers via the OS.
-    try {
-      const parsed = new URL(url)
-      const allowed = new Set(['http:', 'https:', 'mailto:'])
-      if (!allowed.has(parsed.protocol)) {
-        return { ok: false, error: `Refusing to open URL with scheme ${parsed.protocol}` }
-      }
-    } catch {
-      return { ok: false, error: 'Invalid URL' }
-    }
-    await shell.openExternal(url)
+    const safe = safeExternalUrl(url)
+    if (!safe) return { ok: false, error: 'Only http, https, and mailto URLs can be opened' }
+    await shell.openExternal(safe)
     return { ok: true }
   })
   ipcMain.handle('shell:showItemInFolder', async (_e, p: string) => { await shell.showItemInFolder(p) })

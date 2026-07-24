@@ -39,6 +39,7 @@
  */
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import { bodyLimit } from 'hono/body-limit'
 import { streamSSE } from 'hono/streaming'
 import { serve } from '@hono/node-server'
 import type { ServerType } from '@hono/node-server'
@@ -190,6 +191,13 @@ export async function startRemoteServer(opts: StartRemoteServerOpts): Promise<Re
   const { port, bus, handlers } = opts
   const app = new Hono()
 
+  // Bound unauthenticated parsing work as well as authenticated prompts.
+  // The current Hono release enforces this for fixed and chunked bodies.
+  app.use('*', bodyLimit({
+    maxSize: 1024 * 1024,
+    onError: (c) => c.json({ ok: false, error: 'request body exceeds 1 MB' }, 413),
+  }))
+
   // CORS open — the auth token is the security boundary, not the Origin
   // header. Native phone apps don't send Origin anyway, and a future PWA /
   // browser-based client needs full CORS.
@@ -246,7 +254,19 @@ export async function startRemoteServer(opts: StartRemoteServerOpts): Promise<Re
   //      a code the desktop generated) and returns a permanent per-device
   //      token. The code is then atomically consumed — single-use only.
   //   4. Client persists token; subsequent calls use it as Bearer.
+  const failedPairingAttempts: number[] = []
+  const pairingWindowMs = 60_000
+  const maxFailedPairingAttempts = 20
+
   app.post('/api/pair', async (c) => {
+    const now = Date.now()
+    while (failedPairingAttempts.length > 0 && failedPairingAttempts[0] <= now - pairingWindowMs) {
+      failedPairingAttempts.shift()
+    }
+    if (failedPairingAttempts.length >= maxFailedPairingAttempts) {
+      c.header('Retry-After', '60')
+      return c.json({ ok: false, error: 'too many pairing attempts; try again in a minute' }, 429)
+    }
     const body = await c.req.json().catch(() => ({})) as {
       code?: string
       label?: string
@@ -262,7 +282,11 @@ export async function startRemoteServer(opts: StartRemoteServerOpts): Promise<Re
         : 'unknown'
     )
     const result = handlers.redeemPairing(body.code.toUpperCase(), label, platform)
-    if (!result.ok) return c.json({ ok: false, error: result.error }, 400)
+    if (!result.ok) {
+      failedPairingAttempts.push(now)
+      return c.json({ ok: false, error: result.error }, 400)
+    }
+    failedPairingAttempts.length = 0
     return c.json({
       ok: true,
       // Echo back the device record minus the token (the client already has
@@ -375,16 +399,18 @@ export async function startRemoteServer(opts: StartRemoteServerOpts): Promise<Re
   // Bind to 0.0.0.0 so any LAN client (phone on the same Wi-Fi, work laptop,
   // etc.) can reach the desktop. Loopback-only would defeat the point.
   let server: ServerType | null = null
+  let boundPort = port
   await new Promise<void>((resolve, reject) => {
     server = serve({ fetch: app.fetch, port, hostname: '0.0.0.0' }, (info) => {
       if (!info) return reject(new Error('serve callback received no info'))
+      boundPort = info.port
       resolve()
     })
   })
 
   return {
-    port,
-    addresses: () => localAddresses(port),
+    port: boundPort,
+    addresses: () => localAddresses(boundPort),
     stop: async () => {
       if (!server) return
       await new Promise<void>((resolve) => {

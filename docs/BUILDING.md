@@ -2,7 +2,7 @@
 
 Step-by-step for macOS, Windows, and Linux. If you're testing the project for a friend or contributing a fix, this is the right doc.
 
-> **Common to all platforms:** Node.js 18+, npm 9+, git. Electron's renderer needs ~2GB of free disk for `node_modules` and the build outputs. The whole flow is `clone → install → build` and takes 5-15 minutes depending on your machine.
+> **Common to all platforms:** Node.js 22+, npm 10+, git. Electron's renderer needs ~2GB of free disk for `node_modules` and the build outputs. The whole flow is `clone → install → build` and takes 5-15 minutes depending on your machine.
 
 ## macOS
 
@@ -19,13 +19,16 @@ npm install                     # postinstall rebuilds better-sqlite3 for Electr
 npm run electron:build:mac      # produces release/*.zip and (if gettext is installed) *.dmg
 ```
 
-**Output:** `release/Codemaxxing-<version>-arm64-mac.zip` (Apple Silicon) and `release/Codemaxxing-<version>-mac.zip` (Intel).
+**Output:** a package for the current Mac architecture:
+`release/Codemaxxing-<version>-arm64-mac.zip` on Apple Silicon or
+`release/Codemaxxing-<version>-mac.zip` on Intel.
 
 **Known wrinkle:** the DMG target needs Homebrew's `gettext` installed (`brew install gettext`). If it's missing, the DMG step fails but the zip succeeds — which is fine for testing.
 
 ## Windows
 
-Tested on Windows 10 and 11, x64. arm64 should work but is less battle-tested.
+The official beta target is Windows 10 and 11 on x64. ARM64 is not yet part of
+the native release gate.
 
 ### 1. Prereqs
 
@@ -49,8 +52,8 @@ After that, **close and reopen your terminal** so PATH picks up the new tools.
 Verify:
 
 ```powershell
-node --version          # Should be v18 or higher
-npm --version           # 9+
+node --version          # Should be v22 or higher
+npm --version           # 10+
 git --version
 ```
 
@@ -69,14 +72,15 @@ The first `npm install` takes longer than on macOS because `electron-rebuild` ma
 
 Files appear in `release\`:
 
-- `Codemaxxing Setup <version>.exe` — NSIS installer (the friendly one)
+- `Codemaxxing.Setup.<version>.exe` — NSIS installer (the friendly one)
 - `Codemaxxing-<version>-win.zip` — portable zip (extract anywhere, run `Codemaxxing.exe`)
 
-Both x64 and arm64 builds if your machine can produce both.
+The default command builds for the current machine architecture. Official beta
+releases currently publish the x64 build.
 
 ### 4. Test the install
 
-Run `Codemaxxing Setup <version>.exe`. You'll see **"Windows protected your PC"** — same situation as macOS without a Developer ID. Click **More info** → **Run anyway**.
+Run `Codemaxxing.Setup.<version>.exe`. You'll see **"Windows protected your PC"** — same situation as macOS without a Developer ID. Click **More info** → **Run anyway**.
 
 Once installed, the app launches normally. SmartScreen only nags on first run.
 
@@ -87,7 +91,7 @@ Once installed, the app launches normally. SmartScreen only nags on first run.
 | `gyp ERR! find Python` during `npm install` | `winget install Python.Python.3.12`, reopen terminal, retry |
 | `MSBUILD : error MSB4019` | VS Build Tools didn't install the C++ workload. Re-run the installer with the C++ workload checkbox |
 | `Error: Cannot find module @rollup/rollup-win32-x64-msvc` | Known npm bug with optional deps. `rm -rf node_modules package-lock.json` then `npm install` again |
-| `electron-builder` complains about icons | Drop `icon.ico` into `public/`, or temporarily comment out the `win.icon` line in `package.json` |
+| `electron-builder` complains about icons | Confirm `public/icon.ico` exists and rerun `npm ci` |
 | App opens but SQLite is broken | `npx electron-rebuild -f -w better-sqlite3` then rebuild |
 
 ## Linux
@@ -108,7 +112,7 @@ sudo dnf install -y nodejs npm git gcc-c++ make alsa-lib nss atk at-spi2-atk cup
 sudo pacman -S --needed nodejs npm git base-devel nss atk at-spi2-atk libcups libdrm libxkbcommon libxcomposite libxdamage libxrandr
 ```
 
-> **Distro packages too old?** Use [nvm](https://github.com/nvm-sh/nvm) to install Node 18+:
+> **Distro packages too old?** Use [nvm](https://github.com/nvm-sh/nvm) to install Node 22+:
 > ```bash
 > curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
 > source ~/.bashrc
@@ -118,8 +122,8 @@ sudo pacman -S --needed nodejs npm git base-devel nss atk at-spi2-atk libcups li
 Verify:
 
 ```bash
-node --version          # v18+
-npm --version           # 9+
+node --version          # v22+
+npm --version           # 10+
 ```
 
 ### 2. Clone + install + build
@@ -185,39 +189,45 @@ Once the app launches, verify these in order — first failure here is most like
 
 ## Uploading binaries to the GitHub release
 
-Once you've built on each platform, attach to the existing v1.0.0 release:
+Once you've built on each platform, attach files to the matching version tag:
 
 ```bash
 # One-time: log in if not already (uses your Mac's token if you have it copy-pasted, or runs an OAuth flow)
 gh auth login
 
-# Add to existing release
+# Add to an existing release (replace the example tag and filenames)
 cd codemaxxing-desktop
-gh release upload v1.0.0 release/<file-1> release/<file-2> --repo MarcosV6/codemaxxing-desktop
+gh release upload v1.3.7 release/<file-1> release/<file-2> --repo MarcosV6/codemaxxing-desktop
 ```
 
-If you'd rather use the web UI: go to https://github.com/MarcosV6/codemaxxing-desktop/releases/tag/v1.0.0 → **Edit** → drag the binaries into the assets area.
+If you'd rather use the web UI, open the matching entry under GitHub
+**Releases**, choose **Edit**, and drag the binaries into the assets area.
 
 ## Releasing (automated)
 
 CI builds every platform for you. Two workflows live in [`.github/workflows`](../.github/workflows):
 
-- **`ci.yml`** — runs on every push/PR to `main`: typecheck, lint, and unit tests. This is the gate; keep it green.
-- **`release.yml`** — runs when you push a tag like `v1.1.0`. It builds on four runners in parallel (macOS arm64, macOS x64, Windows x64, Linux x64), then attaches all the installers to the GitHub Release for that tag.
+- **`ci.yml`** — runs typecheck, lint, and unit tests on native macOS, Windows,
+  and Linux runners for every push/PR to `main`.
+- **`release.yml`** — runs when you push a tag like `v1.3.7`. It packages in
+  parallel on macOS arm64, Windows x64, and Linux x64 runners, then attaches
+  all installers and `SHA256SUMS.txt` to the GitHub Release. No release is
+  published if any platform build fails.
 
 ### Cut a release
 
 ```bash
-# bump "version" in package.json first (e.g. 1.0.0 → 1.1.0), commit, then:
-git tag v1.1.0
-git push origin v1.1.0
+# bump "version" in package.json first, commit, then use the same version:
+git tag v1.3.7
+git push origin v1.3.7
 ```
 
 Watch it under the repo's **Actions** tab. When the matrix finishes, the **Publish GitHub Release** job creates/updates the release and uploads:
 
-- macOS: `*-arm64-mac.zip`, `*-mac.zip`, and the matching `.dmg`s
-- Windows: `Codemaxxing Setup *.exe`, `*-win.zip`
+- macOS: `*-arm64-mac.zip`
+- Windows: `Codemaxxing.Setup.*.exe`, `*-win.zip`
 - Linux: `*.AppImage`, `*.deb`, `*.tar.gz`
+- Verification: `SHA256SUMS.txt`
 
 `workflow_dispatch` (the **Run workflow** button) runs the build matrix without publishing — handy for checking a platform still builds before you tag.
 
@@ -229,24 +239,18 @@ The per-platform `npm run electron:build:*` commands above still work if you'd r
 
 ## Code signing & notarization
 
-By default — and in CI without secrets — builds are **ad-hoc signed**: they run, but macOS Gatekeeper and Windows SmartScreen warn on first open (the README documents the one-time bypass). To ship builds that *don't* nag, you need paid certificates. The project is already wired for them; here's the checklist.
+Without certificate secrets, macOS builds are **ad-hoc signed** and Windows
+builds are unsigned. They run, but macOS Gatekeeper and Windows SmartScreen
+warn on first open. To remove those warnings, configure platform certificates.
 
 ### macOS (Apple Developer ID + notarization — $99/yr)
 
 1. Enroll at https://developer.apple.com, create a **Developer ID Application** certificate, export it as a `.p12`.
 2. Create an **app-specific password** for your Apple ID (appleid.apple.com → Sign-In & Security).
-3. In `package.json`, enable the hardened runtime + entitlements (the entitlements file already exists at [`build/entitlements.mac.plist`](../build/entitlements.mac.plist)):
-
-   ```jsonc
-   "mac": {
-     "hardenedRuntime": true,
-     "entitlements": "build/entitlements.mac.plist",
-     "entitlementsInherit": "build/entitlements.mac.plist",
-     "notarize": { "teamId": "YOURTEAMID" }
-   }
-   ```
-
-4. Add these as **repo secrets** (Settings → Secrets and variables → Actions). `release.yml` already passes them through:
+3. Hardened runtime and [`build/entitlements.mac.plist`](../build/entitlements.mac.plist)
+   are already enabled in `package.json`.
+4. Add these as **repo secrets** (Settings → Secrets and variables → Actions).
+   `release.yml` already passes them through:
 
    | Secret | Value |
    |---|---|

@@ -6,7 +6,7 @@ If you're here to file a bug or propose a feature, use the issue templates inste
 
 ## Dev setup
 
-Tested on **Node.js 18+**. macOS, Windows (with WSL2 or native), and Linux all work for development.
+Tested on **Node.js 22+**. macOS, Windows (with WSL2 or native), and Linux all work for development.
 
 ```bash
 git clone https://github.com/MarcosV6/codemaxxing-desktop.git

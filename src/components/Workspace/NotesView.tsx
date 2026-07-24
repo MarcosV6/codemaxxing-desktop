@@ -50,14 +50,14 @@ export function NotesView({ onNewSession }: { onNewSession: () => void }) {
               <div className="text-[10.5px] uppercase tracking-wider opacity-40 mb-2" style={{ color: 'var(--theme-muted)' }}>Notes</div>
               <div className="flex items-center gap-2 mb-3">
                 <input value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addNote() }} placeholder="Add a note…" className="flex-1 rounded-lg px-2.5 py-2 text-[12.5px] outline-none" style={{ backgroundColor: 'var(--theme-bg-subtle)', color: 'var(--theme-text)', border: '1px solid var(--theme-border)' }} />
-                <button onClick={addNote} className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-bg)' }}><Plus size={15} /></button>
+                <button aria-label="Add note" onClick={addNote} className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-bg)' }}><Plus size={15} /></button>
               </div>
               <div className="space-y-1.5">
                 {notes.length === 0 && <div className="text-[12px] opacity-50" style={{ color: 'var(--theme-muted)' }}>No notes yet.</div>}
                 {notes.map((n) => (
                   <div key={n.id} className="group flex items-start gap-2 rounded-lg px-3 py-2 text-[12.5px]" style={{ backgroundColor: 'var(--theme-bg-subtle)', color: 'var(--theme-text)' }}>
                     <span className="flex-1 whitespace-pre-wrap leading-[1.5]">{n.text}</span>
-                    <button onClick={() => delNote(n.id)} className="opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity shrink-0 mt-0.5" style={{ color: 'var(--theme-muted)' }}><Trash2 size={12} /></button>
+                    <button aria-label="Delete note" onClick={() => delNote(n.id)} className="opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity shrink-0 mt-0.5" style={{ color: 'var(--theme-muted)' }}><Trash2 size={12} /></button>
                   </div>
                 ))}
               </div>
@@ -68,17 +68,17 @@ export function NotesView({ onNewSession }: { onNewSession: () => void }) {
               <div className="text-[10.5px] uppercase tracking-wider opacity-40 mb-2" style={{ color: 'var(--theme-muted)' }}>Tasks</div>
               <div className="flex items-center gap-2 mb-3">
                 <input value={taskDraft} onChange={(e) => setTaskDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addTask() }} placeholder="Add a task…" className="flex-1 rounded-lg px-2.5 py-2 text-[12.5px] outline-none" style={{ backgroundColor: 'var(--theme-bg-subtle)', color: 'var(--theme-text)', border: '1px solid var(--theme-border)' }} />
-                <button onClick={addTask} className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-bg)' }}><Plus size={15} /></button>
+                <button aria-label="Add task" onClick={addTask} className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-bg)' }}><Plus size={15} /></button>
               </div>
               <div className="space-y-1.5">
                 {tasks.length === 0 && <div className="text-[12px] opacity-50" style={{ color: 'var(--theme-muted)' }}>No tasks yet.</div>}
                 {tasks.map((t) => (
                   <div key={t.id} className="group flex items-center gap-2 rounded-lg px-3 py-2 text-[12.5px]" style={{ backgroundColor: 'var(--theme-bg-subtle)' }}>
-                    <button onClick={() => toggleTask(t.id)} className="shrink-0" style={{ color: t.done ? 'var(--theme-success)' : 'var(--theme-muted)' }}>
+                    <button aria-label={t.done ? 'Mark task incomplete' : 'Mark task complete'} onClick={() => toggleTask(t.id)} className="shrink-0" style={{ color: t.done ? 'var(--theme-success)' : 'var(--theme-muted)' }}>
                       {t.done ? <CheckSquare size={15} /> : <Square size={15} />}
                     </button>
                     <span className="flex-1" style={{ color: t.done ? 'var(--theme-muted)' : 'var(--theme-text)', textDecoration: t.done ? 'line-through' : 'none' }}>{t.text}</span>
-                    <button onClick={() => delTask(t.id)} className="opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity shrink-0" style={{ color: 'var(--theme-muted)' }}><Trash2 size={12} /></button>
+                    <button aria-label="Delete task" onClick={() => delTask(t.id)} className="opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity shrink-0" style={{ color: 'var(--theme-muted)' }}><Trash2 size={12} /></button>
                   </div>
                 ))}
               </div>

@@ -3,7 +3,7 @@ import { useAppStore } from '../../store/appStore'
 import {
   X, BookmarkCheck, Bot, Clock, Plus, Trash2, Loader2, CheckCircle2,
   AlertCircle, PlayCircle, BookOpen, Cpu, HardDrive, Download,
-  StickyNote, ListTodo, Circle, Gauge, Scissors,
+  StickyNote, Gauge, Scissors,
 } from 'lucide-react'
 import type { HardwareProfile, Recommendation, FitClass, PullProgress } from '../../types'
 
@@ -49,6 +49,7 @@ export function DrawerModal() {
             <span className="text-[13px] font-medium tracking-tight">{meta.title}</span>
           </div>
           <button
+            aria-label={`Close ${meta.title}`}
             onClick={() => setDrawer(null)}
             className="w-7 h-7 rounded-md flex items-center justify-center opacity-60 hover:opacity-100 hover:bg-white/5 transition-all"
           >
@@ -93,7 +94,7 @@ function CockpitPane() {
       .catch(() => {})
   }, [])
 
-  const messages = activeSession?.messages ?? []
+  const messages = useMemo(() => activeSession?.messages ?? [], [activeSession?.messages])
   const rows = useMemo(
     () => messages.map((m) => ({
       id: m.id,
@@ -356,85 +357,6 @@ function CookbookPane() {
               </div>
             )
           })}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ── Notes & Tasks ──────────────────────────────────────────────────────────
-interface NoteRow { id: string; text: string; createdAt: number }
-interface TaskRow { id: string; text: string; done: boolean; createdAt: number }
-
-function NotesPane() {
-  const [notes, setNotes] = useState<NoteRow[]>([])
-  const [tasks, setTasks] = useState<TaskRow[]>([])
-  const [noteText, setNoteText] = useState('')
-  const [taskText, setTaskText] = useState('')
-
-  const reload = useCallback(async () => {
-    const r = await window.electron.notes.get()
-    if (r.ok) { setNotes(r.notes || []); setTasks(r.tasks || []) }
-  }, [])
-  useEffect(() => { void reload() }, [reload])
-
-  const addNote = async () => { const t = noteText.trim(); if (!t) return; setNoteText(''); await window.electron.notes.addNote(t); void reload() }
-  const addTask = async () => { const t = taskText.trim(); if (!t) return; setTaskText(''); await window.electron.notes.addTask(t); void reload() }
-
-  return (
-    <div className="space-y-5">
-      <div>
-        <div className="text-[11px] uppercase tracking-wider opacity-50 mb-2 flex items-center gap-1.5" style={{ color: 'var(--theme-muted)' }}>
-          <ListTodo size={12} /> Tasks
-        </div>
-        <div className="flex items-center gap-2 mb-2">
-          <input
-            value={taskText}
-            onChange={(e) => setTaskText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') void addTask() }}
-            placeholder="Add a task…"
-            className="flex-1 bg-transparent outline-none text-[12.5px] rounded-lg px-2.5 py-2"
-            style={{ color: 'var(--theme-text)', backgroundColor: 'var(--theme-bg-subtle)', border: '1px solid var(--theme-border)' }}
-          />
-          <button onClick={addTask} className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: 'color-mix(in srgb, var(--theme-primary) 16%, transparent)', color: 'var(--theme-primary)' }}><Plus size={14} /></button>
-        </div>
-        <div className="space-y-1">
-          {tasks.length === 0 && <div className="text-[12px] opacity-50" style={{ color: 'var(--theme-muted)' }}>No tasks yet.</div>}
-          {tasks.map((t) => (
-            <div key={t.id} className="group flex items-center gap-2 px-2 py-1.5 rounded-lg" style={{ backgroundColor: 'var(--theme-bg-subtle)' }}>
-              <button onClick={async () => { await window.electron.notes.toggleTask(t.id); void reload() }} className="shrink-0">
-                {t.done ? <CheckCircle2 size={15} style={{ color: 'var(--theme-success)' }} /> : <Circle size={15} style={{ color: 'var(--theme-muted)' }} />}
-              </button>
-              <span className={`flex-1 text-[12.5px] ${t.done ? 'line-through opacity-50' : ''}`} style={{ color: 'var(--theme-text)' }}>{t.text}</span>
-              <button onClick={async () => { await window.electron.notes.deleteTask(t.id); void reload() }} className="opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity shrink-0" title="Delete"><Trash2 size={12} /></button>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div>
-        <div className="text-[11px] uppercase tracking-wider opacity-50 mb-2 flex items-center gap-1.5" style={{ color: 'var(--theme-muted)' }}>
-          <StickyNote size={12} /> Notes
-        </div>
-        <div className="flex items-center gap-2 mb-2">
-          <input
-            value={noteText}
-            onChange={(e) => setNoteText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') void addNote() }}
-            placeholder="Jot a note…"
-            className="flex-1 bg-transparent outline-none text-[12.5px] rounded-lg px-2.5 py-2"
-            style={{ color: 'var(--theme-text)', backgroundColor: 'var(--theme-bg-subtle)', border: '1px solid var(--theme-border)' }}
-          />
-          <button onClick={addNote} className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: 'color-mix(in srgb, var(--theme-primary) 16%, transparent)', color: 'var(--theme-primary)' }}><Plus size={14} /></button>
-        </div>
-        <div className="space-y-1.5">
-          {notes.length === 0 && <div className="text-[12px] opacity-50" style={{ color: 'var(--theme-muted)' }}>No notes yet.</div>}
-          {notes.map((n) => (
-            <div key={n.id} className="group flex items-start gap-2 px-2.5 py-2 rounded-lg" style={{ backgroundColor: 'var(--theme-bg-subtle)', border: '1px solid var(--theme-border)' }}>
-              <span className="flex-1 text-[12.5px] whitespace-pre-wrap" style={{ color: 'var(--theme-text)' }}>{n.text}</span>
-              <button onClick={async () => { await window.electron.notes.deleteNote(n.id); void reload() }} className="opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity shrink-0 mt-0.5" title="Delete"><Trash2 size={12} /></button>
-            </div>
-          ))}
         </div>
       </div>
     </div>

@@ -6,6 +6,38 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [1.3.7] — 2026-07-24
+
+Beta-readiness hardening release.
+
+### Security
+
+- Upgraded Electron, SQLite, Anthropic, mail, Hono, and packaging dependencies;
+  the production dependency audit now reports zero known vulnerabilities.
+- Restricted privileged renderer navigation, external URL schemes, popups,
+  webview permissions, and Content Security Policy.
+- Added a 1 MB remote API body limit and pairing-attempt throttling.
+
+### Changed
+
+- Added native macOS, Windows, and Linux CI checks plus packaged-app launch
+  smoke tests before GitHub publishes a tagged release.
+- A failed or missing platform artifact now blocks the release; successful
+  releases include `SHA256SUMS.txt`.
+- Windows and Linux use native title bars, and renderer paths now handle both
+  `/` and `\` separators.
+- macOS builds use hardened runtime and fall back to explicit ad-hoc signing
+  until Developer ID credentials are configured.
+- Updated the README with release-download, shell install, update, and
+  per-platform packaging instructions.
+- Made lint warnings fail CI and fixed the existing warnings and accessible
+  labels.
+
+### Tests
+
+- Added remote API authentication, request-limit, and throttling coverage.
+- Added cross-platform renderer path tests.
+
 ## [1.0.0] — 2026-05-04
 
 First public release. macOS arm64 zip ships from GitHub Releases; Windows + Linux are buildable from source.
@@ -37,5 +69,6 @@ First public release. macOS arm64 zip ships from GitHub Releases; Windows + Linu
 - Cosmetic: traffic-light padding in the renderer is currently macOS-tuned. Windows/Linux users see a small gap on the top-left of the sidebar header. Tracked in [WINDOWS_RELEASE.md](WINDOWS_RELEASE.md).
 - macOS may suspend the agent loop on battery when the lid is closed — `powerSaveBlocker` prevents app suspension but not system sleep.
 
-[Unreleased]: https://github.com/MarcosV6/codemaxxing-desktop/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/MarcosV6/codemaxxing-desktop/compare/v1.3.7...HEAD
+[1.3.7]: https://github.com/MarcosV6/codemaxxing-desktop/compare/v1.3.6...v1.3.7
 [1.0.0]: https://github.com/MarcosV6/codemaxxing-desktop/releases/tag/v1.0.0

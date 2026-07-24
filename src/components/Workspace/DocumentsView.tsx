@@ -2,7 +2,8 @@ import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { MarkdownText } from '../Chat/MessageBubble'
 import { useAppStore } from '../../store/appStore'
 import { WorkspaceAssistant } from './WorkspaceAssistant'
-import { useResizablePanel, ResizeHandle } from '../Shared/Resizable'
+import { ResizeHandle } from '../Shared/Resizable'
+import { useResizablePanel } from '../Shared/useResizablePanel'
 import { PAD_TRAFFIC_80 } from '../../utils/platform'
 import {
   ArrowLeft, FileText, Plus, Trash2, Save, Loader2,

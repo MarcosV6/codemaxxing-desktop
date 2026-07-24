@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { useAppStore } from '../../store/appStore'
+import { relativePathWithin } from '../../utils/platform'
 import { MessageBubble } from './MessageBubble'
 import { InputArea } from './InputArea'
 import { ToolCallBlock } from './ToolCallBlock'
@@ -545,8 +546,8 @@ export function ChatArea() {
     // cwd, use a relative path; otherwise, use the absolute path.
     const cwd = activeSession?.cwd ?? ''
     const mentions = paths.map((p) => {
-      if (cwd && p.startsWith(cwd + '/')) return '@' + p.slice(cwd.length + 1)
-      if (cwd && p === cwd) return '@' + p
+      const relative = cwd ? relativePathWithin(cwd, p) : null
+      if (relative !== null) return '@' + (relative || '.')
       return '@' + p
     })
     const insertion = mentions.join(' ') + ' '

@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useAppStore } from '../../store/appStore'
-import { useResizablePanel, ResizeHandle } from '../Shared/Resizable'
+import { ResizeHandle } from '../Shared/Resizable'
+import { useResizablePanel } from '../Shared/useResizablePanel'
 import {
   PanelRightClose,
   Globe,

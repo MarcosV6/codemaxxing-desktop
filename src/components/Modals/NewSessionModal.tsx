@@ -151,7 +151,7 @@ export function NewSessionModal({ open, onClose, initialMode }: NewSessionModalP
         <div className="flex items-center justify-between px-4 py-3 border-b"
              style={{ borderColor: 'var(--theme-border, #334155)' }}>
           <span className="text-sm font-mono">New session</span>
-          <button onClick={onClose} className="opacity-60 hover:opacity-100"><X size={16} /></button>
+          <button aria-label="Close new session" onClick={onClose} className="opacity-60 hover:opacity-100"><X size={16} /></button>
         </div>
 
         <div className="p-4 space-y-3" style={{ color: 'var(--theme-text, #C0CAF5)' }}>

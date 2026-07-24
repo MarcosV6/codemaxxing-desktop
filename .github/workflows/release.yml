@@ -1,7 +1,7 @@
 name: Release
 
 # Builds installers for every supported platform and attaches them to the
-# GitHub Release for the pushed tag. Push a tag like `v1.1.0` to trigger.
+# GitHub Release for the pushed tag. Push a tag like `v1.3.7` to trigger.
 # `workflow_dispatch` lets you exercise the build matrix without releasing.
 
 on:
@@ -26,9 +26,7 @@ jobs:
         include:
           # Native arch per runner — avoids cross-compiling the better-sqlite3
           # native addon, which electron-rebuild only builds for the host arch.
-          # mac: zip only — DMG creation is flaky on headless CI runners; the
-          # signed-ish .dmg ships from the maintainer's local build. (Intel-Mac
-          # runners are scarce/queue forever, so x64 mac is built locally too.)
+          # mac: zip only — DMG creation is flaky on headless CI runners.
           - { os: macos-14, platform: mac, arch: arm64, args: '--mac zip --arm64' }
           - { os: windows-latest, platform: win, arch: x64, args: '--win --x64' }
           - { os: ubuntu-latest, platform: linux, arch: x64, args: '--linux --x64' }
@@ -37,13 +35,13 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       # deb packaging needs fakeroot/dpkg present on the runner
       - name: Install Linux packaging tools
         if: matrix.platform == 'linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fakeroot dpkg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fakeroot dpkg xvfb
 
       # postinstall rebuilds better-sqlite3 against Electron's ABI for this arch
       - run: npm ci
@@ -68,17 +66,28 @@ jobs:
           if [ -n "${{ secrets.WIN_CSC_LINK }}" ]; then
             export WIN_CSC_LINK="${{ secrets.WIN_CSC_LINK }}"
             export WIN_CSC_KEY_PASSWORD="${{ secrets.WIN_CSC_KEY_PASSWORD }}"
+          elif [ "${{ matrix.platform }}" = "win" ]; then
+            # Guarantee that an early beta still packages cleanly when the
+            # runner has no matching certificate in its local certificate store.
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
           fi
-          npx electron-builder ${{ matrix.args }} --publish never
+          signing_args=()
+          if [ "${{ matrix.platform }}" = "mac" ] && [ -z "${{ secrets.CSC_LINK }}" ]; then
+            signing_args+=("-c.mac.identity=-")
+          fi
+          npx electron-builder ${{ matrix.args }} "${signing_args[@]}" --publish never
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Smoke-test packaged app
+        run: node scripts/smoke-packaged.mjs ${{ matrix.platform }} ${{ matrix.arch }}
 
       - name: Collect installers
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform }}-${{ matrix.arch }}
-          if-no-files-found: ignore
+          if-no-files-found: error
           retention-days: 7
           path: |
             release/*.dmg
@@ -92,9 +101,8 @@ jobs:
     name: Publish GitHub Release
     needs: build
     runs-on: ubuntu-latest
-    # Attach whatever built — one platform failing must not block the others
-    # from reaching the release.
-    if: ${{ always() && startsWith(github.ref, 'refs/tags/') }}
+    # Never advertise an all-platform release if one native build failed.
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
     permissions:
       contents: write
     steps:
@@ -108,7 +116,9 @@ jobs:
           find artifacts -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' \
             -o -name '*.AppImage' -o -name '*.deb' -o -name '*.tar.gz' \) \
             -exec cp -v {} dist-release/ \;
-          ls -la dist-release
+          cd dist-release
+          sha256sum * > SHA256SUMS.txt
+          ls -la
 
       - name: Attach to release
         uses: softprops/action-gh-release@v2

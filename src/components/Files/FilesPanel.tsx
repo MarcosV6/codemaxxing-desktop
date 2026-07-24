@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
-import { MOD } from '../../utils/platform'
+import { displayPathTail, MOD, relativePathWithin } from '../../utils/platform'
 import { useAppStore } from '../../store/appStore'
-import { useResizablePanel, ResizeHandle } from '../Shared/Resizable'
+import { ResizeHandle } from '../Shared/Resizable'
+import { useResizablePanel } from '../Shared/useResizablePanel'
 import {
   PanelRightClose,
   ChevronRight,
@@ -67,8 +68,7 @@ function formatSize(n: number): string {
 function relTo(cwd: string, abs: string): string {
   if (!cwd) return abs
   if (abs === cwd) return '.'
-  if (abs.startsWith(cwd + '/')) return abs.slice(cwd.length + 1)
-  return abs
+  return relativePathWithin(cwd, abs) ?? abs
 }
 
 // ── Tree node ─────────────────────────────────────────────────────────────
@@ -790,7 +790,7 @@ export function FilesPanel() {
               style={{ color: 'var(--theme-muted)' }}
               title={cwd}
             >
-              {cwd.split('/').slice(-2).join('/')}
+              {displayPathTail(cwd)}
             </span>
           )}
           {dirtyPaths.size > 0 && (

@@ -6,7 +6,7 @@
 [![desktop](https://img.shields.io/badge/desktop-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](#install)
 [![CLI sibling](https://img.shields.io/badge/cli%20sibling-codemaxxing-7AA2F7.svg)](https://github.com/MarcosV6/codemaxxing)
 
-Native desktop app for [codemaxxing](https://github.com/MarcosV6/codemaxxing) — the open-source coding agent. Connect **any** LLM (local or remote), drive a real agent loop, and do it from a polished GUI instead of the terminal. macOS first, Windows + Linux supported by the same codebase.
+Native desktop app for [codemaxxing](https://github.com/MarcosV6/codemaxxing) — the open-source coding agent. Connect **any** LLM (local or remote), drive a real agent loop, and do it from a polished GUI instead of the terminal. Beta builds target macOS, Windows, and Linux.
 
 > _Looking for the terminal version? It lives at [MarcosV6/codemaxxing](https://github.com/MarcosV6/codemaxxing) — same brain, different surface._
 
@@ -40,11 +40,17 @@ Claude Desktop is locked to Anthropic. Codex Desktop is locked to OpenAI. Every 
 
 ## Install
 
-> **Status:** preview. macOS (Apple Silicon), Windows, and Linux builds ship from [GitHub Releases](https://github.com/MarcosV6/codemaxxing-desktop/releases/latest) on every tagged version. Signed installers + auto-update will follow.
+> **Status:** beta. Every version tag must pass native macOS, Windows, and Linux packaging before its assets are published to [GitHub Releases](https://github.com/MarcosV6/codemaxxing-desktop/releases/latest). The current beta targets Apple Silicon macOS, x64 Windows, and x64 Linux. Installers are not yet Developer ID/Authenticode signed, so the operating system may show a one-time warning.
+
+| Platform | Download from GitHub Releases | Build locally |
+|---|---|---|
+| macOS 12+, Apple Silicon | `Codemaxxing-<version>-arm64-mac.zip` | `npm run electron:build:mac` |
+| Windows 10/11, x64 | `Codemaxxing.Setup.<version>.exe` or `*-win.zip` | `npm run electron:build:win` |
+| Linux, x64 | `*.AppImage`, `*.deb`, or `*.tar.gz` | `npm run electron:build:linux` |
 
 ### macOS
 
-Grab the newest `Codemaxxing-x.y.z-arm64-mac.zip` (or `.dmg`) from the [**latest release**](https://github.com/MarcosV6/codemaxxing-desktop/releases/latest) — always use the newest version; older builds had known issues.
+Download the newest `Codemaxxing-<version>-arm64-mac.zip` from the [latest release](https://github.com/MarcosV6/codemaxxing-desktop/releases/latest).
 
 > Apple Silicon (M1–M4) only for now. Intel builds will return once we set up CI for them.
 
@@ -68,31 +74,50 @@ Then launch from Applications. Done.
 6. Confirm with Touch ID or password.
 7. App opens. Future launches won't show the warning.
 
-> **Why?** The app isn't signed by an Apple Developer ID yet (that's a $99/year subscription that hasn't been bought). macOS treats anything unsigned as suspicious by default. The above is a one-time approval — Apple's intended workflow for trusted software you're choosing to run.
+> **Why?** The beta is ad-hoc signed but not Apple-notarized yet. The warning is a one-time approval for a build you deliberately downloaded.
 
-### Windows / Linux
+### Windows
 
-A signed installer isn't published yet. Build from source — it works on both:
+From the [latest release](https://github.com/MarcosV6/codemaxxing-desktop/releases/latest), download either:
 
-```bash
-git clone https://github.com/MarcosV6/codemaxxing-desktop.git
-cd codemaxxing-desktop
-npm install
-# Pick one:
-npm run electron:build:win        # NSIS installer + portable zip
-npm run electron:build:linux      # AppImage + tar.gz + .deb
+- `Codemaxxing.Setup.<version>.exe` for the normal installer, or
+- `Codemaxxing-<version>-win.zip` for a portable copy.
+
+Unsigned beta builds may show **Windows protected your PC**. Choose **More info → Run anyway** after confirming the download came from this repository.
+
+### Linux
+
+Download the AppImage from the [latest release](https://github.com/MarcosV6/codemaxxing-desktop/releases/latest), then:
+
+```sh
+chmod +x Codemaxxing-*.AppImage
+./Codemaxxing-*.AppImage
 ```
 
-Output lands in `release/`. **Detailed step-by-step (prereqs, troubleshooting, smoke tests):** [docs/BUILDING.md](docs/BUILDING.md). For known platform-specific UI gotchas (traffic-light padding etc.), see [WINDOWS_RELEASE.md](WINDOWS_RELEASE.md).
+Debian/Ubuntu users can instead install the `.deb`; a portable `.tar.gz` is also attached.
 
-### From source (any platform — dev workflow)
+### From the shell
 
-```bash
+Requires Node.js 22+, npm 10+, and Git:
+
+```sh
 git clone https://github.com/MarcosV6/codemaxxing-desktop.git
 cd codemaxxing-desktop
-npm install
+npm ci
 npm run electron:dev
 ```
+
+To package the app, replace the last command with the matching `npm run electron:build:mac`, `npm run electron:build:win`, or `npm run electron:build:linux`. Output is written to `release/`.
+
+To update an existing clone:
+
+```sh
+git pull --ff-only origin main
+npm ci
+npm run electron:dev
+```
+
+See [Building from source](docs/BUILDING.md) for platform prerequisites, packaging details, troubleshooting, and the native smoke-test checklist.
 
 ## Quick start
 
@@ -133,7 +158,7 @@ This is the foundation for the upcoming native phone clients. Today you can driv
 
 ## Stack
 
-- **Electron 36** main + preload, contextBridge IPC, sandboxed renderer
+- **Electron 43** main + preload, contextBridge IPC, sandboxed renderer
 - **React 19** + **TypeScript 5.5** + **Vite 7** renderer
 - **Zustand 5** state management
 - **Tailwind 3** styling with CSS custom properties for theming

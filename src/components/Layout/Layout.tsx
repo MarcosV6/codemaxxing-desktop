@@ -4,7 +4,7 @@ import { StatusBar } from '../Shared/StatusBar'
 import { PreviewPanel } from '../Preview/PreviewPanel'
 import { BrowserMode } from '../Browser/BrowserMode'
 import { useAppStore, type ModelInfo } from '../../store/appStore'
-import { MOD, MOD_SHIFT, PAD_TRAFFIC_84, PAD_TRAFFIC_92 } from '../../utils/platform'
+import { displayPathTail, MOD, MOD_SHIFT, PAD_TRAFFIC_84, PAD_TRAFFIC_92 } from '../../utils/platform'
 import type { SessionMode } from '../../types'
 import { Plus, MessageSquare, MessageCircle, PanelLeftClose, PanelLeft, PanelRight, Settings, Trash2, Folder, BookmarkCheck, Bot, Clock, BookOpen, GitCompare, StickyNote, FileText, Mail, CalendarDays, ChevronDown, FolderTree, Loader2, Search, Compass } from 'lucide-react'
 import { ApprovalModal, MCPApprovalModal } from '../Modals/ApprovalModal'
@@ -20,7 +20,8 @@ import { CalendarView } from '../Workspace/CalendarView'
 import { CommandPalette } from '../Modals/CommandPalette'
 import { OnboardingOverlay } from '../Modals/OnboardingOverlay'
 import { FilesPanel } from '../Files/FilesPanel'
-import { useResizablePanel, ResizeHandle } from '../Shared/Resizable'
+import { ResizeHandle } from '../Shared/Resizable'
+import { useResizablePanel } from '../Shared/useResizablePanel'
 
 function formatRelative(input: string | number | undefined): string {
   if (!input) return ''
@@ -745,7 +746,7 @@ export function Layout() {
                         className="truncate max-w-[200px] font-mono text-[11.5px]"
                         style={{ color: activeSession.cwd ? undefined : 'var(--theme-primary)' }}
                       >
-                        {activeSession.cwd ? activeSession.cwd.split('/').slice(-2).join('/') : 'pick a folder →'}
+                        {activeSession.cwd ? displayPathTail(activeSession.cwd) : 'pick a folder →'}
                       </span>
                       <span
                         className="text-[10px] font-mono opacity-0 group-hover/cwd:opacity-60 transition-opacity ml-0.5"

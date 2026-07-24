@@ -1,6 +1,21 @@
 import React, { useRef, useEffect } from 'react'
 import type { BrowserTabState } from '../../store/appStore'
 
+export interface BrowserWebview {
+  src: string
+  addEventListener: (type: string, listener: (event: any) => void) => void
+  removeEventListener: (type: string, listener: (event: any) => void) => void
+  loadURL: (url: string) => Promise<void>
+  getTitle: () => string
+  getURL: () => string
+  executeJavaScript: (code: string, userGesture?: boolean) => Promise<unknown>
+  capturePage: () => Promise<{ toDataURL: () => string }>
+  goBack: () => void
+  goForward: () => void
+  reload: () => void
+  stop: () => void
+}
+
 /**
  * One browser tab = one <webview> (isolated `persist:cmx-browser` partition,
  * shared cookies across tabs). Stays mounted while the tab exists so its page
@@ -11,12 +26,10 @@ import type { BrowserTabState } from '../../store/appStore'
 export function BrowserTabView({ tab, onUpdate, registerEl, onDomReady }: {
   tab: BrowserTabState
   onUpdate: (patch: Partial<BrowserTabState>) => void
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  registerEl: (id: string, el: any | null) => void
+  registerEl: (id: string, el: BrowserWebview | null) => void
   onDomReady: (id: string) => void
 }) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const webviewRef = useRef<any>(null)
+  const webviewRef = useRef<BrowserWebview | null>(null)
   const loadedRef = useRef(false)
   const initialUrl = useRef(tab.url)
 
@@ -67,7 +80,6 @@ export function BrowserTabView({ tab, onUpdate, registerEl, onDomReady }: {
     src: 'about:blank',
     partition: 'persist:cmx-browser',
     allowpopups: 'true',
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    style: { width: '100%', height: '100%', border: 'none', display: 'flex' } as any,
+    style: { width: '100%', height: '100%', border: 'none', display: 'flex' } as React.CSSProperties,
   })
 }

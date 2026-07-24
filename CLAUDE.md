@@ -4,7 +4,7 @@ Native macOS GUI for [codemaxxing](https://github.com/) — an open-source codin
 
 ## Stack
 
-- **Electron 36** main + preload, contextBridge IPC
+- **Electron 43** main + preload, contextBridge IPC
 - **React 19** + **TypeScript 5.5** + **Vite 7** renderer
 - **Zustand 5** state, **Tailwind 3** styling with CSS custom properties
 - **SQLite** (`better-sqlite3`) for sessions / memory (FTS5) / checkpoints / bg-agents / cron
@@ -39,7 +39,7 @@ src/
                        vite dev (no Electron shell)
   types/               electron.d.ts (IPC surface), index.ts (domain types)
   styles/globals.css   Tailwind + theme variables
-public/                Static assets (icon goes here as icon.icns for signing)
+public/                Static assets (macOS, Windows, and Linux app icons)
 dist/                  Renderer build output (gitignored)
 dist-electron/         Main + preload build output (gitignored)
 release/               electron-builder output — DMG/ZIP (gitignored)
@@ -90,7 +90,7 @@ Configured in [package.json](package.json) under `build`:
 - `productName: Codemaxxing`, `appId: com.codemaxxing.app`
 - Mac targets: `dmg` + `zip`, arm64 by default
 - **Ad-hoc signed** — no Developer ID yet. Gatekeeper will flag on first open. Either right-click → Open, or `xattr -cr /Applications/Codemaxxing.app`.
-- Icon: drop `icon.icns` into `public/` (not yet set — currently uses Electron default).
+- Platform icons are present in `public/` (`icon.icns`, `icon.ico`, and `icon.png`).
 
 ## Relationship to the CLI
 

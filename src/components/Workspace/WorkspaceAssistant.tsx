@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useAppStore } from '../../store/appStore'
 import { ChatArea } from '../Chat/ChatArea'
-import { useResizablePanel, ResizeHandle } from '../Shared/Resizable'
+import { ResizeHandle } from '../Shared/Resizable'
+import { useResizablePanel } from '../Shared/useResizablePanel'
 import { AssistantModelPicker } from '../Shared/AssistantModelPicker'
 import { MessageSquare, Plus, ChevronRight } from 'lucide-react'
 

@@ -48,7 +48,7 @@ export function SettingsModal() {
           style={{ borderBottom: '1px solid var(--theme-border)' }}
         >
           <span className="text-[13px] font-medium tracking-tight">Settings</span>
-          <button onClick={close} className="w-7 h-7 rounded-md flex items-center justify-center opacity-60 hover:opacity-100 hover:bg-white/5 transition-all">
+          <button aria-label="Close settings" onClick={close} className="w-7 h-7 rounded-md flex items-center justify-center opacity-60 hover:opacity-100 hover:bg-white/5 transition-all">
             <X size={14} />
           </button>
         </div>
@@ -380,7 +380,6 @@ function ProvidersTab() {
 
                       {p.methods.includes('api-key') && (
                         <ApiKeyForm
-                          providerId={p.id}
                           consoleUrl={p.consoleUrl}
                           showCustomBaseUrl={p.id === 'custom' || !p.baseUrl}
                           apiKeyInput={apiKeyInput}
@@ -432,11 +431,10 @@ function MethodButton({
 }
 
 function ApiKeyForm({
-  providerId, consoleUrl, showCustomBaseUrl,
+  consoleUrl, showCustomBaseUrl,
   apiKeyInput, setApiKeyInput, baseUrlInput, setBaseUrlInput, labelInput, setLabelInput,
   onSave,
 }: {
-  providerId: string
   consoleUrl?: string
   showCustomBaseUrl: boolean
   apiKeyInput: string; setApiKeyInput: (v: string) => void

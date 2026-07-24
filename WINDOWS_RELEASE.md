@@ -1,33 +1,32 @@
 # Windows release & testing runbook
 
-Companion to [CLAUDE.md](CLAUDE.md). This is the plan for shipping Codemaxxing
-on Windows (and, as a freebie, Linux) once the Mac DMG has been through a full
-QA pass.
+Companion to [CLAUDE.md](CLAUDE.md). This is the native Windows QA checklist;
+packaging and GitHub release automation are already configured.
 
-Written: 2026-04-24, after the `Codemaxxing-1.0.0-arm64.dmg` build.
+Updated: 2026-07-24.
 
 ## TL;DR
 
-The bones are cross-platform. A "walking skeleton" `.exe` installer is ~30
-minutes of work. A polished, signed, auto-updating Windows release is ~1–2 days
-plus the cost of a code-signing certificate.
+Windows x64 and Linux x64 packages are built by GitHub Actions for version
+tags. They must still pass this checklist on clean native machines before the
+beta is described as fully validated. Authenticode signing and auto-update are
+separate post-beta work.
 
 ## Status snapshot
 
 | | macOS | Windows | Linux |
 |---|---|---|---|
-| Build script | `electron:build:mac` ✅ shipped | `electron:build:win` ready, not run | `electron:build:linux` ready, not run |
-| Native deps (`better-sqlite3`) | rebuilt ad-hoc | prebuilt `.node` binaries exist | prebuilt `.node` binaries exist |
-| Window chrome | tuned (traffic-light padding) | needs conditional padding | needs conditional padding |
-| Icon | `icon.icns` **missing** (default Electron icon) | `icon.ico` **missing** | `icon.png` **missing** |
+| Build script | `electron:build:mac` verified | `electron:build:win` + native CI configured | `electron:build:linux` + native CI configured |
+| Native deps (`better-sqlite3`) | locally verified | release runner rebuilds natively | release runner rebuilds natively |
+| Window chrome | inset traffic lights | native title bar + Windows padding | native title bar + Linux padding |
+| Icon | `icon.icns` present | `icon.ico` present | `icon.png` present |
 | Signing | ad-hoc (Gatekeeper warns) | unsigned (SmartScreen warns) | unsigned (no signing needed) |
 | Auto-update | not wired | not wired | not wired |
 
 ## What's already portable — zero work
 
-- `package.json` has `electron:build:win` and `electron:build:linux` scripts
-  and the `build.mac` block in electron-builder; cross-targeting is a matter
-  of adding `build.win` / `build.linux` sections.
+- `package.json` has complete macOS, Windows, and Linux target blocks plus
+  `electron:build:*` scripts.
 - Credentials use `conf` / `electron-store` — JSON in the platform-appropriate
   user data dir. **No Keychain/keytar dependency**, no native credential
   manager lock-in.
@@ -48,70 +47,37 @@ plus the cost of a code-signing certificate.
 - Renderer (React, Vite, Zustand, Tailwind, lucide, highlight.js, the whole
   `src/` tree) is platform-agnostic.
 
-## What needs changing — by file
+## Completed cross-platform prerequisites
 
-### 1. Traffic-light padding (cosmetic, ~10 lines)
+### 1. Window chrome and traffic-light padding
 
-macOS reserves the top-left 80ish pixels for traffic-light buttons. Three
-files hardcode this:
+The renderer uses [`src/utils/platform.ts`](src/utils/platform.ts) for
+platform-appropriate shortcut labels and header padding. `electron/main.ts`
+uses the inset title bar only on macOS; Windows and Linux keep their native
+title bars and window controls.
 
-- [src/components/Layout/Layout.tsx:143](src/components/Layout/Layout.tsx)
-  — `pl-[92px]` on the sidebar header
-- [src/components/Layout/Layout.tsx:301](src/components/Layout/Layout.tsx)
-  — `pl-[84px]` on the main header when sidebar closed
-- [src/components/Files/FilesPanel.tsx](src/components/Files/FilesPanel.tsx)
-  — any drag region reserved space (check before shipping)
-- [src/components/Preview/PreviewPanel.tsx](src/components/Preview/PreviewPanel.tsx)
-  — same check
-
-On Windows and Linux, window controls are top-*right*, so this padding is
-wasted space and the sidebar title gets pushed off-center.
-
-**Fix:** introduce a `usePlatform()` hook that reads
-`window.electron.app.getPlatform()` once on mount, and conditionally apply the
-padding. Pseudocode:
-
-```ts
-// src/hooks/usePlatform.ts
-import { useEffect, useState } from 'react'
-export function usePlatform() {
-  const [p, setP] = useState<'darwin' | 'win32' | 'linux' | null>(null)
-  useEffect(() => { (window as any).electron?.app?.getPlatform?.().then(setP) }, [])
-  return p
-}
-```
-
-Then `className={platform === 'darwin' ? 'pl-[92px]' : 'pl-4'}`.
-
-**Lazier alternative:** set `frame: true` on Windows in the `BrowserWindow`
-constructor, use the native Windows titlebar, and skip the custom drag region
-entirely on non-Mac. Also tidier for alt-tab and snap layouts.
+Windows-style backslash paths are normalized for renderer display, file
+mentions, image loading, and glob results.
 
 ### 2. Icons
 
-- Add `public/icon.icns` (macOS) — currently missing, DMG ships with default
-  Electron icon
-- Add `public/icon.ico` (Windows)
-- Add `public/icon.png` at 512×512 or 1024×1024 (Linux)
-- Online converters (e.g. cloudconvert) turn a single 1024×1024 PNG into all
-  three formats
-- Reference in `package.json`:
+- Platform icons are present as `public/icon.icns`, `public/icon.ico`, and
+  `public/icon.png`, with `public/icon-1024.png` retained as the high-resolution
+  source.
+- Keep these references in `package.json`:
   ```json
   "mac":   { "icon": "public/icon.icns" },
   "win":   { "icon": "public/icon.ico"  },
   "linux": { "icon": "public/icon.png"  }
   ```
 
-### 3. electron-builder config additions
+### 3. electron-builder configuration
 
-Add to `package.json` → `build`:
+The active `package.json` configuration includes:
 
 ```json
 "win": {
-  "target": [
-    { "target": "nsis", "arch": ["x64", "arm64"] },
-    { "target": "portable", "arch": ["x64"] }
-  ],
+  "target": ["nsis", "zip"],
   "icon": "public/icon.ico"
 },
 "nsis": {
@@ -123,15 +89,15 @@ Add to `package.json` → `build`:
   "shortcutName": "Codemaxxing"
 },
 "linux": {
-  "target": ["AppImage", "deb"],
+  "target": ["AppImage", "tar.gz", "deb"],
   "icon": "public/icon.png",
   "category": "Development"
 }
 ```
 
-`nsis` = Windows installer. `portable` = single `.exe` you can run without
-installing (handy for testing). `perMachine: false` = installs into the user
-profile so it doesn't need admin rights.
+`nsis` is the Windows installer; `zip` is the extract-and-run option.
+`perMachine: false` installs into the user profile so it doesn't need admin
+rights.
 
 ### 4. Codex CLI token import (optional gap)
 
@@ -162,48 +128,11 @@ Fusion) to copy the artifact into.
 
 ### Option B — GitHub Actions (recommended)
 
-Create `.github/workflows/build.yml`:
-
-```yaml
-name: Build
-on:
-  push:
-    tags: ['v*']
-  workflow_dispatch: {}
-
-jobs:
-  build:
-    strategy:
-      matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20, cache: npm }
-      - run: npm ci
-      - name: Build (Mac)
-        if: matrix.os == 'macos-latest'
-        run: npm run electron:build:mac
-      - name: Build (Windows)
-        if: matrix.os == 'windows-latest'
-        run: npm run electron:build:win
-      - name: Build (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: npm run electron:build:linux
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.os }}-build
-          path: |
-            release/*.dmg
-            release/*.exe
-            release/*.AppImage
-            release/*.deb
-          if-no-files-found: ignore
-```
-
-Push a `v1.0.0` tag → three runners build in parallel → download artifacts.
-~5 minutes per platform.
+The checked-in `.github/workflows/release.yml` builds macOS arm64, Windows
+x64, and Linux x64 on native runners. Push a version tag matching
+`package.json` (for example `v1.3.7`) to package all three platforms and attach
+the assets plus checksums to the GitHub Release. A failure on any platform
+prevents publication.
 
 ## Code signing (Windows)
 
@@ -265,8 +194,7 @@ additions.
 - [ ] Files panel: tree loads root
 - [ ] Tree expand/collapse
 - [ ] File viewer: syntax highlighting correct
-- [ ] Edit mode: ⌘S works (actually Ctrl+S on Windows — verify both
-      `e.metaKey || e.ctrlKey` handlers fire correctly)
+- [ ] Edit mode: Ctrl+S works and is labeled correctly
 - [ ] Esc discards
 - [ ] Conflict detection: edit a file, modify it externally (Notepad), save
       → banner appears with Keep mine / Reload / Dismiss
@@ -285,7 +213,7 @@ additions.
 
 ### Persistence
 - [ ] Close app, reopen — sessions persist
-- [ ] Session database at `%APPDATA%/codemaxxing-mac/` — sqlite file exists
+- [ ] Session database at `%USERPROFILE%\.codemaxxing-mac\` — sqlite file exists
 - [ ] Memory (FTS5 recall) works
 - [ ] Checkpoints save + restore
 - [ ] Themes persist across restart
@@ -319,11 +247,9 @@ additions.
 
 ## Known gotchas
 
-1. **Windows path separators.** Anywhere we pass paths around, make sure
-   they're normalized. `relative()` and `join()` from `path` already do this,
-   but hardcoded `/` in strings will break. Grep for `.split('/')` and
-   `'/' +` before shipping — I found one in Layout.tsx header showing
-   `cwd.split('/').slice(-2).join('/')` that'll show nothing on Windows.
+1. **Windows path separators.** Renderer path display and dropped-file
+   mentions normalize `\` to `/`; keep new path manipulation in the main
+   process on Node's `path` APIs where possible.
 2. **`ComSpec` shell.** backgroundCommands already uses it; good. But commands
    that assume bash syntax (`foo && bar`, backticks, `~`) will break under
    `cmd.exe`. Consider preferring PowerShell on win32 instead.
@@ -349,8 +275,7 @@ additions.
 Basically the same as Windows minus signing hassle.
 
 - `electron:build:linux` already exists
-- Adds `.AppImage` (double-clickable, no install) and `.deb` (Debian/Ubuntu)
-  when `build.linux.target` is set (see config snippet above)
+- Produces `.AppImage`, `.deb`, and `.tar.gz` assets on the Linux runner
 - No signing required; `.AppImage` just works
 - Same traffic-light padding fix applies (GNOME puts close button top-right,
   KDE varies)
@@ -360,19 +285,17 @@ Basically the same as Windows minus signing hassle.
 
 - **Auto-update.** electron-builder supports `GitHub Releases` + `electron-updater`
   for drop-in auto-updates. ~30 min to wire up once you have signed builds.
-- **ARM64 Windows.** Already in the `build.win.target` arch array above — test
-  on a Copilot+ PC / Surface Pro 11 before claiming support.
+- **ARM64 Windows.** Add a native `windows-11-arm` release runner and test on
+  a Copilot+ PC / Surface Pro before claiming support.
 - **MSIX package** for Microsoft Store distribution. electron-builder has an
   `appx` target. Probably not worth the overhead until there's demand.
 - **Homebrew cask** for Mac install UX parity with `brew install codemaxxing`.
 
 ## Rollout suggestion
 
-1. Ship Mac DMG as v1.0.0 → gather QA bugs from personal testing
-2. Fix critical Mac bugs → DMG v1.0.1
-3. Land the Windows prerequisites (platform hook, icons, electron-builder
-   config) as v1.1.0
-4. Set up GH Actions workflow, cut a v1.1.0 tag, download Windows artifact
-5. Test on a Windows 11 VM using this checklist
-6. Fix Windows-specific bugs
-7. v1.1.0 release across Mac + Windows + Linux simultaneously
+1. Commit the beta-readiness changes and bump the version.
+2. Push the matching version tag and wait for all three release jobs.
+3. Verify `SHA256SUMS.txt`, then test the Windows installer on clean Windows
+   11 and the AppImage/`.deb` on clean Linux.
+4. Fix any native-only failures and replace the prerelease assets if needed.
+5. Promote the release after all platform checklists pass.

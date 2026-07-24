@@ -3,7 +3,7 @@ import { homedir } from 'os'
 import { join } from 'path'
 import { createServer, type IncomingMessage, type ServerResponse } from 'http'
 import { randomBytes, createHash } from 'crypto'
-import { execSync, exec, execFile } from 'child_process'
+import { execSync, exec } from 'child_process'
 import { shell, safeStorage } from 'electron'
 
 const CONFIG_DIR = join(homedir(), '.codemaxxing-mac')

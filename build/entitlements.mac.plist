@@ -3,11 +3,9 @@
 <!--
   Entitlements for the hardened-runtime / notarized build path.
 
-  These are inert until you flip `mac.hardenedRuntime` to true and point
-  `mac.entitlements` / `mac.entitlementsInherit` at this file in package.json
-  (see docs/BUILDING.md → "Code signing & notarization"). Electron's V8 needs
-  the JIT entitlements; library-validation is disabled because the app loads an
-  unsigned native addon (better-sqlite3).
+  Used by both ad-hoc beta builds and Developer ID/notarized builds.
+  Electron's V8 needs the JIT entitlements; library-validation is disabled
+  because the app loads the better-sqlite3 native addon.
 -->
 <plist version="1.0">
 <dict>

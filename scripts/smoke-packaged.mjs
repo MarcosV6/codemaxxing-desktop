@@ -43,7 +43,10 @@ if (!executable) {
 }
 
 const command = platform === 'linux' ? 'xvfb-run' : executable
-const args = platform === 'linux' ? ['-a', executable] : []
+// GitHub's unprivileged hosted runner cannot configure Electron's setuid
+// sandbox helper as root:4755. Disable Chromium's sandbox only for this
+// disposable CI launch; normal packaged-app launches remain sandboxed.
+const args = platform === 'linux' ? ['-a', executable, '--no-sandbox'] : []
 const output = []
 const child = spawn(command, args, {
   env: { ...process.env, ELECTRON_ENABLE_LOGGING: '1' },

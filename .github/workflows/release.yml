@@ -1,7 +1,7 @@
 name: Release
 
 # Builds installers for every supported platform and attaches them to the
-# GitHub Release for the pushed tag. Push a tag like `v1.3.7` to trigger.
+# GitHub Release for the pushed tag. Push a tag like `v1.3.8` to trigger.
 # `workflow_dispatch` lets you exercise the build matrix without releasing.
 
 on:
@@ -31,9 +31,9 @@ jobs:
           - { os: windows-latest, platform: win, arch: x64, args: '--win --x64' }
           - { os: ubuntu-latest, platform: linux, arch: x64, args: '--linux --x64' }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -84,7 +84,7 @@ jobs:
         run: node scripts/smoke-packaged.mjs ${{ matrix.platform }} ${{ matrix.arch }}
 
       - name: Collect installers
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.platform }}-${{ matrix.arch }}
           if-no-files-found: error
@@ -106,7 +106,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
 
@@ -121,7 +121,7 @@ jobs:
           ls -la
 
       - name: Attach to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist-release/*
           fail_on_unmatched_files: false

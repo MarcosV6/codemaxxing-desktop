@@ -6,6 +6,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [1.3.8] — 2026-07-24
+
+### Fixed
+
+- Run the packaged Linux launch smoke under Xvfb with `--no-sandbox`, because
+  GitHub's unprivileged hosted runner cannot configure Chromium's setuid
+  helper. Normal Linux application launches remain sandboxed.
+- Upgraded the GitHub checkout, Node setup, artifact, and release actions to
+  their current Node 24-based versions.
+
 ## [1.3.7] — 2026-07-24
 
 Beta-readiness hardening release.
@@ -69,6 +79,7 @@ First public release. macOS arm64 zip ships from GitHub Releases; Windows + Linu
 - Cosmetic: traffic-light padding in the renderer is currently macOS-tuned. Windows/Linux users see a small gap on the top-left of the sidebar header. Tracked in [WINDOWS_RELEASE.md](WINDOWS_RELEASE.md).
 - macOS may suspend the agent loop on battery when the lid is closed — `powerSaveBlocker` prevents app suspension but not system sleep.
 
-[Unreleased]: https://github.com/MarcosV6/codemaxxing-desktop/compare/v1.3.7...HEAD
+[Unreleased]: https://github.com/MarcosV6/codemaxxing-desktop/compare/v1.3.8...HEAD
+[1.3.8]: https://github.com/MarcosV6/codemaxxing-desktop/compare/v1.3.7...v1.3.8
 [1.3.7]: https://github.com/MarcosV6/codemaxxing-desktop/compare/v1.3.6...v1.3.7
 [1.0.0]: https://github.com/MarcosV6/codemaxxing-desktop/releases/tag/v1.0.0

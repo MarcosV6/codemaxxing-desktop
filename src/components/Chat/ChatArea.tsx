@@ -157,11 +157,26 @@ function EmptyState({ onPick, mode }: { onPick: (label: string) => void; mode: '
       ? 'pick a quickstart, or just start typing — I can navigate, read, click + type'
       : <>pick a quickstart, or just start typing — <span className="font-mono opacity-80">/help</span> if you're lost</>
   return (
-    <div className="h-full flex items-center justify-center">
-      <div className="w-full max-w-[600px] px-6 pb-16">
-        <div className="text-center mb-8 animate-fade-in">
+    <div className="h-full flex items-center justify-center relative overflow-hidden">
+      <div
+        className="absolute inset-x-[18%] top-[12%] h-[42%] pointer-events-none opacity-60"
+        style={{
+          background: 'radial-gradient(ellipse at center, color-mix(in srgb, var(--theme-primary) 12%, transparent), transparent 68%)',
+          filter: 'blur(34px)',
+        }}
+      />
+      <div className="relative w-full max-w-[680px] px-6 pb-14">
+        <div className="text-center mb-9 animate-fade-in">
+          <div className="hero-orbit w-12 h-12 mx-auto mb-6">
+            <div
+              className="assistant-mark w-full h-full rounded-2xl flex items-center justify-center font-mono text-[14px] font-bold"
+              style={{ color: 'var(--theme-primary)' }}
+            >
+              {'>_<'}
+            </div>
+          </div>
           <div
-            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10.5px] font-mono uppercase tracking-wider mb-4"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[9.5px] font-mono uppercase tracking-[0.14em] mb-3"
             style={{
               color: 'var(--theme-primary)',
               backgroundColor: 'color-mix(in srgb, var(--theme-primary) 10%, transparent)',
@@ -175,48 +190,42 @@ function EmptyState({ onPick, mode }: { onPick: (label: string) => void; mode: '
             {badgeLabel}
           </div>
           <h3
-            className="text-[30px] font-semibold mb-2 tracking-tight text-balance"
+            className="text-[34px] font-semibold mb-2.5 tracking-[-0.035em] text-balance"
             style={{ color: 'var(--theme-text)' }}
           >
             {taglines[tagIdx]}
           </h3>
-          <p className="text-[13px]" style={{ color: 'var(--theme-muted)' }}>
+          <p className="text-[13px] leading-relaxed" style={{ color: 'var(--theme-muted)' }}>
             {subtitle}
           </p>
         </div>
-        <div className="flex flex-col gap-1.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
           {suggestions.map(({ icon: Icon, label, hint }, i) => (
             <button
               key={i}
               onClick={() => onPick(label)}
-              className="group relative flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-left transition-all hover:bg-white/[0.035] focus-ring animate-segment-in"
+              className="quickstart-card group flex items-center gap-3 px-3.5 py-3 rounded-xl text-left focus-ring animate-segment-in"
               style={{
                 // Staggered entrance so the cards cascade in.
                 ['--stagger-delay' as string]: `${i * 60}ms`,
-                border: '1px solid transparent',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--theme-primary) 20%, transparent)'
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = 'transparent'
               }}
             >
               <span
-                className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 transition-colors"
+                className="w-8 h-8 rounded-[10px] flex items-center justify-center shrink-0 transition-all group-hover:scale-105"
                 style={{
-                  backgroundColor: 'color-mix(in srgb, var(--theme-primary) 10%, transparent)',
+                  background: 'linear-gradient(145deg, color-mix(in srgb, var(--theme-primary) 17%, transparent), color-mix(in srgb, var(--theme-secondary) 8%, transparent))',
+                  border: '1px solid color-mix(in srgb, var(--theme-primary) 18%, transparent)',
                   color: 'var(--theme-primary)',
                 }}
               >
-                <Icon size={13} strokeWidth={2} />
+                <Icon size={14} strokeWidth={2} />
               </span>
               <div className="flex-1 min-w-0">
-                <div className="text-[13.5px] leading-tight" style={{ color: 'var(--theme-text)' }}>
+                <div className="text-[13px] font-medium leading-tight" style={{ color: 'var(--theme-text)' }}>
                   {label}
                 </div>
                 <div
-                  className="text-[11.5px] leading-tight truncate opacity-60 mt-0.5"
+                  className="text-[11px] leading-tight truncate opacity-60 mt-1"
                   style={{ color: 'var(--theme-muted)' }}
                 >
                   {hint}
@@ -231,7 +240,7 @@ function EmptyState({ onPick, mode }: { onPick: (label: string) => void; mode: '
           ))}
         </div>
         <div
-          className="flex items-center justify-center gap-4 mt-6 text-[10.5px] font-mono opacity-40"
+          className="flex items-center justify-center gap-4 mt-7 text-[10px] font-mono opacity-45"
           style={{ color: 'var(--theme-muted)' }}
         >
           <span><kbd>⏎</kbd> send</span>
@@ -294,7 +303,7 @@ const ChatFooter = React.memo(function ChatFooter() {
               className="w-[22px] h-[22px] rounded-md flex items-center justify-center font-mono text-[10px] font-bold select-none"
               style={{ backgroundColor: 'color-mix(in srgb, var(--theme-primary) 16%, transparent)', color: 'var(--theme-primary)', boxShadow: 'inset 0 1px 0 0 var(--sheen)' }}
               aria-hidden
-            >{'>_'}</div>
+            >{'>_<'}</div>
           </div>
           <div className="min-w-0 flex-1 space-y-2">
             {currentSegments.map((seg, i) => {

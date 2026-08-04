@@ -54,15 +54,19 @@ Download the newest `Codemaxxing-<version>-arm64-mac.zip` from the [latest relea
 
 > Apple Silicon (M1–M4) only for now. Intel builds will return once we set up CI for them.
 
-#### One-liner install (Terminal)
+#### One-line install or update (Terminal)
 
-The fastest path — handles download, unzip, drop into `/Applications`, and removes the quarantine flag so Gatekeeper doesn't block it:
+The fastest path — it finds the latest release, verifies its SHA-256 checksum,
+installs it into `/Applications`, and removes the quarantine flag so Gatekeeper
+doesn't block it:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/MarcosV6/codemaxxing-desktop/main/install-mac.sh)
 ```
 
-Then launch from Applications. Done.
+Run the same command again whenever an update ships. It safely replaces the app
+bundle while keeping your sessions, settings, credentials, and projects intact.
+The app also shows an **update** chip when a newer GitHub release is available.
 
 #### Manual install (no Terminal)
 

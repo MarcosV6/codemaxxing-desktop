@@ -69,42 +69,46 @@ export function OnboardingOverlay() {
   return (
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center p-6"
-      style={{ backgroundColor: 'color-mix(in srgb, var(--theme-bg) 82%, transparent)', backdropFilter: 'blur(10px)' }}
+      style={{
+        background: 'radial-gradient(ellipse at 50% 25%, color-mix(in srgb, var(--theme-primary) 11%, transparent), transparent 55%), color-mix(in srgb, var(--theme-bg) 84%, transparent)',
+        backdropFilter: 'blur(16px)',
+      }}
     >
       <div
-        className="w-full max-w-lg rounded-2xl overflow-hidden flex flex-col"
-        style={{
-          backgroundColor: 'var(--theme-bg-subtle)',
-          border: '1px solid var(--theme-border)',
-          boxShadow: 'var(--shadow-2, 0 24px 60px rgba(0,0,0,0.5))',
-          maxHeight: '88vh',
-        }}
+        className="onboarding-card w-full max-w-lg rounded-[22px] overflow-hidden flex flex-col"
+        style={{ maxHeight: '88vh' }}
       >
         {/* progress rail */}
-        <div className="flex gap-1.5 px-6 pt-5">
+        <div className="flex gap-1.5 px-7 pt-6">
           {[0, 1, 2].map((i) => (
             <div
               key={i}
-              className="h-1 flex-1 rounded-full transition-all"
-              style={{ backgroundColor: i <= step ? 'var(--theme-primary)' : 'var(--theme-border)' }}
+              className="h-[3px] flex-1 rounded-full transition-all duration-300"
+              style={{
+                background: i <= step
+                  ? 'linear-gradient(90deg, var(--theme-primary), var(--theme-secondary))'
+                  : 'var(--theme-border)',
+                boxShadow: i === step ? '0 0 10px var(--accent-glow)' : 'none',
+              }}
             />
           ))}
         </div>
 
-        <div className="px-6 py-6 overflow-y-auto">
+        <div className="px-7 py-7 overflow-y-auto">
           {step === 0 && (
             <div className="text-center">
-              <div
-                className="w-16 h-16 mx-auto rounded-2xl flex items-center justify-center mb-5"
-                style={{
-                  backgroundColor: 'color-mix(in srgb, var(--theme-primary) 14%, transparent)',
-                  border: '1px solid color-mix(in srgb, var(--theme-primary) 30%, transparent)',
-                }}
-              >
-                <Terminal size={28} style={{ color: 'var(--theme-primary)' }} />
+              <div className="hero-orbit w-16 h-16 mx-auto mb-7">
+                <div
+                  className="assistant-mark w-full h-full rounded-[20px] flex items-center justify-center font-mono text-[18px] font-bold select-none"
+                  style={{ color: 'var(--theme-primary)' }}
+                  aria-label="Codemaxxing"
+                >
+                  {'>_<'}
+                </div>
               </div>
-              <h2 className="text-[22px] font-semibold mb-2" style={{ color: 'var(--theme-text)' }}>Welcome to codemaxxing</h2>
-              <p className="text-[13.5px] leading-relaxed mb-6" style={{ color: 'var(--theme-muted)' }}>
+              <div className="assistant-role mb-2">your ai workbench</div>
+              <h2 className="text-[27px] font-semibold tracking-[-0.035em] mb-2.5" style={{ color: 'var(--theme-text)' }}>Welcome to codemaxxing</h2>
+              <p className="text-[13.5px] leading-relaxed mb-7 max-w-[430px] mx-auto" style={{ color: 'var(--theme-muted)' }}>
                 An open coding agent that runs every model — cloud <em>or</em> local — with a built-in browser, council mode, and full cost control. Let's get you set up in under a minute.
               </p>
               <div className="grid grid-cols-3 gap-2 mb-2">
@@ -115,11 +119,10 @@ export function OnboardingOverlay() {
                 ].map(({ icon: Icon, label }) => (
                   <div
                     key={label}
-                    className="rounded-lg p-3 flex flex-col items-center gap-1.5 text-center"
-                    style={{ backgroundColor: 'var(--theme-bg-raised)', border: '1px solid var(--theme-hairline)' }}
+                    className="feature-card rounded-xl p-3.5 flex flex-col items-center gap-2 text-center"
                   >
-                    <Icon size={16} style={{ color: 'var(--theme-secondary)' }} />
-                    <span className="text-[10.5px]" style={{ color: 'var(--theme-muted)' }}>{label}</span>
+                    <Icon size={17} style={{ color: 'var(--theme-secondary)' }} />
+                    <span className="text-[10.5px] font-medium" style={{ color: 'var(--theme-muted)' }}>{label}</span>
                   </div>
                 ))}
               </div>
@@ -149,7 +152,7 @@ export function OnboardingOverlay() {
               )}
 
               {/* API key */}
-              <div className="rounded-lg p-3 mb-2.5" style={{ backgroundColor: 'var(--theme-bg-raised)', border: '1px solid var(--theme-hairline)' }}>
+              <div className="feature-card rounded-xl p-3 mb-2.5">
                 <div className="flex items-center gap-2 mb-2.5">
                   <KeyRound size={14} style={{ color: 'var(--theme-primary)' }} />
                   <span className="text-[12.5px] font-medium" style={{ color: 'var(--theme-text)' }}>Paste an API key</span>
@@ -214,7 +217,7 @@ export function OnboardingOverlay() {
               )}
 
               {/* Local models — LM Studio / Ollama */}
-              <div className="rounded-lg p-3" style={{ backgroundColor: 'var(--theme-bg-raised)', border: '1px solid var(--theme-hairline)' }}>
+              <div className="feature-card rounded-xl p-3">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <Cpu size={14} style={{ color: 'var(--theme-success)' }} />
@@ -248,8 +251,7 @@ export function OnboardingOverlay() {
 
               <button
                 onClick={() => pickDirectory()}
-                className="w-full rounded-lg p-3 mb-3 flex items-center gap-2.5 text-left hover:bg-white/[0.03] transition-colors"
-                style={{ backgroundColor: 'var(--theme-bg-raised)', border: '1px solid var(--theme-hairline)' }}
+                className="feature-card w-full rounded-xl p-3 mb-3 flex items-center gap-2.5 text-left"
               >
                 <FolderOpen size={15} style={{ color: 'var(--theme-primary)' }} />
                 <div className="min-w-0 flex-1">
@@ -275,7 +277,7 @@ export function OnboardingOverlay() {
         </div>
 
         {/* footer nav */}
-        <div className="flex items-center justify-between px-6 py-4" style={{ borderTop: '1px solid var(--theme-hairline)' }}>
+        <div className="flex items-center justify-between px-7 py-4" style={{ borderTop: '1px solid var(--theme-hairline)' }}>
           {step > 0 ? (
             <button onClick={() => setStep(step - 1)} className="text-[12.5px] flex items-center gap-1.5 opacity-70 hover:opacity-100" style={{ color: 'var(--theme-muted)' }}>
               <ArrowLeft size={13} /> Back
@@ -287,16 +289,14 @@ export function OnboardingOverlay() {
           {step < 2 ? (
             <button
               onClick={() => setStep(step + 1)}
-              className="text-[13px] px-4 py-2 rounded-lg font-medium flex items-center gap-1.5 transition-opacity hover:opacity-90"
-              style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-bg)' }}
+              className="primary-action text-[13px] px-4 py-2 rounded-lg font-medium flex items-center gap-1.5"
             >
               {step === 1 && !connected ? 'Skip for now' : step === 0 ? 'Get started' : 'Continue'} <ArrowRight size={14} />
             </button>
           ) : (
             <button
               onClick={() => complete()}
-              className="text-[13px] px-4 py-2 rounded-lg font-medium flex items-center gap-1.5 transition-opacity hover:opacity-90"
-              style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-bg)' }}
+              className="primary-action text-[13px] px-4 py-2 rounded-lg font-medium flex items-center gap-1.5"
             >
               Start building <ArrowRight size={14} />
             </button>

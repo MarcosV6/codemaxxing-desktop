@@ -90,7 +90,7 @@ const markdownComponents = {
 export const MarkdownText = React.memo(function MarkdownText({ text }: { text: string }) {
   return (
     <div
-      className="text-[14px] leading-[1.65] prose-invert"
+      className="message-prose text-[14px] leading-[1.68] prose-invert"
       style={{ color: 'var(--theme-text)' }}
     >
       <ReactMarkdown
@@ -139,15 +139,16 @@ function MessageFooter({ rawText, meta, timestamp }: { rawText: string; meta?: C
  *  metadata footer. Gives each turn clear authorship and visual rhythm. */
 function AssistantShell({ children, plain, meta, timestamp }: { children: React.ReactNode; plain: string; meta?: ChatMessage['meta']; timestamp?: number }) {
   return (
-    <div className="mb-6 animate-fade-in group/msg flex gap-3">
+    <div className="mb-7 animate-fade-in group/msg flex gap-3.5">
       <div className="shrink-0 mt-0.5">
         <div
-          className="w-[22px] h-[22px] rounded-md flex items-center justify-center font-mono text-[10px] font-bold select-none"
-          style={{ backgroundColor: 'color-mix(in srgb, var(--theme-primary) 16%, transparent)', color: 'var(--theme-primary)', boxShadow: 'inset 0 1px 0 0 var(--sheen)' }}
+          className="assistant-mark w-[26px] h-[26px] rounded-lg flex items-center justify-center font-mono text-[10px] font-bold select-none"
+          style={{ color: 'var(--theme-primary)' }}
           aria-hidden
-        >{'>_'}</div>
+        >{'>_<'}</div>
       </div>
       <div className="min-w-0 flex-1">
+        <div className="assistant-role mb-2">codemaxxing</div>
         <div className="space-y-2">{children}</div>
         {plain && <MessageFooter rawText={plain} meta={meta} timestamp={timestamp} />}
       </div>
@@ -251,18 +252,15 @@ function MessageBubbleInner({ message }: MessageBubbleProps) {
       <div className="mb-6 animate-fade-in flex flex-col items-end">
         {hasImages && <UserImageGrid images={message.images!} />}
         {hasText && (
-          <div
-            className="max-w-[85%] rounded-2xl rounded-br-md px-4 py-2.5 text-[14px] leading-[1.55] whitespace-pre-wrap"
-            style={{
-              backgroundColor: 'var(--theme-bubble)',
-              backgroundImage: 'linear-gradient(180deg, color-mix(in srgb, var(--theme-text) 5%, transparent), transparent 60%)',
-              color: 'var(--theme-text)',
-              border: '1px solid var(--theme-hairline)',
-              boxShadow: 'var(--shadow-1), inset 0 1px 0 0 var(--sheen)',
-            }}
-          >
-            {message.content}
-          </div>
+          <>
+            <div className="assistant-role mb-1.5 mr-1" style={{ color: 'var(--theme-muted)' }}>you</div>
+            <div
+              className="user-message max-w-[82%] rounded-2xl rounded-br-md px-4 py-2.5 text-[14px] leading-[1.58] whitespace-pre-wrap"
+              style={{ color: 'var(--theme-text)' }}
+            >
+              {message.content}
+            </div>
+          </>
         )}
       </div>
     )

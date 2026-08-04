@@ -44,37 +44,34 @@ function CodeBlockInner({ children, languageClass = '', rawText }: CodeBlockProp
   const lang = prettyLang(languageClass)
 
   return (
-    <div className="relative group my-3">
-      <div
-        className="rounded-xl overflow-hidden"
-        style={{
-          backgroundColor: 'var(--theme-bg-subtle)',
-          border: '1px solid var(--theme-hairline)',
-          boxShadow: 'var(--shadow-1), inset 0 1px 0 0 var(--sheen)',
-        }}
-      >
+    <div className="relative group my-4">
+      <div className="code-surface relative rounded-xl overflow-hidden">
         <div
-          className="flex items-center justify-between px-3 py-1.5 text-[10.5px] font-mono uppercase tracking-wider"
+          className="flex items-center justify-between px-3.5 py-2 text-[10.5px] font-mono uppercase tracking-wider"
           style={{
             color: 'var(--theme-muted)',
             borderBottom: '1px solid var(--theme-hairline)',
             backgroundColor: 'color-mix(in srgb, var(--theme-bg-raised) 60%, transparent)',
           }}
         >
-          <span className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--theme-primary)' }} />
-            <span className="opacity-70">{lang || 'plain'}</span>
+          <span className="flex items-center gap-2.5">
+            <span className="flex items-center gap-1" aria-hidden>
+              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--theme-error)', opacity: 0.7 }} />
+              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--theme-warning)', opacity: 0.7 }} />
+              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--theme-success)', opacity: 0.7 }} />
+            </span>
+            <span className="opacity-75">{lang || 'plain text'}</span>
           </span>
           <button
             onClick={onCopy}
-            className="flex items-center gap-1 px-1.5 py-0.5 rounded opacity-60 hover:opacity-100 hover:bg-white/5 transition-all focus-ring"
+            className="toolbar-chip flex items-center gap-1.5 px-2 py-1 rounded-md opacity-75 hover:opacity-100 focus-ring"
             title={copied ? 'Copied!' : 'Copy code'}
           >
-            {copied ? <Check size={10} /> : <Copy size={10} />}
+            {copied ? <Check size={11} /> : <Copy size={11} />}
             <span className="normal-case tracking-normal">{copied ? 'Copied' : 'Copy'}</span>
           </button>
         </div>
-        <pre className="px-3.5 py-3 overflow-x-auto text-[12.5px] leading-[1.6] m-0">
+        <pre className="px-4 py-3.5 overflow-x-auto text-[12.5px] leading-[1.65] m-0">
           {children}
         </pre>
       </div>

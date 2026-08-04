@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useAppStore } from '../../store/appStore'
-import { X, Folder, Code2, MessageCircle, Compass, AlertCircle, Pencil, Loader2, ExternalLink } from 'lucide-react'
+import { X, Folder, Code2, MessageCircle, Compass, AlertCircle, Pencil, Loader2, ExternalLink, ArrowRight, Sparkles } from 'lucide-react'
 import type { SessionMode } from '../../types'
 
 interface NewSessionModalProps {
@@ -144,61 +144,81 @@ export function NewSessionModal({ open, onClose, initialMode }: NewSessionModalP
   }
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+    <div className="modal-backdrop fixed inset-0 z-40 flex items-center justify-center p-6"
          onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="w-full max-w-lg rounded-lg border shadow-2xl"
-           style={{ backgroundColor: 'var(--theme-bg, #0a0a0f)', borderColor: 'var(--theme-border, #334155)' }}>
-        <div className="flex items-center justify-between px-4 py-3 border-b"
-             style={{ borderColor: 'var(--theme-border, #334155)' }}>
-          <span className="text-sm font-mono">New session</span>
-          <button aria-label="Close new session" onClick={onClose} className="opacity-60 hover:opacity-100"><X size={16} /></button>
+      <div className="modal-shell w-full max-w-xl rounded-[20px] overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4"
+             style={{ borderBottom: '1px solid var(--theme-hairline)' }}>
+          <div className="flex items-center gap-3">
+            <div
+              className="assistant-mark w-9 h-9 rounded-xl flex items-center justify-center"
+              style={{ color: 'var(--theme-primary)' }}
+            >
+              <Sparkles size={16} />
+            </div>
+            <div>
+              <div className="text-[15px] font-semibold tracking-tight">Start a new session</div>
+              <div className="text-[11px] mt-0.5" style={{ color: 'var(--theme-muted)' }}>Choose how you want to work and which intelligence to use.</div>
+            </div>
+          </div>
+          <button
+            aria-label="Close new session"
+            onClick={onClose}
+            className="toolbar-chip w-8 h-8 rounded-lg flex items-center justify-center"
+            style={{ color: 'var(--theme-muted)' }}
+          >
+            <X size={15} />
+          </button>
         </div>
 
-        <div className="p-4 space-y-3" style={{ color: 'var(--theme-text, #C0CAF5)' }}>
+        <div className="p-5 space-y-4" style={{ color: 'var(--theme-text, #C0CAF5)' }}>
           {/* ── Mode toggle ── */}
-          <div className="space-y-1">
-            <div className="text-[10px] uppercase font-mono opacity-60">Session type</div>
-            <div className="grid grid-cols-3 gap-2">
+          <div className="space-y-2">
+            <div className="form-label">Session type</div>
+            <div className="grid grid-cols-3 gap-2.5">
               <button
                 onClick={() => setMode('code')}
-                className="flex flex-col gap-1.5 px-3 py-2.5 rounded border text-left"
-                style={{
-                  borderColor: mode === 'code' ? 'var(--theme-primary, #7AA2F7)' : 'var(--theme-border, #334155)',
-                  backgroundColor: mode === 'code' ? 'color-mix(in srgb, var(--theme-primary) 12%, transparent)' : 'transparent',
-                }}
+                className={`mode-card flex items-start gap-2.5 px-3 py-3 rounded-xl text-left ${mode === 'code' ? 'is-active' : ''}`}
               >
-                <Code2 size={15} style={{ color: mode === 'code' ? 'var(--theme-primary)' : undefined }} />
+                <span
+                  className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+                  style={{ backgroundColor: 'color-mix(in srgb, var(--theme-primary) 12%, transparent)', color: mode === 'code' ? 'var(--theme-primary)' : 'var(--theme-muted)' }}
+                >
+                  <Code2 size={14} />
+                </span>
                 <div>
-                  <div className="text-xs font-mono">Agent</div>
-                  <div className="text-[10px] opacity-60 leading-tight">Files, shell, git</div>
+                  <div className="text-[12px] font-medium">Agent</div>
+                  <div className="text-[10px] opacity-55 leading-tight mt-0.5">Files · shell · git</div>
                 </div>
               </button>
               <button
                 onClick={() => setMode('chat')}
-                className="flex flex-col gap-1.5 px-3 py-2.5 rounded border text-left"
-                style={{
-                  borderColor: mode === 'chat' ? 'var(--theme-primary, #7AA2F7)' : 'var(--theme-border, #334155)',
-                  backgroundColor: mode === 'chat' ? 'color-mix(in srgb, var(--theme-primary) 12%, transparent)' : 'transparent',
-                }}
+                className={`mode-card flex items-start gap-2.5 px-3 py-3 rounded-xl text-left ${mode === 'chat' ? 'is-active' : ''}`}
               >
-                <MessageCircle size={15} style={{ color: mode === 'chat' ? 'var(--theme-primary)' : undefined }} />
+                <span
+                  className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+                  style={{ backgroundColor: 'color-mix(in srgb, var(--theme-primary) 12%, transparent)', color: mode === 'chat' ? 'var(--theme-primary)' : 'var(--theme-muted)' }}
+                >
+                  <MessageCircle size={14} />
+                </span>
                 <div>
-                  <div className="text-xs font-mono">Chat</div>
-                  <div className="text-[10px] opacity-60 leading-tight">Talk + web search</div>
+                  <div className="text-[12px] font-medium">Chat</div>
+                  <div className="text-[10px] opacity-55 leading-tight mt-0.5">Talk · web search</div>
                 </div>
               </button>
               <button
                 onClick={() => setMode('browser')}
-                className="flex flex-col gap-1.5 px-3 py-2.5 rounded border text-left"
-                style={{
-                  borderColor: mode === 'browser' ? 'var(--theme-primary, #7AA2F7)' : 'var(--theme-border, #334155)',
-                  backgroundColor: mode === 'browser' ? 'color-mix(in srgb, var(--theme-primary) 12%, transparent)' : 'transparent',
-                }}
+                className={`mode-card flex items-start gap-2.5 px-3 py-3 rounded-xl text-left ${mode === 'browser' ? 'is-active' : ''}`}
               >
-                <Compass size={15} style={{ color: mode === 'browser' ? 'var(--theme-primary)' : undefined }} />
+                <span
+                  className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+                  style={{ backgroundColor: 'color-mix(in srgb, var(--theme-primary) 12%, transparent)', color: mode === 'browser' ? 'var(--theme-primary)' : 'var(--theme-muted)' }}
+                >
+                  <Compass size={14} />
+                </span>
                 <div>
-                  <div className="text-xs font-mono">Browser</div>
-                  <div className="text-[10px] opacity-60 leading-tight">Browse — agent drives</div>
+                  <div className="text-[12px] font-medium">Browser</div>
+                  <div className="text-[10px] opacity-55 leading-tight mt-0.5">Agent drives</div>
                 </div>
               </button>
             </div>
@@ -206,17 +226,15 @@ export function NewSessionModal({ open, onClose, initialMode }: NewSessionModalP
 
           {/* ── Project directory (code/agent mode only) ── */}
           {!noProjectDir && (
-            <div className="space-y-1">
-              <div className="text-[10px] uppercase font-mono opacity-60">Project directory</div>
+            <div className="space-y-2">
+              <div className="form-label">Project directory</div>
               <div className="flex items-center gap-2">
-                <div className="flex-1 text-xs font-mono rounded border px-2 py-1.5 truncate"
-                     style={{ borderColor: 'var(--theme-border, #334155)', backgroundColor: 'var(--theme-bg-subtle, #0d0d14)' }}>
+                <div className="field-shell flex-1 text-[11.5px] font-mono rounded-lg px-3 py-2.5 truncate">
                   {cwd || '(none)'}
                 </div>
                 <button
                   onClick={async () => { const p = await pickDirectory(); if (p) setCwd(p) }}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-mono border"
-                  style={{ borderColor: 'var(--theme-border, #334155)' }}
+                  className="toolbar-chip flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-[11.5px] font-medium"
                 >
                   <Folder size={12} /> Pick
                 </button>
@@ -224,13 +242,12 @@ export function NewSessionModal({ open, onClose, initialMode }: NewSessionModalP
             </div>
           )}
 
-          <div className="space-y-1">
-            <div className="text-[10px] uppercase font-mono opacity-60">Provider</div>
+          <div className="space-y-2">
+            <div className="form-label">Provider</div>
             <select
               value={provider}
               onChange={(e) => { setProvider(e.target.value); setModel(''); setSetupKey('') }}
-              className="w-full text-xs font-mono px-2 py-1.5 rounded border bg-transparent outline-none"
-              style={{ borderColor: 'var(--theme-border, #334155)' }}
+              className="field-shell w-full text-[11.5px] font-mono px-3 py-2.5 rounded-lg outline-none"
             >
               <option value="">Choose a provider…</option>
               {providers.map(p => (
@@ -279,9 +296,9 @@ export function NewSessionModal({ open, onClose, initialMode }: NewSessionModalP
             )}
           </div>
 
-          <div className="space-y-1">
+          <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <div className="text-[10px] uppercase font-mono opacity-60">Model</div>
+              <div className="form-label">Model</div>
               {/* Toggle between dropdown and manual-id entry whenever a list
                   is available — local providers like LM Studio or a custom
                   endpoint may have models the discovery call doesn't surface. */}
@@ -317,16 +334,14 @@ export function NewSessionModal({ open, onClose, initialMode }: NewSessionModalP
                     : 'model id'
                 }
                 disabled={!provider}
-                className="w-full text-xs font-mono px-2 py-1.5 rounded border bg-transparent outline-none disabled:opacity-50"
-                style={{ borderColor: 'var(--theme-border, #334155)' }}
+                className="field-shell w-full text-[11.5px] font-mono px-3 py-2.5 rounded-lg outline-none disabled:opacity-50"
               />
             ) : (
               <select
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
                 disabled={!provider}
-                className="w-full text-xs font-mono px-2 py-1.5 rounded border bg-transparent outline-none disabled:opacity-50"
-                style={{ borderColor: 'var(--theme-border, #334155)' }}
+                className="field-shell w-full text-[11.5px] font-mono px-3 py-2.5 rounded-lg outline-none disabled:opacity-50"
               >
                 <option value="">Choose a model…</option>
                 {availableModels.map(m => (
@@ -362,22 +377,26 @@ export function NewSessionModal({ open, onClose, initialMode }: NewSessionModalP
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t"
-             style={{ borderColor: 'var(--theme-border, #334155)' }}>
+        <div className="flex items-center justify-between gap-3 px-5 py-4"
+             style={{ borderTop: '1px solid var(--theme-hairline)' }}>
+          <div className="text-[10px] font-mono" style={{ color: 'var(--theme-muted)', opacity: 0.55 }}>
+            Settings stay editable after launch
+          </div>
+          <div className="flex items-center gap-2">
           <button
             onClick={onClose}
-            className="px-3 py-1.5 rounded text-xs font-mono border"
-            style={{ borderColor: 'var(--theme-border, #334155)' }}
+            className="toolbar-chip px-3.5 py-2 rounded-lg text-[11.5px] font-medium"
           >
             Cancel
           </button>
           <button
             onClick={handleCreate}
             disabled={!canCreate}
-            className="px-3 py-1.5 rounded text-xs font-mono bg-cyan-700 hover:bg-cyan-600 disabled:opacity-40 disabled:cursor-not-allowed text-white"
+            className="primary-action px-4 py-2 rounded-lg text-[11.5px] font-medium flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            {loading ? 'Creating…' : 'Create'}
+            {loading ? 'Creating…' : 'Launch session'} {!loading && <ArrowRight size={13} />}
           </button>
+          </div>
         </div>
       </div>
     </div>

@@ -166,9 +166,8 @@ export function StatusBar() {
 
   return (
     <div
-      className="h-7 flex items-center justify-between px-3 text-[11px] select-none"
+      className="status-chrome h-7 flex items-center justify-between px-3 text-[11px] select-none"
       style={{
-        backgroundColor: 'var(--theme-bg-subtle)',
         color: 'var(--theme-muted)',
         borderTop: '1px solid var(--theme-hairline)',
       }}

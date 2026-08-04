@@ -37,16 +37,16 @@ export function BrowserSpaces({
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-4">
       {/* ── Pinned favorites grid ── */}
-      <div className="flex flex-col gap-1.5">
+      <div className="flex flex-col gap-2">
         <div className="flex items-center px-1">
-          <span className="text-[10px] uppercase tracking-wider font-mono" style={{ color: 'var(--theme-muted)' }}>Pinned</span>
+          <span className="browser-section-label">Pinned</span>
           <span className="flex-1" />
           {canUseCurrent && (
             <button
               onClick={() => pinSite(current!)}
-              className="text-[10px] flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-white/5"
+              className="browser-control text-[9.5px] flex items-center gap-1 px-1.5 py-1 rounded-md"
               style={{ color: 'var(--theme-muted)' }}
               title="Pin current page"
             >
@@ -55,7 +55,17 @@ export function BrowserSpaces({
           )}
         </div>
         {spaces.pins.length === 0 ? (
-          <div className="px-1 text-[11px]" style={{ color: 'var(--theme-muted)', opacity: 0.6 }}>No pins yet</div>
+          <div
+            className="mx-0.5 rounded-lg px-2.5 py-2 flex items-center gap-2"
+            style={{
+              backgroundColor: 'color-mix(in srgb, var(--theme-bg-raised) 46%, transparent)',
+              border: '1px dashed var(--theme-hairline-strong)',
+              color: 'var(--theme-muted)',
+            }}
+          >
+            <Pin size={11} className="shrink-0 opacity-60" />
+            <span className="text-[10.5px] opacity-60">Pin pages you use every day</span>
+          </div>
         ) : (
           <div className="grid gap-1" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(38px, 1fr))' }}>
             {spaces.pins.map((p) => (
@@ -63,8 +73,7 @@ export function BrowserSpaces({
                 <button
                   onClick={() => onOpen(p.url)}
                   title={p.title}
-                  className="w-full aspect-square rounded-lg flex items-center justify-center hover:bg-white/5 transition-colors"
-                  style={{ border: '1px solid var(--theme-hairline)' }}
+                  className="browser-pin w-full aspect-square rounded-lg flex items-center justify-center"
                 >
                   <SiteIcon url={p.url} size={18} />
                 </button>
@@ -83,13 +92,13 @@ export function BrowserSpaces({
       </div>
 
       {/* ── Folders ── */}
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-1.5">
         <div className="flex items-center px-1">
-          <span className="text-[10px] uppercase tracking-wider font-mono" style={{ color: 'var(--theme-muted)' }}>Folders</span>
+          <span className="browser-section-label">Collections</span>
           <span className="flex-1" />
           <button
             onClick={() => { setAdding(true); setDraft('') }}
-            className="text-[10px] flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-white/5"
+            className="browser-control text-[9.5px] flex items-center gap-1 px-1.5 py-1 rounded-md"
             style={{ color: 'var(--theme-muted)' }}
             title="New folder"
           >
@@ -105,15 +114,30 @@ export function BrowserSpaces({
             onKeyDown={(e) => { if (e.key === 'Enter') commitFolder(); else if (e.key === 'Escape') { setAdding(false); setDraft('') } }}
             onBlur={commitFolder}
             placeholder="Folder name"
-            className="mx-1 bg-transparent outline-none text-[12px] rounded px-2 py-1"
-            style={{ color: 'var(--theme-text)', border: '1px solid var(--theme-border)' }}
+            className="field-shell mx-1 outline-none text-[11.5px] rounded-lg px-2.5 py-2"
+            style={{ color: 'var(--theme-text)' }}
           />
+        )}
+
+        {spaces.folders.length === 0 && !adding && (
+          <button
+            onClick={() => { setAdding(true); setDraft('') }}
+            className="mx-0.5 rounded-lg px-2.5 py-2 flex items-center gap-2 text-left"
+            style={{
+              backgroundColor: 'color-mix(in srgb, var(--theme-bg-raised) 38%, transparent)',
+              border: '1px solid var(--theme-hairline)',
+              color: 'var(--theme-muted)',
+            }}
+          >
+            <FolderPlus size={11} className="opacity-60" />
+            <span className="text-[10.5px] opacity-60">Create a collection</span>
+          </button>
         )}
 
         {spaces.folders.map((f) => (
           <div key={f.id} className="flex flex-col">
             <div
-              className="group flex items-center gap-1 px-1 py-1 rounded-md cursor-pointer hover:bg-white/5"
+              className="browser-tab-row group flex items-center gap-1.5 px-2 py-1.5 rounded-lg cursor-pointer"
               onClick={() => toggleFolder(f.id)}
             >
               {f.collapsed ? <ChevronRight size={13} style={{ color: 'var(--theme-muted)' }} /> : <ChevronDown size={13} style={{ color: 'var(--theme-muted)' }} />}
@@ -144,7 +168,7 @@ export function BrowserSpaces({
               <div
                 key={s.id}
                 onClick={() => onOpen(s.url)}
-                className="group flex items-center gap-2 pl-6 pr-1 py-1 rounded-md cursor-pointer hover:bg-white/5"
+                className="browser-tab-row group flex items-center gap-2 pl-7 pr-1.5 py-1.5 rounded-lg cursor-pointer"
               >
                 <SiteIcon url={s.url} size={13} />
                 <span className="flex-1 truncate text-[12px]" style={{ color: 'var(--theme-muted)' }}>{s.title}</span>

@@ -6,7 +6,7 @@ import { BrowserMode } from '../Browser/BrowserMode'
 import { useAppStore, type ModelInfo } from '../../store/appStore'
 import { displayPathTail, MOD, MOD_SHIFT, PAD_TRAFFIC_84, PAD_TRAFFIC_92 } from '../../utils/platform'
 import type { SessionMode } from '../../types'
-import { Plus, MessageSquare, MessageCircle, PanelLeftClose, PanelLeft, PanelRight, Settings, Trash2, Folder, BookmarkCheck, Bot, Clock, BookOpen, GitCompare, StickyNote, FileText, Mail, CalendarDays, ChevronDown, FolderTree, Loader2, Search, Compass } from 'lucide-react'
+import { Plus, MessageSquare, MessageCircle, PanelLeftClose, PanelLeft, PanelRight, Settings, Trash2, Folder, BookmarkCheck, Bot, Clock, BookOpen, GitCompare, StickyNote, FileText, Mail, CalendarDays, ChevronDown, FolderTree, Loader2, Search, Compass, Sparkles, ShieldCheck, Cpu } from 'lucide-react'
 import { ApprovalModal, MCPApprovalModal } from '../Modals/ApprovalModal'
 import { SettingsModal } from '../Modals/SettingsModal'
 import { NewSessionModal } from '../Modals/NewSessionModal'
@@ -277,13 +277,9 @@ export function Layout() {
         {/* Sidebar */}
         {sidebarOpen && (
           <aside
-            className="relative flex flex-col shrink-0"
+            className="sidebar-shell relative flex flex-col shrink-0"
             style={{
               width: sidebarResize.width,
-              backgroundColor: 'var(--theme-bg-subtle)',
-              backgroundImage: 'linear-gradient(180deg, color-mix(in srgb, var(--theme-text) 3%, transparent), transparent 26%)',
-              borderRight: '1px solid var(--theme-hairline)',
-              boxShadow: 'inset -1px 0 0 0 var(--sheen)',
             }}
           >
             <ResizeHandle handleProps={sidebarResize.handleProps} label="sidebar" />
@@ -293,7 +289,7 @@ export function Layout() {
               className={`h-12 flex items-center justify-between ${PAD_TRAFFIC_92} pr-3`}
               style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
             >
-              <span className="text-[13px] font-medium tracking-tight">codemaxxing</span>
+              <span className="brand-wordmark">codemaxxing</span>
               <button
                 onClick={() => setSidebarOpen(false)}
                 className="w-7 h-7 rounded-md flex items-center justify-center opacity-60 hover:opacity-100 hover:bg-white/5 transition-all"
@@ -308,8 +304,7 @@ export function Layout() {
             <div className="px-2 pt-2">
               <button
                 onClick={handleNewSession}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] transition-colors hover:bg-white/5 focus-ring"
-                style={{ color: 'var(--theme-text)' }}
+                className="primary-action w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-[13px] font-medium focus-ring"
               >
                 <Plus size={14} />
                 <span>New session</span>
@@ -319,7 +314,7 @@ export function Layout() {
 
             {/* Section header */}
             <div className="px-4 pt-5 pb-1.5">
-              <span className="text-[10.5px] font-medium uppercase tracking-wider opacity-40">
+              <span className="nav-section-label">
                 Recent
               </span>
             </div>
@@ -344,10 +339,7 @@ export function Layout() {
                         setRenamingId(s.id)
                         setRenameDraft(s.title || '')
                       }}
-                      className="group relative flex items-center gap-2 px-3 py-1.5 rounded-lg cursor-pointer transition-colors hover:bg-white/[0.03]"
-                      style={active ? {
-                        backgroundColor: 'color-mix(in srgb, var(--theme-primary) 10%, transparent)',
-                      } : undefined}
+                      className={`session-row group relative flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer ${active ? 'is-active' : ''}`}
                       title={isRenaming ? undefined : 'Double-click to rename'}
                     >
                       {active && (
@@ -435,7 +427,7 @@ export function Layout() {
                 surface gets the same highlight treatment as the active session. */}
             <div className="px-2 pb-1 shrink-0">
               <div className="px-2 pt-3 pb-1.5">
-                <span className="text-[10.5px] font-medium uppercase tracking-wider opacity-40">Workspaces</span>
+                <span className="nav-section-label">Workspaces</span>
               </div>
               {/* No active-state styling here: opening any of these replaces the
                   whole layout (sidebar included), so none can be "current". */}
@@ -449,7 +441,7 @@ export function Layout() {
                 <button
                   key={label}
                   onClick={onClick}
-                  className="w-full flex items-center gap-2 px-2 py-[7px] rounded-lg text-[12.5px] transition-colors hover:bg-white/5 focus-ring"
+                  className="workspace-nav-row w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[12.5px] focus-ring"
                   style={{ color: 'var(--theme-text)' }}
                 >
                   <Icon size={14} style={{ opacity: 0.65 }} />
@@ -517,7 +509,7 @@ export function Layout() {
         <div className="flex-1 flex flex-col overflow-hidden relative min-w-[360px]">
           {/* Top bar */}
           <header
-            className={`h-12 flex items-center justify-between pr-3 shrink-0 ${sidebarOpen ? 'pl-4' : PAD_TRAFFIC_84}`}
+            className={`workspace-header h-12 flex items-center justify-between pr-3 shrink-0 ${sidebarOpen ? 'pl-4' : PAD_TRAFFIC_84}`}
             style={{
               WebkitAppRegion: 'drag',
             } as React.CSSProperties}
@@ -545,7 +537,7 @@ export function Layout() {
                   <div className="hidden sm:block relative" ref={modelPickerRef}>
                     <button
                       onClick={() => setModelPickerOpen((v) => !v)}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11.5px] font-mono opacity-70 hover:opacity-100 hover:bg-white/5 transition-all focus-ring"
+                      className="toolbar-chip inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11.5px] font-mono opacity-80 hover:opacity-100 focus-ring"
                       style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
                       title={`${activeSession.provider} · ${activeSession.model}`}
                     >
@@ -735,7 +727,7 @@ export function Layout() {
                   ) : (
                     <button
                       onClick={handleChangeCwd}
-                      className="group/cwd flex items-center gap-1.5 px-2 py-1 rounded-md transition-colors hover:bg-white/5 focus-ring"
+                      className="toolbar-chip group/cwd flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg focus-ring"
                       style={{
                         WebkitAppRegion: 'no-drag',
                       } as React.CSSProperties}
@@ -761,7 +753,7 @@ export function Layout() {
               {!isChatSession && (
                 <button
                   onClick={toggleFilesPanel}
-                  className="flex items-center gap-1 px-2 py-1 rounded-md hover:bg-white/5 transition-colors focus-ring"
+                  className={`toolbar-chip flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg focus-ring ${filesPanelOpen ? 'is-active' : ''}`}
                   style={{
                     WebkitAppRegion: 'no-drag',
                     color: filesPanelOpen ? 'var(--theme-primary)' : 'var(--theme-muted)',
@@ -774,7 +766,7 @@ export function Layout() {
               )}
               <button
                 onClick={togglePreview}
-                className="flex items-center gap-1 px-2 py-1 rounded-md hover:bg-white/5 transition-colors focus-ring"
+                className={`toolbar-chip flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg focus-ring ${previewOpen ? 'is-active' : ''}`}
                 style={{
                   WebkitAppRegion: 'no-drag',
                   color: previewOpen ? 'var(--theme-primary)' : 'var(--theme-muted)',
@@ -821,53 +813,76 @@ export function Layout() {
 
 function EmptyState({ onNewSession }: { onNewSession: () => void }) {
   return (
-    <div className="h-full flex items-center justify-center">
-      <div className="text-center max-w-sm px-6 animate-fade-in">
-        <div className="relative mx-auto mb-6 w-14 h-14">
+    <div className="h-full flex items-center justify-center relative overflow-hidden">
+      <div
+        className="absolute inset-x-[16%] top-[18%] h-[54%] pointer-events-none opacity-60"
+        style={{
+          background: 'radial-gradient(ellipse at center, color-mix(in srgb, var(--theme-primary) 15%, transparent), transparent 64%)',
+          filter: 'blur(20px)',
+        }}
+      />
+      <div className="text-center max-w-lg px-8 pb-8 animate-fade-in relative">
+        <div className="hero-orbit relative mx-auto mb-9 w-16 h-16">
           <div
-            className="absolute -inset-7 rounded-full pointer-events-none animate-pulse"
-            style={{ background: 'radial-gradient(circle, color-mix(in srgb, var(--theme-primary) 22%, transparent), transparent 70%)', animationDuration: '4s' }}
-          />
-          <div
-            className="relative w-14 h-14 rounded-2xl flex items-center justify-center font-mono text-[20px] font-bold select-none"
+            className="assistant-mark relative w-16 h-16 rounded-2xl flex items-center justify-center font-mono text-[21px] font-bold select-none"
             style={{
-              backgroundColor: 'color-mix(in srgb, var(--theme-primary) 14%, transparent)',
-              border: '1px solid color-mix(in srgb, var(--theme-primary) 32%, transparent)',
               color: 'var(--theme-primary)',
-              boxShadow: '0 8px 32px -8px color-mix(in srgb, var(--theme-primary) 42%, transparent), inset 0 1px 0 0 var(--sheen)',
             }}
           >
-            {'>_'}
+            {'>_<'}
           </div>
         </div>
-        <h2 className="text-[26px] font-semibold mb-1 tracking-tight">
-          codemaxxing
-          <span className="animate-pulse" style={{ color: 'var(--theme-primary)' }}>_</span>
+        <div
+          className="inline-flex items-center gap-2 px-3 py-1 rounded-full mb-4 text-[10px] font-mono uppercase tracking-[0.16em]"
+          style={{
+            color: 'var(--theme-primary)',
+            backgroundColor: 'color-mix(in srgb, var(--theme-primary) 9%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--theme-primary) 20%, transparent)',
+          }}
+        >
+          <Sparkles size={11} />
+          AI workbench online
+        </div>
+        <h2 className="text-[34px] font-semibold mb-2 tracking-[-0.045em] text-balance">
+          Build at the speed of thought.
         </h2>
-        <p className="text-[13.5px] mb-7 leading-relaxed" style={{ color: 'var(--theme-muted)' }}>
-          Your agentic coding workspace — local models, cloud frontier, one app.
+        <p className="text-[14px] mb-8 leading-relaxed max-w-md mx-auto text-balance" style={{ color: 'var(--theme-muted)' }}>
+          One focused workspace for frontier models, local intelligence, and the tools that turn ideas into working software.
         </p>
         <button
           onClick={onNewSession}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-[13px] font-medium transition-all hover:brightness-110 active:scale-[0.98] focus-ring"
-          style={{
-            backgroundColor: 'var(--theme-primary)',
-            color: 'var(--theme-bg)',
-            boxShadow: '0 4px 14px -4px color-mix(in srgb, var(--theme-primary) 50%, transparent)',
-          }}
+          className="primary-action inline-flex items-center gap-2.5 px-5 py-3 rounded-xl text-[13.5px] font-medium active:scale-[0.98] focus-ring"
         >
           <Plus size={14} />
-          New session
+          Start a new session
         </button>
+        <div className="flex items-center justify-center gap-2 mt-7 flex-wrap">
+          {[
+            { icon: ShieldCheck, label: 'Your data, your machine' },
+            { icon: Cpu, label: 'Cloud + local models' },
+            { icon: Sparkles, label: 'Agent-ready' },
+          ].map(({ icon: Icon, label }) => (
+            <span
+              key={label}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10.5px]"
+              style={{
+                color: 'var(--theme-muted)',
+                backgroundColor: 'color-mix(in srgb, var(--theme-text) 3%, transparent)',
+                border: '1px solid var(--theme-hairline)',
+              }}
+            >
+              <Icon size={11} style={{ color: 'var(--theme-primary)' }} />
+              {label}
+            </span>
+          ))}
+        </div>
         <div
-          className="flex items-center justify-center gap-4 mt-7 text-[10.5px] font-mono opacity-40"
+          className="flex items-center justify-center gap-4 mt-6 text-[10.5px] font-mono opacity-45"
           style={{ color: 'var(--theme-muted)' }}
         >
           <span><kbd>{MOD}N</kbd> new session</span>
           <span>·</span>
-          <span><kbd>/</kbd> commands</span>
-          <span>·</span>
-          <span>16 themes</span>
+          <span><kbd>{MOD}K</kbd> command center</span>
         </div>
       </div>
     </div>

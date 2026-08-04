@@ -37,7 +37,7 @@ export class ErrorBoundary extends React.Component<
         }}
       >
         <div style={{ maxWidth: 460, textAlign: 'center' }}>
-          <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 8, color: 'var(--theme-primary, #E8826B)' }}>{'>_'} something broke</div>
+          <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 8, color: 'var(--theme-primary, #E8826B)' }}>{'>_<'} something broke</div>
           <p style={{ opacity: 0.7, fontSize: 13, lineHeight: 1.5, marginBottom: 16 }}>
             The UI hit an unexpected error. Your sessions and data are safe on disk — a reload usually fixes it.
           </p>

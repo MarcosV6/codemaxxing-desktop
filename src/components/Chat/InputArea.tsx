@@ -459,10 +459,10 @@ export function InputArea({
       )}
 
       <div
-        className="input-shell relative rounded-2xl transition-all duration-150"
+        className="input-shell relative rounded-[18px] transition-all duration-150"
         style={{
           backgroundColor: 'var(--theme-bg-raised)',
-          border: '1px solid var(--theme-hairline)',
+          border: '1px solid var(--theme-hairline-strong)',
         }}
       >
         {(hasAttachments || attachBusy) && (
@@ -541,9 +541,9 @@ export function InputArea({
           onClick={syncCaret}
           onSelect={syncCaret}
           onPaste={handlePaste}
-          placeholder="Message codemaxxing… (try / for commands, @ for files, paste images)"
+          placeholder="Ask codemaxxing anything…  / commands · @ files"
           disabled={disabled || isLoading}
-          className="w-full bg-transparent resize-none outline-none text-[14px] leading-[1.55] px-4 pt-3.5 pb-12 min-h-[60px] max-h-[220px] placeholder:opacity-50"
+          className="w-full bg-transparent resize-none outline-none text-[14px] leading-[1.55] px-4 pt-4 pb-12 min-h-[64px] max-h-[220px] placeholder:opacity-45"
           style={{
             color: 'var(--theme-text)',
           }}
@@ -560,7 +560,7 @@ export function InputArea({
               type="button"
               onClick={handlePickFiles}
               disabled={disabled || isLoading}
-              className="w-7 h-7 rounded-full flex items-center justify-center transition-colors hover:bg-white/[0.06] disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+              className="toolbar-chip w-7 h-7 rounded-lg flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
               style={{ color: 'var(--theme-muted)' }}
               title="Attach image"
             >
@@ -568,12 +568,8 @@ export function InputArea({
             </button>
             {modelLabel && (
               <span
-                className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-mono max-w-[220px]"
-                style={{
-                  backgroundColor: 'var(--theme-bg-subtle)',
-                  border: '1px solid var(--theme-hairline)',
-                  color: 'var(--theme-muted)',
-                }}
+                className="toolbar-chip hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] font-mono max-w-[220px]"
+                style={{ color: 'var(--theme-muted)' }}
                 title={`Current model · ${modelLabel}`}
               >
                 <Cpu size={11} strokeWidth={2} className="shrink-0" style={{ color: 'var(--theme-primary)' }} />
@@ -584,8 +580,7 @@ export function InputArea({
           <div className="flex items-center gap-2 shrink-0">
             {onToggleMode && mode && (
               <div
-                className="flex items-center rounded-full p-0.5 text-[11px] font-medium select-none"
-                style={{ backgroundColor: 'var(--theme-bg-subtle)', border: '1px solid var(--theme-hairline)' }}
+                className="mode-switch flex items-center rounded-lg p-0.5 text-[11px] font-medium select-none"
                 title="Agent runs tools & edits files · Chat is conversation-only"
               >
                 {(['code', 'chat'] as const).map((m) => {
@@ -597,11 +592,8 @@ export function InputArea({
                       type="button"
                       disabled={disabled || isLoading}
                       onClick={() => { if (mode !== m) onToggleMode() }}
-                      className="px-2.5 py-1 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      style={{
-                        backgroundColor: active ? 'color-mix(in srgb, var(--theme-primary) 18%, transparent)' : 'transparent',
-                        color: active ? 'var(--theme-primary)' : 'var(--theme-muted)',
-                      }}
+                      className={`px-2.5 py-1 rounded-md disabled:opacity-50 disabled:cursor-not-allowed ${active ? 'is-active' : ''}`}
+                      style={{ color: active ? 'var(--theme-primary)' : 'var(--theme-muted)' }}
                     >
                       {label}
                     </button>
@@ -612,15 +604,10 @@ export function InputArea({
             <button
               onClick={handleSend}
               disabled={!canSend}
-              className="w-7 h-7 rounded-full flex items-center justify-center transition-all disabled:opacity-40 disabled:cursor-not-allowed active:scale-95"
-              style={{
-                backgroundColor: canSend ? 'var(--theme-primary)' : 'var(--theme-bg-subtle)',
-                color: canSend ? 'var(--theme-bg)' : 'var(--theme-muted)',
-                boxShadow: canSend ? '0 2px 8px color-mix(in srgb, var(--theme-primary) 35%, transparent)' : 'none',
-              }}
+              className="send-button w-8 h-8 rounded-[10px] flex items-center justify-center disabled:opacity-55 disabled:cursor-not-allowed active:scale-95"
               title="Send (⏎)"
             >
-              <ArrowUp size={14} strokeWidth={2.5} />
+              <ArrowUp size={15} strokeWidth={2.5} />
             </button>
           </div>
         </div>

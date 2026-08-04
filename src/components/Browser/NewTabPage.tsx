@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Search, Folder, Plus, X } from 'lucide-react'
+import { Search, Folder, Plus, X, Compass, ShieldCheck, ArrowRight } from 'lucide-react'
 import { SiteIcon } from './SiteIcon'
 import type { BrowserSpaces, BrowserSite } from './useBrowserSpaces'
 
@@ -43,49 +43,95 @@ export function NewTabPage({ spaces, onOpen, onAddShortcut }: {
   }
 
   return (
-    <div className="absolute inset-0 overflow-y-auto" style={{ backgroundColor: 'var(--theme-bg)' }}>
-      <div className="max-w-[720px] mx-auto px-8 pt-[10vh] pb-16 flex flex-col items-center gap-8">
-        {/* clock + greeting */}
-        <div className="text-center select-none">
-          <div className="text-[56px] font-semibold tracking-tight tabular-nums leading-none" style={{ color: 'var(--theme-text)' }}>
-            {now.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+    <div className="browser-newtab absolute inset-0 overflow-y-auto">
+      <div className="relative max-w-[760px] mx-auto px-8 pt-[8vh] pb-16 flex flex-col items-center gap-7">
+        {/* branded browser hero */}
+        <div className="hero-orbit w-14 h-14 select-none">
+          <div
+            className="assistant-mark w-full h-full rounded-2xl flex items-center justify-center"
+            style={{ color: 'var(--theme-primary)' }}
+          >
+            <Compass size={23} />
           </div>
-          <div className="text-[15px] mt-2" style={{ color: 'var(--theme-muted)' }}>
-            {greeting(now)}
+        </div>
+        <div className="text-center select-none">
+          <div
+            className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 mb-3 text-[9px] font-mono uppercase tracking-[0.13em]"
+            style={{
+              color: 'var(--theme-primary)',
+              backgroundColor: 'color-mix(in srgb, var(--theme-primary) 10%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--theme-primary) 22%, transparent)',
+            }}
+          >
+            <ShieldCheck size={10} />
+            Agent-ready browsing
+          </div>
+          <h1 className="text-[34px] font-semibold tracking-[-0.04em] leading-none" style={{ color: 'var(--theme-text)' }}>
+            Where to next?
+          </h1>
+          <div className="flex items-center justify-center gap-2 text-[12px] mt-3 font-mono" style={{ color: 'var(--theme-muted)' }}>
+            <span>{greeting(now)}</span>
+            <span className="opacity-30">·</span>
+            <span className="tabular-nums opacity-70">
+              {now.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+            </span>
           </div>
         </div>
 
         {/* search */}
         <div
-          className="w-full max-w-[560px] flex items-center gap-2.5 rounded-2xl px-5 py-3.5 transition-colors focus-within:border-[color:var(--theme-primary)]"
-          style={{ backgroundColor: 'var(--theme-bg-subtle)', border: '1px solid var(--theme-border)' }}
+          className="newtab-search w-full max-w-[590px] flex items-center gap-3 rounded-2xl px-5 py-4"
         >
-          <Search size={17} style={{ color: 'var(--theme-muted)' }} />
+          <Search size={17} style={{ color: 'var(--theme-primary)' }} />
           <input
             autoFocus
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && q.trim()) onOpen(q) }}
-            placeholder="Search or Enter URL…"
-            className="flex-1 bg-transparent outline-none text-[15px]"
+            placeholder="Search the web or jump to a URL"
+            className="flex-1 bg-transparent outline-none text-[14px]"
             style={{ color: 'var(--theme-text)' }}
           />
+          <button
+            onClick={() => { if (q.trim()) onOpen(q) }}
+            disabled={!q.trim()}
+            className="send-button w-8 h-8 rounded-[10px] flex items-center justify-center disabled:opacity-35"
+            title="Go"
+          >
+            <ArrowRight size={14} />
+          </button>
+        </div>
+        <div className="-mt-4 flex items-center gap-3 text-[9.5px] font-mono opacity-45" style={{ color: 'var(--theme-muted)' }}>
+          <span>Search privately</span>
+          <span>·</span>
+          <span>Ask the assistant to read or click</span>
         </div>
 
         {/* shortcuts — the user's own; empty starts empty with just the + tile */}
-        <div className="w-full flex flex-col gap-3">
+        <div className="w-full max-w-[620px] flex flex-col gap-3 mt-1">
+          <div className="flex items-center">
+            <span className="browser-section-label">Quick launch</span>
+            <span className="flex-1" />
+            <span className="text-[9.5px] font-mono opacity-40" style={{ color: 'var(--theme-muted)' }}>
+              {spaces.pins.length} saved
+            </span>
+          </div>
           <div className="grid gap-2 justify-center" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(88px, 88px))' }}>
             {spaces.pins.map((s) => (
               <Tile key={s.id} site={s} onOpen={onOpen} />
             ))}
             <button
               onClick={() => setAdding((v) => !v)}
-              className="flex flex-col items-center gap-2 p-3 rounded-xl hover:bg-white/5 transition-colors"
+              className="shortcut-tile flex flex-col items-center gap-2 p-3 rounded-xl"
               title="Add shortcut"
             >
               <div
                 className="w-12 h-12 rounded-xl flex items-center justify-center"
-                style={{ border: '1.5px dashed var(--theme-border)', color: 'var(--theme-muted)' }}
+                style={{
+                  backgroundColor: 'color-mix(in srgb, var(--theme-bg-raised) 64%, transparent)',
+                  border: '1px dashed var(--theme-hairline-strong)',
+                  color: 'var(--theme-muted)',
+                }}
               >
                 {adding ? <X size={20} /> : <Plus size={20} />}
               </div>
@@ -95,8 +141,7 @@ export function NewTabPage({ spaces, onOpen, onAddShortcut }: {
 
           {adding && (
             <div
-              className="mx-auto w-full max-w-[420px] flex flex-col gap-2 rounded-xl p-3"
-              style={{ backgroundColor: 'var(--theme-bg-subtle)', border: '1px solid var(--theme-border)' }}
+              className="feature-card mx-auto w-full max-w-[440px] flex flex-col gap-2 rounded-xl p-3"
             >
               <input
                 autoFocus
@@ -104,22 +149,21 @@ export function NewTabPage({ spaces, onOpen, onAddShortcut }: {
                 onChange={(e) => setDraftUrl(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') submitShortcut() }}
                 placeholder="URL (e.g. github.com)"
-                className="bg-transparent outline-none text-[13px] rounded-lg px-3 py-2"
-                style={{ color: 'var(--theme-text)', border: '1px solid var(--theme-border)' }}
+                className="field-shell outline-none text-[13px] rounded-lg px-3 py-2.5"
+                style={{ color: 'var(--theme-text)' }}
               />
               <input
                 value={draftName}
                 onChange={(e) => setDraftName(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') submitShortcut() }}
                 placeholder="Name (optional)"
-                className="bg-transparent outline-none text-[13px] rounded-lg px-3 py-2"
-                style={{ color: 'var(--theme-text)', border: '1px solid var(--theme-border)' }}
+                className="field-shell outline-none text-[13px] rounded-lg px-3 py-2.5"
+                style={{ color: 'var(--theme-text)' }}
               />
               <button
                 onClick={submitShortcut}
                 disabled={!draftUrl.trim()}
-                className="rounded-lg px-3 py-2 text-[12.5px] font-medium disabled:opacity-40"
-                style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-bg)' }}
+                className="primary-action rounded-lg px-3 py-2.5 text-[12.5px] font-medium disabled:opacity-40"
               >
                 Add shortcut
               </button>
@@ -129,8 +173,8 @@ export function NewTabPage({ spaces, onOpen, onAddShortcut }: {
 
         {/* folders (only if the user made some) */}
         {spaces.folders.filter((f) => f.sites.length > 0).map((f) => (
-          <div key={f.id} className="w-full flex flex-col gap-2">
-            <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider font-mono" style={{ color: 'var(--theme-muted)' }}>
+          <div key={f.id} className="w-full max-w-[620px] flex flex-col gap-2">
+            <div className="browser-section-label flex items-center gap-1.5">
               <Folder size={12} /> {f.name}
             </div>
             <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(88px, 88px))' }}>
@@ -151,12 +195,11 @@ function Tile({ site, onOpen }: { site: BrowserSite; onOpen: (url: string) => vo
   return (
     <button
       onClick={() => onOpen(site.url)}
-      className="flex flex-col items-center gap-2 p-3 rounded-xl hover:bg-white/5 transition-colors"
+      className="shortcut-tile flex flex-col items-center gap-2 p-3 rounded-xl"
       title={site.url}
     >
       <div
-        className="w-12 h-12 rounded-xl flex items-center justify-center"
-        style={{ backgroundColor: 'var(--theme-bg-subtle)', border: '1px solid var(--theme-hairline)' }}
+        className="browser-pin w-12 h-12 rounded-xl flex items-center justify-center"
       >
         <SiteIcon url={site.url} size={24} />
       </div>

@@ -11,7 +11,7 @@ import { useResizablePanel } from '../Shared/useResizablePanel'
 import { PAD_TRAFFIC_80 } from '../../utils/platform'
 import {
   ArrowLeft, Plus, ChevronLeft, ChevronRight, RotateCw, X, Search, Globe, Loader2,
-  MessageSquare, Compass,
+  Compass, ShieldCheck, Sparkles,
 } from 'lucide-react'
 
 type BrowserResult = { ok: boolean; error?: string; title?: string; url?: string; text?: string; base64?: string }
@@ -212,27 +212,33 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const iconBtn = 'w-7 h-7 rounded-md flex items-center justify-center hover:bg-white/5 transition-colors'
+  const iconBtn = 'browser-control w-5 h-6 rounded-md flex items-center justify-center'
 
   return (
-    <div className="flex-1 flex overflow-hidden">
+    <div className="flex-1 flex overflow-hidden" style={{ backgroundColor: 'var(--theme-bg)' }}>
       {/* ── Left bar: tabs + url + assistant ── */}
       <aside
-        className="relative flex flex-col shrink-0 h-full"
-        style={{ width: left.width, backgroundColor: 'var(--theme-bg-subtle)', borderRight: '1px solid var(--theme-hairline)' }}
+        className="browser-rail-shell relative flex flex-col shrink-0 h-full"
+        style={{ width: left.width }}
       >
         <ResizeHandle handleProps={left.handleProps} label="browser sidebar" />
 
         {/* top row — traffic lights | nav arrows + assistant | back-to-sessions (Arc-style) */}
-        <div className={`h-12 flex items-center gap-0.5 ${PAD_TRAFFIC_80} pr-1.5 shrink-0`} style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
-          <span className="flex-1" />
+        <div className={`h-12 flex items-center gap-0.5 ${PAD_TRAFFIC_80} pr-2 shrink-0`} style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+          <div
+            className="assistant-mark w-6 h-6 rounded-lg flex items-center justify-center mr-auto"
+            style={{ WebkitAppRegion: 'no-drag', color: 'var(--theme-primary)' } as React.CSSProperties}
+            title="Navigator"
+          >
+            <Compass size={13} />
+          </div>
           <button onClick={() => getActiveEl()?.goBack?.()} className={iconBtn} style={{ WebkitAppRegion: 'no-drag', color: 'var(--theme-muted)' } as React.CSSProperties} title="Back"><ChevronLeft size={17} /></button>
           <button onClick={() => getActiveEl()?.goForward?.()} className={iconBtn} style={{ WebkitAppRegion: 'no-drag', color: 'var(--theme-muted)' } as React.CSSProperties} title="Forward"><ChevronRight size={17} /></button>
           <button onClick={() => { const el = getActiveEl(); if (activeTab?.loading) el?.stop?.(); else el?.reload?.() }} className={iconBtn} style={{ WebkitAppRegion: 'no-drag', color: 'var(--theme-muted)' } as React.CSSProperties} title={activeTab?.loading ? 'Stop' : 'Reload'}>
             {activeTab?.loading ? <X size={15} /> : <RotateCw size={14} />}
           </button>
-          <button onClick={() => setAssistantOpen((v) => !v)} className={iconBtn} style={{ WebkitAppRegion: 'no-drag', color: assistantOpen ? 'var(--theme-primary)' : 'var(--theme-muted)' } as React.CSSProperties} title="Assistant">
-            <MessageSquare size={15} />
+          <button onClick={() => setAssistantOpen((v) => !v)} className={`${iconBtn} ${assistantOpen ? 'is-active' : ''}`} style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties} title="Assistant">
+            <Sparkles size={14} />
           </button>
           <button
             onClick={() => { void exitBrowser() }}
@@ -247,24 +253,26 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
         {/* big Arc-style search pill on its own row */}
         <div className="px-2.5 pb-2.5 shrink-0">
           <div
-            className="flex items-center gap-2.5 rounded-xl px-3.5 py-2.5 transition-colors focus-within:border-[color:var(--theme-primary)]"
-            style={{ backgroundColor: 'var(--theme-bg)', border: '1px solid var(--theme-border)' }}
+            className="browser-address-shell flex items-center gap-2.5 rounded-xl px-3 py-2.5"
           >
-            <Search size={15} style={{ color: 'var(--theme-muted)', flexShrink: 0 }} />
+            {activeTab?.url
+              ? <ShieldCheck size={14} style={{ color: 'var(--theme-success)', flexShrink: 0 }} />
+              : <Search size={14} style={{ color: 'var(--theme-primary)', flexShrink: 0 }} />}
             <input
               value={urlDraft}
               onChange={(e) => setUrlDraft(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') navigateActive(urlDraft) }}
               onFocus={(e) => e.currentTarget.select()}
-              placeholder="Search or Enter URL…"
-              className="flex-1 min-w-0 bg-transparent outline-none text-[13.5px]"
+              placeholder="Search or enter URL"
+              className="flex-1 min-w-0 bg-transparent outline-none text-[12.5px]"
               style={{ color: 'var(--theme-text)' }}
             />
+            <span className="text-[9px] font-mono opacity-35" style={{ color: 'var(--theme-muted)' }}>↵</span>
           </div>
         </div>
 
         {/* scrollable: pinned + folders, then open tabs */}
-        <div className="flex-1 min-h-0 overflow-y-auto px-2 pb-3 flex flex-col gap-3">
+        <div className="flex-1 min-h-0 overflow-y-auto px-2 pb-3 flex flex-col gap-4">
           <BrowserSpaces
             spaces={browserSpaces.spaces}
             current={current}
@@ -278,11 +286,11 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
             removeSiteFromFolder={browserSpaces.removeSiteFromFolder}
           />
 
-          <div className="flex flex-col gap-0.5">
-            <div className="flex items-center px-1">
-              <span className="text-[10px] uppercase tracking-wider font-mono" style={{ color: 'var(--theme-muted)' }}>Tabs</span>
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center px-1 pb-0.5">
+              <span className="browser-section-label">Open tabs</span>
               <span className="flex-1" />
-              <button onClick={() => addBrowserTab()} className="w-4 h-4 rounded flex items-center justify-center hover:bg-white/5" style={{ color: 'var(--theme-muted)' }} title="New tab">
+              <button onClick={() => addBrowserTab()} className="browser-control w-5 h-5 rounded-md flex items-center justify-center" title="New tab">
                 <Plus size={12} />
               </button>
             </div>
@@ -292,18 +300,14 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
                 <div
                   key={t.id}
                   onClick={() => setActiveBrowserTab(t.id)}
-                  className="group flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors"
-                  style={{
-                    backgroundColor: active ? 'var(--theme-bg-raised)' : 'transparent',
-                    borderLeft: active ? '2px solid var(--theme-primary)' : '2px solid transparent',
-                  }}
+                  className={`browser-tab-row group flex items-center gap-2 px-2.5 py-2 rounded-lg cursor-pointer ${active ? 'is-active' : ''}`}
                 >
                   {t.loading
                     ? <Loader2 size={13} className="animate-spin shrink-0" style={{ color: 'var(--theme-primary)' }} />
                     : t.url
                       ? <SiteIcon url={t.url} size={13} />
                       : <Globe size={13} className="shrink-0" style={{ color: active ? 'var(--theme-primary)' : 'var(--theme-muted)' }} />}
-                  <span className="flex-1 truncate text-[12px]" style={{ color: active ? 'var(--theme-text)' : 'var(--theme-muted)' }}>
+                  <span className="flex-1 truncate text-[12px]" style={{ color: active ? 'var(--theme-text)' : 'var(--theme-muted)', fontWeight: active ? 500 : 400 }}>
                     {t.title || t.url || 'New tab'}
                   </span>
                   <button
@@ -323,7 +327,10 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
       </aside>
 
       {/* ── Main: the active tab's page ── */}
-      <div className="flex-1 relative" style={{ backgroundColor: '#ffffff' }}>
+      <div className="flex-1 relative overflow-hidden" style={{ backgroundColor: 'var(--theme-bg)' }}>
+        {activeTab?.loading && (
+          <div className="browser-progress absolute inset-x-0 top-0 h-[2px] z-50" aria-label="Page loading" />
+        )}
         {/* ALL sessions' webviews stay mounted (state survives session
             switches); only the active session's active tab is visible. */}
         {tabs.map((t) => (
@@ -332,9 +339,17 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
           </div>
         ))}
         {sessionTabs.length === 0 && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3" style={{ backgroundColor: 'var(--theme-bg)' }}>
-            <Compass size={34} style={{ color: 'var(--theme-muted)', opacity: 0.5 }} />
-            <button onClick={() => addBrowserTab()} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-medium" style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-bg)' }}>
+          <div className="browser-newtab absolute inset-0 flex flex-col items-center justify-center gap-5">
+            <div className="hero-orbit w-14 h-14">
+              <div className="assistant-mark w-full h-full rounded-2xl flex items-center justify-center" style={{ color: 'var(--theme-primary)' }}>
+                <Compass size={23} />
+              </div>
+            </div>
+            <div className="text-center">
+              <div className="text-[22px] font-semibold tracking-tight" style={{ color: 'var(--theme-text)' }}>Your web workspace is ready</div>
+              <div className="text-[12px] mt-1" style={{ color: 'var(--theme-muted)' }}>Open a tab and let the agent navigate with you.</div>
+            </div>
+            <button onClick={() => addBrowserTab()} className="primary-action flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-[12px] font-medium">
               <Plus size={13} /> New tab
             </button>
           </div>
@@ -348,12 +363,11 @@ export function BrowserMode({ onNewSession }: { onNewSession: () => void }) {
         {/* Floating assistant — overlays the page bottom-right. */}
         {assistantOpen && assistantDock === 'float' && (
           <div
+            className="browser-assistant-float"
             style={{
               position: 'absolute', bottom: 18, right: 18,
               width: 384, height: 'min(560px, calc(100% - 36px))',
               zIndex: 40, display: 'flex', flexDirection: 'column', overflow: 'hidden',
-              border: '1px solid var(--theme-border)',
-              borderRadius: 14, boxShadow: '0 18px 50px rgba(0,0,0,0.45)',
             }}
           >
             <BrowserAssistant dock="float" onToggleDock={toggleAssistantDock} onClose={() => setAssistantOpen(false)} onNewSession={onNewSession} />

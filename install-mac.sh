@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Codemaxxing Desktop — one-line macOS installer.
+# Codemaxxing Desktop — one-line macOS installer and updater.
 #
 # Usage:
 #   bash <(curl -fsSL https://raw.githubusercontent.com/MarcosV6/codemaxxing-desktop/main/install-mac.sh)
@@ -8,12 +8,13 @@
 # What it does:
 #   1. Detects your Mac's architecture (Apple Silicon vs Intel)
 #   2. Downloads the matching zip from the latest GitHub release
-#   3. Unzips into /Applications
-#   4. Strips the quarantine attribute (xattr -cr) so Gatekeeper doesn't
+#   3. Verifies it against the release's SHA256SUMS.txt
+#   4. Installs or replaces the app in /Applications
+#   5. Strips the quarantine attribute (xattr -cr) so Gatekeeper doesn't
 #      block first launch — the app isn't signed with an Apple Developer
 #      ID yet, so without this you'd see the "Apple could not verify"
 #      dialog and have to do the System Settings dance.
-#   5. Opens the app.
+#   6. Opens the app.
 #
 # This script does NOT require sudo. It works in /Applications because
 # /Applications is writable by anyone in the admin group on most Macs.
@@ -59,7 +60,7 @@ case "$ARCH" in
     ;;
 esac
 
-bold "Codemaxxing Desktop — installer"
+bold "Codemaxxing Desktop — installer / updater"
 echo "  Architecture: ${ARCH_LABEL} (${ARCH})"
 echo ""
 
@@ -67,9 +68,10 @@ echo ""
 # asset filenames embed the version (Codemaxxing-1.2.3-arm64-mac.zip), so a
 # hard-coded name would break on every release. No jq dependency: grep/sed
 # the JSON for asset names.
-bold "0/4 Finding the latest release…"
+bold "0/5 Finding the latest release…"
 RELEASE_JSON="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" || true)"
 ASSET_NAMES="$(printf '%s' "$RELEASE_JSON" | grep -o '"name": *"[^"]*\.zip"' | sed 's/.*"name": *"//;s/"$//' || true)"
+RELEASE_TAG="$(printf '%s' "$RELEASE_JSON" | grep -o '"tag_name": *"[^"]*"' | head -1 | sed 's/.*"tag_name": *"//;s/"$//' || true)"
 
 if [[ "$ARCH" == "arm64" ]]; then
   ASSET="$(printf '%s\n' "$ASSET_NAMES" | grep -E '^Codemaxxing-.*-arm64-mac\.zip$' | head -1 || true)"
@@ -89,6 +91,7 @@ if [[ -z "$ASSET" ]]; then
   exit 1
 fi
 echo "  Asset: ${ASSET}"
+[[ -n "$RELEASE_TAG" ]] && echo "  Release: ${RELEASE_TAG}"
 echo ""
 
 # `releases/latest/download/<asset>` follows the Latest redirect at install
@@ -109,7 +112,7 @@ TMP_DIR="$(mktemp -d -t codemaxxing-install)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 ZIP_PATH="${TMP_DIR}/codemaxxing.zip"
 
-bold "1/4 Downloading…"
+bold "1/5 Downloading…"
 echo "  $DL_URL"
 # -L follows redirects (releases/latest → tagged release); -f fails fast on
 # 404 instead of saving an HTML error page; -# shows a progress bar.
@@ -119,7 +122,31 @@ if ! curl -fL# -o "$ZIP_PATH" "$DL_URL"; then
   exit 1
 fi
 
-bold "2/4 Unzipping…"
+bold "2/5 Verifying checksum…"
+CHECKSUMS_PATH="${TMP_DIR}/SHA256SUMS.txt"
+CHECKSUMS_URL="https://github.com/${REPO}/releases/latest/download/SHA256SUMS.txt"
+if ! curl -fsSL -o "$CHECKSUMS_PATH" "$CHECKSUMS_URL"; then
+  red "Couldn't download SHA256SUMS.txt; refusing to install an unverified archive."
+  red "Verify the release manually at https://github.com/${REPO}/releases/latest"
+  exit 1
+fi
+
+EXPECTED_SHA="$(awk -v asset="$ASSET" '$2 == asset { print $1; exit }' "$CHECKSUMS_PATH")"
+ACTUAL_SHA="$(shasum -a 256 "$ZIP_PATH" | awk '{ print $1 }')"
+if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-fA-F]{64}$ ]]; then
+  red "No valid checksum was published for ${ASSET}; refusing to continue."
+  exit 1
+fi
+if [[ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]]; then
+  red "Checksum mismatch for ${ASSET}; the download may be incomplete or unsafe."
+  red "  Expected: ${EXPECTED_SHA}"
+  red "  Actual:   ${ACTUAL_SHA}"
+  exit 1
+fi
+green "✓ Checksum verified"
+echo ""
+
+bold "3/5 Unzipping…"
 # Use ditto instead of unzip — preserves resource forks / Finder metadata,
 # which matters for .app bundles. On modern macOS, unzip works too, but
 # ditto is the supported path and what Apple's own installers use.
@@ -136,7 +163,7 @@ if [[ -z "$EXTRACTED_APP" ]]; then
   exit 1
 fi
 
-bold "3/4 Installing to ${INSTALL_DIR}…"
+bold "4/5 Installing to ${INSTALL_DIR}…"
 TARGET="${INSTALL_DIR}/${APP_NAME}"
 if [[ -d "$TARGET" ]]; then
   yellow "→ Replacing existing ${APP_NAME}."
@@ -156,7 +183,7 @@ else
   fi
 fi
 
-bold "4/4 Approving for first launch…"
+bold "5/5 Approving for first launch…"
 # `xattr -cr` strips the com.apple.quarantine extended attribute that
 # Gatekeeper checks. Without this, the user would see "Apple could not
 # verify…" and have to walk through System Settings → Privacy & Security →

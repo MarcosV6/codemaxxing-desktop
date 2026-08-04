@@ -9,8 +9,8 @@
  *   public/icon.ico   (Windows — multi-size PNG-in-ICO, written by hand)
  *   public/icon.png   (Linux — 512×512)
  *
- * The mark is a terminal prompt "> _" in a soft mint→cyan gradient on a dark
- * squircle: reads as a developer tool and stays legible down to 16px. No SVG
+ * The mark is the codemaxxing ">_<" face in a soft mint→cyan gradient on a
+ * dark squircle: reads as a developer tool and stays legible down to 16px. No SVG
  * rasterizer or ImageMagick required — only macOS built-ins (sips, iconutil).
  *
  * Usage: node scripts/generate-icons.mjs
@@ -56,10 +56,11 @@ const RECT_C = SIZE / 2
 const RECT_H = (SIZE - 2 * MARGIN) / 2 // 412
 const RECT_R = 0.2237 * (SIZE - 2 * MARGIN) // ≈184
 
-// prompt geometry — chevron ">" + underscore cursor "_"
-const CH_TOP = [366, 396], CH_APEX = [528, 512], CH_BOT = [366, 628]
-const CH_HT = 34
-const US_A = [566, 624], US_B = [726, 624]
+// mark geometry — opposing chevrons with an underscore between them: ">_<"
+const GT_TOP = [278, 396], GT_APEX = [410, 512], GT_BOT = [278, 628]
+const LT_TOP = [746, 396], LT_APEX = [614, 512], LT_BOT = [746, 628]
+const CH_HT = 32
+const US_A = [454, 624], US_B = [570, 624]
 const US_HT = 22
 
 function renderMaster() {
@@ -79,13 +80,17 @@ function renderMaster() {
         a = bgCov
       }
 
-      // glyph: union of two chevron arms + the underscore bar
-      const dCh = Math.min(
-        sdSegment(sx, sy, CH_TOP[0], CH_TOP[1], CH_APEX[0], CH_APEX[1]) - CH_HT,
-        sdSegment(sx, sy, CH_APEX[0], CH_APEX[1], CH_BOT[0], CH_BOT[1]) - CH_HT,
+      // glyph: union of both chevrons + the underscore bar
+      const dGt = Math.min(
+        sdSegment(sx, sy, GT_TOP[0], GT_TOP[1], GT_APEX[0], GT_APEX[1]) - CH_HT,
+        sdSegment(sx, sy, GT_APEX[0], GT_APEX[1], GT_BOT[0], GT_BOT[1]) - CH_HT,
+      )
+      const dLt = Math.min(
+        sdSegment(sx, sy, LT_TOP[0], LT_TOP[1], LT_APEX[0], LT_APEX[1]) - CH_HT,
+        sdSegment(sx, sy, LT_APEX[0], LT_APEX[1], LT_BOT[0], LT_BOT[1]) - CH_HT,
       )
       const dUs = sdSegment(sx, sy, US_A[0], US_A[1], US_B[0], US_B[1]) - US_HT
-      const dG = Math.min(dCh, dUs)
+      const dG = Math.min(dGt, dUs, dLt)
       const gCov = clamp(0.5 - dG, 0, 1)
       if (gCov > 0) {
         const t = clamp(((sx - 340) + (sy - 380)) / 520, 0, 1)

@@ -6,6 +6,38 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [1.3.11] — 2026-08-03
+
+Visual identity and interface polish release.
+
+### Security
+
+- Updated Hono, `fast-uri`, and `ip-address` dependency paths to resolve the
+  current production audit advisories; `npm audit --omit=dev` reports zero
+  known vulnerabilities.
+
+### Changed
+
+- Redesigned the main workspace, chat surfaces, session launcher, onboarding,
+  status chrome, code blocks, and supporting controls around a more dimensional
+  and cohesive visual system.
+- Brought the built-in browser, browser spaces, new-tab page, and page-aware
+  assistant up to the same visual standard as the rest of the application.
+- Introduced the signature midnight workbench theme with improved light-theme
+  surface separation and more consistent responsive behavior.
+- Replaced the terminal prompt brand mark with the new `>_<` identity throughout
+  the UI and regenerated the macOS, Windows, and Linux application icons.
+- The macOS Terminal installer now doubles as an updater, reports the resolved
+  release, and verifies the downloaded app against `SHA256SUMS.txt` before
+  replacing an existing installation.
+- GitHub releases now publish checked-in, human-readable release notes alongside
+  the native installers and checksums.
+
+### Tests
+
+- Verified typecheck, lint, 50 unit tests, production bundling, native macOS
+  packaging, code signing, and packaged-app UI smoke flows.
+
 ## [1.3.10] — 2026-07-24
 
 ### Fixed
@@ -94,7 +126,8 @@ First public release. macOS arm64 zip ships from GitHub Releases; Windows + Linu
 - Cosmetic: traffic-light padding in the renderer is currently macOS-tuned. Windows/Linux users see a small gap on the top-left of the sidebar header. Tracked in [WINDOWS_RELEASE.md](WINDOWS_RELEASE.md).
 - macOS may suspend the agent loop on battery when the lid is closed — `powerSaveBlocker` prevents app suspension but not system sleep.
 
-[Unreleased]: https://github.com/MarcosV6/codemaxxing-desktop/compare/v1.3.10...HEAD
+[Unreleased]: https://github.com/MarcosV6/codemaxxing-desktop/compare/v1.3.11...HEAD
+[1.3.11]: https://github.com/MarcosV6/codemaxxing-desktop/compare/v1.3.10...v1.3.11
 [1.3.10]: https://github.com/MarcosV6/codemaxxing-desktop/compare/v1.3.9...v1.3.10
 [1.3.9]: https://github.com/MarcosV6/codemaxxing-desktop/compare/v1.3.8...v1.3.9
 [1.3.8]: https://github.com/MarcosV6/codemaxxing-desktop/compare/v1.3.7...v1.3.8

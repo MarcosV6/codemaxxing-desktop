@@ -1,7 +1,7 @@
 name: Release
 
 # Builds installers for every supported platform and attaches them to the
-# GitHub Release for the pushed tag. Push a tag like `v1.3.10` to trigger.
+# GitHub Release for the pushed tag. Push a tag like `v1.3.11` to trigger.
 # `workflow_dispatch` lets you exercise the build matrix without releasing.
 
 on:
@@ -106,6 +106,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
@@ -123,9 +125,12 @@ jobs:
       - name: Attach to release
         uses: softprops/action-gh-release@v3
         with:
+          name: Codemaxxing ${{ github.ref_name }}
+          body_path: .github/release-notes/${{ github.ref_name }}.md
           files: dist-release/*
-          fail_on_unmatched_files: false
+          fail_on_unmatched_files: true
           draft: false
-          # Don't regenerate notes — preserve the hand-written release notes
-          # (install instructions). softprops only appends the files.
+          make_latest: true
+          # Release notes are reviewed and versioned with the source instead
+          # of being generated from commit titles.
           generate_release_notes: false

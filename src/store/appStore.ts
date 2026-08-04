@@ -407,8 +407,13 @@ function applyThemeToDom(theme: Theme) {
   // keep their tone.
   const isLight = !!theme.isLight
   const tintToward = isLight ? 'black' : 'white'
-  set('--theme-bg-raised', c.bgRaised ?? `color-mix(in srgb, ${bg} 92%, ${tintToward})`)
-  set('--theme-bubble', c.bubble ?? `color-mix(in srgb, ${bg} 88%, ${tintToward})`)
+  // Light surfaces only need a whisper of gray to read as layered. The old
+  // 92%/88% mix made every panel look like the same heavy gray pill. Dark
+  // themes keep the stronger lift because the extra separation is useful.
+  const raisedBase = isLight ? 97 : 92
+  const bubbleBase = isLight ? 94 : 88
+  set('--theme-bg-raised', c.bgRaised ?? `color-mix(in srgb, ${bg} ${raisedBase}%, ${tintToward})`)
+  set('--theme-bubble', c.bubble ?? `color-mix(in srgb, ${bg} ${bubbleBase}%, ${tintToward})`)
   // Mark the root with the theme polarity so any CSS rules that need to
   // branch on light vs dark (scrollbars, syntax highlight overrides, etc.)
   // can use a simple `:root[data-theme-mode="light"] ...` selector.
